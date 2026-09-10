@@ -1,0 +1,6 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { UserRoundCheck } from "lucide-react";
+import { PageSkeleton } from "@/components/page-skeleton";
+
+export const Route = createFileRoute("/attendance")({ head: () => ({ meta: [{ title: "Attendance — Harrow Green" }, { name: "description", content: "Mark and review daily class attendance." }, { property: "og:title", content: "Attendance — Harrow Green" }, { property: "og:description", content: "Mark and review daily class attendance." }, { property: "og:type", content: "website" }, { name: "twitter:card", content: "summary_large_image" }] }), component: Page });
+function Page() { return <PageSkeleton title="Attendance" description="Open a class register, compare payment status, and mark students present, absent, or excused." action="Mark attendance" icon={UserRoundCheck} stats={[{label:"Present",value:"468",note:"96.7% attendance"},{label:"Absent",value:"2",note:"Across all classes"},{label:"Auto-marked",value:"34",note:"From today's payments"}]} columns={["Student","Class","Payment","Attendance","Marked by"]} />; }

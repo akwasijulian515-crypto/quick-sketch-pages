@@ -1,0 +1,6 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { GraduationCap } from "lucide-react";
+import { PageSkeleton } from "@/components/page-skeleton";
+
+export const Route = createFileRoute("/students")({ head: () => ({ meta: [{ title: "Students — Harrow Green" }, { name: "description", content: "Manage enrolled students and their school records." }, { property: "og:title", content: "Students — Harrow Green" }, { property: "og:description", content: "Manage enrolled students and their school records." }, { property: "og:type", content: "website" }, { name: "twitter:card", content: "summary_large_image" }] }), component: Page });
+function Page() { return <PageSkeleton title="Students" description="A simple directory for enrollment details, class placement, attendance, payments, and grades." action="Add student" icon={GraduationCap} stats={[{label:"Enrolled",value:"484",note:"Across 6 classes"},{label:"New this term",value:"18",note:"4 added this week"},{label:"Records complete",value:"96%",note:"19 need review"}]} columns={["Student","Class","Payment today","Attendance","Actions"]} />; }

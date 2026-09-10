@@ -1,0 +1,6 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { School } from "lucide-react";
+import { PageSkeleton } from "@/components/page-skeleton";
+
+export const Route = createFileRoute("/classes")({ head: () => ({ meta: [{ title: "Classes — Harrow Green" }, { name: "description", content: "Review classes, students, subjects, and class teachers." }, { property: "og:title", content: "Classes — Harrow Green" }, { property: "og:description", content: "Review classes, students, subjects, and class teachers." }, { property: "og:type", content: "website" }, { name: "twitter:card", content: "summary_large_image" }] }), component: Page });
+function Page() { return <PageSkeleton title="Classes" description="See every class, its grade level, assigned teacher, subjects, and current student count." action="Create class" icon={School} stats={[{label:"Classes",value:"6",note:"Forms 1–3"},{label:"Students",value:"484",note:"81 average per level"},{label:"Subjects",value:"12",note:"Assigned this term"}]} columns={["Class","Grade level","Class teacher","Students","Subjects"]} />; }

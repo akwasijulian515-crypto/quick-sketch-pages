@@ -1,0 +1,6 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { ReceiptText } from "lucide-react";
+import { PageSkeleton } from "@/components/page-skeleton";
+
+export const Route = createFileRoute("/payments")({ head: () => ({ meta: [{ title: "Payments — Harrow Green" }, { name: "description", content: "Record daily student payments and review payment history." }, { property: "og:title", content: "Payments — Harrow Green" }, { property: "og:description", content: "Record daily student payments and review payment history." }, { property: "og:type", content: "website" }, { name: "twitter:card", content: "summary_large_image" }] }), component: Page });
+function Page() { return <PageSkeleton title="Payments" description="Record daily payments, automatically mark attendance, and see who has paid today." action="Record payment" icon={ReceiptText} stats={[{label:"Collected today",value:"GH₵ 18,240",note:"34 completed payments"},{label:"Pending",value:"9",note:"GH₵ 2,760 expected"},{label:"Auto-marked",value:"34",note:"Attendance updated"}]} columns={["Student","Amount","Time","Status","Recorded by"]} />; }
