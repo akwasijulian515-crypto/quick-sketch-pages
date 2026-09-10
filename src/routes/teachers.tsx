@@ -1,0 +1,6 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { UsersRound } from "lucide-react";
+import { PageSkeleton } from "@/components/page-skeleton";
+
+export const Route = createFileRoute("/teachers")({ head: () => ({ meta: [{ title: "Teachers — Harrow Green" }, { name: "description", content: "Manage teachers, classes, and subject assignments." }, { property: "og:title", content: "Teachers — Harrow Green" }, { property: "og:description", content: "Manage teachers, classes, and subject assignments." }, { property: "og:type", content: "website" }, { name: "twitter:card", content: "summary_large_image" }] }), component: Page });
+function Page() { return <PageSkeleton title="Teachers" description="Keep teacher contact details current and connect each teacher to the right class and subjects." action="Add teacher" icon={UsersRound} stats={[{label:"Teachers",value:"24",note:"22 active today"},{label:"Class teachers",value:"6",note:"Every class assigned"},{label:"Subject assignments",value:"38",note:"2 need review"}]} columns={["Teacher","Class","Subjects","Contact","Status"]} />; }
