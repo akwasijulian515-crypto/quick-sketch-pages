@@ -10,18 +10,28 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AttendanceRouteImport } from './routes/attendance'
 import { Route as ClassesRouteImport } from './routes/classes'
 import { Route as CouponsRouteImport } from './routes/coupons'
+import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as GradesRouteImport } from './routes/grades'
+import { Route as ParentRouteImport } from './routes/parent'
 import { Route as PaymentsRouteImport } from './routes/payments'
+import { Route as StudentRouteImport } from './routes/student'
 import { Route as StudentsRouteImport } from './routes/students'
 import { Route as SubjectsRouteImport } from './routes/subjects'
+import { Route as TeacherRouteImport } from './routes/teacher'
 import { Route as TeachersRouteImport } from './routes/teachers'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AttendanceRoute = AttendanceRouteImport.update({
@@ -39,14 +49,29 @@ const CouponsRoute = CouponsRouteImport.update({
   path: '/coupons',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FinanceRoute = FinanceRouteImport.update({
+  id: '/finance',
+  path: '/finance',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GradesRoute = GradesRouteImport.update({
   id: '/grades',
   path: '/grades',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ParentRoute = ParentRouteImport.update({
+  id: '/parent',
+  path: '/parent',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PaymentsRoute = PaymentsRouteImport.update({
   id: '/payments',
   path: '/payments',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StudentRoute = StudentRouteImport.update({
+  id: '/student',
+  path: '/student',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StudentsRoute = StudentsRouteImport.update({
@@ -59,6 +84,11 @@ const SubjectsRoute = SubjectsRouteImport.update({
   path: '/subjects',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TeacherRoute = TeacherRouteImport.update({
+  id: '/teacher',
+  path: '/teacher',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TeachersRoute = TeachersRouteImport.update({
   id: '/teachers',
   path: '/teachers',
@@ -67,83 +97,118 @@ const TeachersRoute = TeachersRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
+  '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
+  '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
+  '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
+  '/teacher': typeof TeacherRoute
   '/teachers': typeof TeachersRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
+  '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
+  '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
+  '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
+  '/teacher': typeof TeacherRoute
   '/teachers': typeof TeachersRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
+  '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
+  '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
+  '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
+  '/teacher': typeof TeacherRoute
   '/teachers': typeof TeachersRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
     | '/attendance'
     | '/classes'
     | '/coupons'
+    | '/finance'
     | '/grades'
+    | '/parent'
     | '/payments'
+    | '/student'
     | '/students'
     | '/subjects'
+    | '/teacher'
     | '/teachers'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/admin'
     | '/attendance'
     | '/classes'
     | '/coupons'
+    | '/finance'
     | '/grades'
+    | '/parent'
     | '/payments'
+    | '/student'
     | '/students'
     | '/subjects'
+    | '/teacher'
     | '/teachers'
   id:
     | '__root__'
     | '/'
+    | '/admin'
     | '/attendance'
     | '/classes'
     | '/coupons'
+    | '/finance'
     | '/grades'
+    | '/parent'
     | '/payments'
+    | '/student'
     | '/students'
     | '/subjects'
+    | '/teacher'
     | '/teachers'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRoute
   AttendanceRoute: typeof AttendanceRoute
   ClassesRoute: typeof ClassesRoute
   CouponsRoute: typeof CouponsRoute
+  FinanceRoute: typeof FinanceRoute
   GradesRoute: typeof GradesRoute
+  ParentRoute: typeof ParentRoute
   PaymentsRoute: typeof PaymentsRoute
+  StudentRoute: typeof StudentRoute
   StudentsRoute: typeof StudentsRoute
   SubjectsRoute: typeof SubjectsRoute
+  TeacherRoute: typeof TeacherRoute
   TeachersRoute: typeof TeachersRoute
 }
 
@@ -154,6 +219,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/attendance': {
@@ -177,6 +249,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CouponsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/finance': {
+      id: '/finance'
+      path: '/finance'
+      fullPath: '/finance'
+      preLoaderRoute: typeof FinanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/grades': {
       id: '/grades'
       path: '/grades'
@@ -184,11 +263,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GradesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/parent': {
+      id: '/parent'
+      path: '/parent'
+      fullPath: '/parent'
+      preLoaderRoute: typeof ParentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/payments': {
       id: '/payments'
       path: '/payments'
       fullPath: '/payments'
       preLoaderRoute: typeof PaymentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/student': {
+      id: '/student'
+      path: '/student'
+      fullPath: '/student'
+      preLoaderRoute: typeof StudentRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/students': {
@@ -205,6 +298,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SubjectsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/teacher': {
+      id: '/teacher'
+      path: '/teacher'
+      fullPath: '/teacher'
+      preLoaderRoute: typeof TeacherRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/teachers': {
       id: '/teachers'
       path: '/teachers'
@@ -217,13 +317,18 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRoute,
   AttendanceRoute: AttendanceRoute,
   ClassesRoute: ClassesRoute,
   CouponsRoute: CouponsRoute,
+  FinanceRoute: FinanceRoute,
   GradesRoute: GradesRoute,
+  ParentRoute: ParentRoute,
   PaymentsRoute: PaymentsRoute,
+  StudentRoute: StudentRoute,
   StudentsRoute: StudentsRoute,
   SubjectsRoute: SubjectsRoute,
+  TeacherRoute: TeacherRoute,
   TeachersRoute: TeachersRoute,
 }
 export const routeTree = rootRouteImport
