@@ -21,6 +21,13 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
+  const quickActions = [
+    { label: "Record payment", to: "/payments" as const, icon: CreditCard, primary: true },
+    { label: "Mark attendance", to: "/attendance" as const, icon: UserCheck, primary: false },
+    { label: "Enter grades", to: "/grades" as const, icon: BookOpenCheck, primary: false },
+    { label: "Issue coupon", to: "/coupons" as const, icon: ArrowRight, primary: false },
+  ];
+
   return (
     <SchoolShell>
       <div className="mx-auto grid max-w-6xl grid-cols-12 gap-4">
@@ -51,7 +58,7 @@ function Index() {
         <section className="glass-panel rise col-span-12 rounded-lg p-5 md:col-span-6 lg:col-span-4">
           <h2 className="font-display text-lg font-bold">Quick Actions</h2>
           <div className="mt-4 grid grid-cols-2 gap-2.5">
-            {[["Record payment","/payments",CreditCard],["Mark attendance","/attendance",UserCheck],["Enter grades","/grades",BookOpenCheck],["Issue coupon","/coupons",ArrowRight]].map(([label,to,Icon])=><Button key={label as string} asChild variant={label === "Record payment" ? "default" : "outline"} className="h-16 whitespace-normal"><Link to={to as "/payments"}><Icon className="size-4" />{label as string}</Link></Button>)}
+            {quickActions.map(({ label, to, icon: Icon, primary }) => <Button key={label} asChild variant={primary ? "default" : "outline"} className="h-16 whitespace-normal"><Link to={to}><Icon className="size-4" />{label}</Link></Button>)}
           </div>
         </section>
 
