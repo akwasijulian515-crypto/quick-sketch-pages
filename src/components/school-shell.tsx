@@ -2,14 +2,17 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BookOpen,
   GraduationCap,
+  HeartHandshake,
   LayoutDashboard,
   Menu,
   ReceiptText,
   School,
   ScrollText,
+  ShieldCheck,
   TicketCheck,
   UserRoundCheck,
   UsersRound,
+  Wallet,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -27,6 +30,14 @@ const navigation = [
   { label: "Subjects", to: "/subjects", icon: BookOpen },
   { label: "Classes", to: "/classes", icon: School },
   { label: "Coupons", to: "/coupons", icon: TicketCheck },
+] as const;
+
+const roleViews = [
+  { label: "Student view", to: "/student", icon: GraduationCap },
+  { label: "Teacher view", to: "/teacher", icon: UserRoundCheck },
+  { label: "Parent view", to: "/parent", icon: HeartHandshake },
+  { label: "Finance view", to: "/finance", icon: Wallet },
+  { label: "Admin & Roles", to: "/admin", icon: ShieldCheck },
 ] as const;
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
