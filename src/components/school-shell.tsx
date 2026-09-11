@@ -2,14 +2,17 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BookOpen,
   GraduationCap,
+  HeartHandshake,
   LayoutDashboard,
   Menu,
   ReceiptText,
   School,
   ScrollText,
+  ShieldCheck,
   TicketCheck,
   UserRoundCheck,
   UsersRound,
+  Wallet,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -27,6 +30,14 @@ const navigation = [
   { label: "Subjects", to: "/subjects", icon: BookOpen },
   { label: "Classes", to: "/classes", icon: School },
   { label: "Coupons", to: "/coupons", icon: TicketCheck },
+] as const;
+
+const roleViews = [
+  { label: "Student view", to: "/student", icon: GraduationCap },
+  { label: "Teacher view", to: "/teacher", icon: UserRoundCheck },
+  { label: "Parent view", to: "/parent", icon: HeartHandshake },
+  { label: "Finance view", to: "/finance", icon: Wallet },
+  { label: "Admin & Roles", to: "/admin", icon: ShieldCheck },
 ] as const;
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
@@ -48,6 +59,31 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </p>
       <nav aria-label="Main navigation" className="flex flex-col gap-0.5">
         {navigation.map((item) => {
+          const active = pathname === item.to;
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.to}
+              to={item.to}
+              onClick={onNavigate}
+              className={cn(
+                "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
+                active
+                  ? "bg-highlight/20 text-primary-foreground ring-1 ring-highlight/30"
+                  : "text-primary-foreground/65 hover:bg-primary-foreground/10 hover:text-primary-foreground",
+              )}
+            >
+              <Icon className={cn("size-4", active ? "text-highlight" : "text-primary-foreground/40")} />
+              {item.label}
+            </Link>
+          );
+        })}
+      </nav>
+      <p className="px-3 pb-1 pt-5 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35">
+        Role views
+      </p>
+      <nav aria-label="Role views" className="flex flex-col gap-0.5">
+        {roleViews.map((item) => {
           const active = pathname === item.to;
           const Icon = item.icon;
           return (
