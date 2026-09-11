@@ -16,10 +16,8 @@ import { Route as ClassesRouteImport } from './routes/classes'
 import { Route as CouponsRouteImport } from './routes/coupons'
 import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as GradesRouteImport } from './routes/grades'
-import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParentRouteImport } from './routes/parent'
 import { Route as PaymentsRouteImport } from './routes/payments'
-import { Route as SignupRouteImport } from './routes/signup'
 import { Route as StudentRouteImport } from './routes/student'
 import { Route as StudentsRouteImport } from './routes/students'
 import { Route as SubjectsRouteImport } from './routes/subjects'
@@ -61,11 +59,6 @@ const GradesRoute = GradesRouteImport.update({
   path: '/grades',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ParentRoute = ParentRouteImport.update({
   id: '/parent',
   path: '/parent',
@@ -74,11 +67,6 @@ const ParentRoute = ParentRouteImport.update({
 const PaymentsRoute = PaymentsRouteImport.update({
   id: '/payments',
   path: '/payments',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StudentRoute = StudentRouteImport.update({
@@ -115,10 +103,8 @@ export interface FileRoutesByFullPath {
   '/coupons': typeof CouponsRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
-  '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
-  '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -133,10 +119,8 @@ export interface FileRoutesByTo {
   '/coupons': typeof CouponsRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
-  '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
-  '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -152,10 +136,8 @@ export interface FileRoutesById {
   '/coupons': typeof CouponsRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
-  '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
-  '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -172,10 +154,8 @@ export interface FileRouteTypes {
     | '/coupons'
     | '/finance'
     | '/grades'
-    | '/login'
     | '/parent'
     | '/payments'
-    | '/signup'
     | '/student'
     | '/students'
     | '/subjects'
@@ -190,10 +170,8 @@ export interface FileRouteTypes {
     | '/coupons'
     | '/finance'
     | '/grades'
-    | '/login'
     | '/parent'
     | '/payments'
-    | '/signup'
     | '/student'
     | '/students'
     | '/subjects'
@@ -208,10 +186,8 @@ export interface FileRouteTypes {
     | '/coupons'
     | '/finance'
     | '/grades'
-    | '/login'
     | '/parent'
     | '/payments'
-    | '/signup'
     | '/student'
     | '/students'
     | '/subjects'
@@ -227,10 +203,8 @@ export interface RootRouteChildren {
   CouponsRoute: typeof CouponsRoute
   FinanceRoute: typeof FinanceRoute
   GradesRoute: typeof GradesRoute
-  LoginRoute: typeof LoginRoute
   ParentRoute: typeof ParentRoute
   PaymentsRoute: typeof PaymentsRoute
-  SignupRoute: typeof SignupRoute
   StudentRoute: typeof StudentRoute
   StudentsRoute: typeof StudentsRoute
   SubjectsRoute: typeof SubjectsRoute
@@ -289,13 +263,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GradesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/parent': {
       id: '/parent'
       path: '/parent'
@@ -308,13 +275,6 @@ declare module '@tanstack/react-router' {
       path: '/payments'
       fullPath: '/payments'
       preLoaderRoute: typeof PaymentsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/student': {
@@ -363,10 +323,8 @@ const rootRouteChildren: RootRouteChildren = {
   CouponsRoute: CouponsRoute,
   FinanceRoute: FinanceRoute,
   GradesRoute: GradesRoute,
-  LoginRoute: LoginRoute,
   ParentRoute: ParentRoute,
   PaymentsRoute: PaymentsRoute,
-  SignupRoute: SignupRoute,
   StudentRoute: StudentRoute,
   StudentsRoute: StudentsRoute,
   SubjectsRoute: SubjectsRoute,

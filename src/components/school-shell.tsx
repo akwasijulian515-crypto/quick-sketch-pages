@@ -153,7 +153,6 @@ export function SchoolShell({ children, title = "Overview" }: { children: ReactN
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden text-xs text-muted-foreground sm:inline">Term II · Week 9</span>
-            <Button asChild variant="outline" size="sm"><Link to="/login">Sign in</Link></Button>
             <Button size="sm">New entry</Button>
           </div>
         </header>
