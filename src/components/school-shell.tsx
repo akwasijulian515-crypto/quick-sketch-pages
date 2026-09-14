@@ -72,31 +72,6 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           );
         })}
       </nav>
-      <p className="px-3 pb-1 pt-5 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35">
-        Role views
-      </p>
-      <nav aria-label="Role views" className="flex flex-col gap-0.5">
-        {roleViews.map((item) => {
-          const active = pathname === item.to;
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.to}
-              to={item.to}
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
-                active
-                  ? "bg-highlight/20 text-primary-foreground ring-1 ring-highlight/30"
-                  : "text-primary-foreground/65 hover:bg-primary-foreground/10 hover:text-primary-foreground",
-              )}
-            >
-              <Icon className={cn("size-4", active ? "text-highlight" : "text-primary-foreground/40")} />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
       <div className="mt-auto rounded-md bg-primary-foreground/5 px-2 py-3 ring-1 ring-primary-foreground/10">
         <div className="flex items-center gap-2.5">
           <img
