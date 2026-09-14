@@ -2,17 +2,14 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BookOpen,
   GraduationCap,
-  HeartHandshake,
   LayoutDashboard,
   Menu,
   ReceiptText,
   School,
   ScrollText,
-  ShieldCheck,
   TicketCheck,
   UserRoundCheck,
   UsersRound,
-  Wallet,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
