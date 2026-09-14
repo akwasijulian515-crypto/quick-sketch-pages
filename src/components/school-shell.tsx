@@ -32,13 +32,6 @@ const navigation = [
   { label: "Coupons", to: "/coupons", icon: TicketCheck },
 ] as const;
 
-const roleViews = [
-  { label: "Student view", to: "/student", icon: GraduationCap },
-  { label: "Teacher view", to: "/teacher", icon: UserRoundCheck },
-  { label: "Parent view", to: "/parent", icon: HeartHandshake },
-  { label: "Finance view", to: "/finance", icon: Wallet },
-  { label: "Admin & Roles", to: "/admin", icon: ShieldCheck },
-] as const;
 
 function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
