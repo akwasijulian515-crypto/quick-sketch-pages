@@ -184,21 +184,34 @@ function Dashboard() {
   );
 }
 
+const attendanceStatuses = ["present", "late", "absent"] as const;
+type AttendanceStatus = (typeof attendanceStatuses)[number];
+
+function statusLabel(status: AttendanceStatus) {
+  return status[0].toUpperCase() + status.slice(1);
+}
+
 function MarkEntry() {
   const [date, setDate] = useState(today());
-  const [present, setPresent] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(students.map((s) => [s, true])),
+  const [status, setStatus] = useState<Record<string, AttendanceStatus>>(() =>
+    Object.fromEntries(students.map((s) => [s, "present" as AttendanceStatus])),
   );
   const [saved, setSaved] = useState(false);
-  const count = students.filter((s) => present[s]).length;
+  const counts = attendanceStatuses.reduce<Record<AttendanceStatus, number>>(
+    (acc, key) => {
+      acc[key] = students.filter((s) => status[s] === key).length;
+      return acc;
+    },
+    { present: 0, late: 0, absent: 0 },
+  );
 
-  function setAll(value: boolean) {
-    setPresent(Object.fromEntries(students.map((s) => [s, value])));
+  function setAll(value: AttendanceStatus) {
+    setStatus(Object.fromEntries(students.map((s) => [s, value])));
     setSaved(false);
   }
 
   return (
-    <Panel title="Mark entry" note="Pick a date, then mark each student present or absent.">
+    <Panel title="Mark entry" note="Pick a date, then mark each student present, late, or absent.">
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <label className="flex items-center gap-2 text-sm">
           <CalendarDays className="size-4 text-muted-foreground" />
@@ -209,24 +222,38 @@ function MarkEntry() {
             className="h-9 rounded-md border border-input bg-background/70 px-3 text-sm"
           />
         </label>
-        <Button variant="outline" size="sm" onClick={() => setAll(true)}>Mark all present</Button>
-        <Button variant="outline" size="sm" onClick={() => setAll(false)}>Mark all absent</Button>
-        <span className="ml-auto text-xs text-muted-foreground">{count} of {students.length} present</span>
+        <Button variant="outline" size="sm" onClick={() => setAll("present")}>Mark all present</Button>
+        <Button variant="outline" size="sm" onClick={() => setAll("late")}>Mark all late</Button>
+        <Button variant="outline" size="sm" onClick={() => setAll("absent")}>Mark all absent</Button>
+        <span className="ml-auto text-xs text-muted-foreground">
+          {counts.present} present · {counts.late} late · {counts.absent} absent
+        </span>
       </div>
 
       <ul className="divide-y divide-border/70">
         {students.map((student) => (
-          <li key={student} className="flex items-center justify-between px-5 py-3">
+          <li key={student} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
             <span className="text-sm">{student}</span>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={Boolean(present[student])}
-                onChange={(event) => { setPresent((p) => ({ ...p, [student]: event.target.checked })); setSaved(false); }}
-                className="size-4 accent-[hsl(var(--primary))]"
-              />
-              {present[student] ? "Present" : "Absent"}
-            </label>
+            <div className="flex gap-1.5" role="group" aria-label={`Attendance for ${student}`}>
+              {attendanceStatuses.map((option) => {
+                const active = status[student] === option;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => { setStatus((p) => ({ ...p, [student]: option })); setSaved(false); }}
+                    className={cn(
+                      "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                      active
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background/70 text-muted-foreground ring-1 ring-border hover:bg-secondary",
+                    )}
+                  >
+                    {statusLabel(option)}
+                  </button>
+                );
+              })}
+            </div>
           </li>
         ))}
       </ul>
