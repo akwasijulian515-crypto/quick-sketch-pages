@@ -1,8 +1,9 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BookOpen,
   GraduationCap,
   LayoutDashboard,
+  LogOut,
   Menu,
   ReceiptText,
   School,
@@ -90,7 +91,13 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export function SchoolShell({ children, title = "Overview" }: { children: ReactNode; title?: string }) {
+  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  function handleSignOut() {
+    sessionStorage.removeItem("hg-role");
+    navigate({ to: "/login" });
+  }
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
@@ -119,6 +126,9 @@ export function SchoolShell({ children, title = "Overview" }: { children: ReactN
           <div className="flex items-center gap-2">
             <span className="hidden text-xs text-muted-foreground sm:inline">Term II · Week 9</span>
             <Button size="sm">New entry</Button>
+            <Button variant="outline" size="sm" onClick={handleSignOut}>
+              <LogOut />Sign out
+            </Button>
           </div>
         </header>
         <main className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</main>
