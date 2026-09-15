@@ -1,5 +1,6 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  Building2,
   BookOpen,
   GraduationCap,
   LayoutDashboard,
@@ -10,6 +11,7 @@ import {
   TicketCheck,
   UserRoundCheck,
   UsersRound,
+  ShieldCheck,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -29,26 +31,31 @@ const navigation = [
   { label: "Coupons", to: "/coupons", icon: TicketCheck },
 ] as const;
 
+const platformNavigation = [
+  { label: "School directory", to: "/admin", icon: Building2 },
+] as const;
 
-function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+
+function Sidebar({ onNavigate, platform = false }: { onNavigate?: () => void; platform?: boolean }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const links = platform ? platformNavigation : navigation;
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col bg-primary px-3 py-5 text-primary-foreground shadow-2xl shadow-primary/15">
       <div className="flex items-center gap-2.5 px-2 py-1.5">
         <div className="grid size-9 place-items-center rounded-md bg-highlight font-display text-base font-bold text-highlight-foreground shadow-sm">
-          H
+          {platform ? <ShieldCheck className="size-4" /> : "H"}
         </div>
         <div className="leading-tight">
-          <p className="font-display text-[15px] font-bold">Harrow Green</p>
-          <p className="text-[11px] text-primary-foreground/50">School Operations</p>
+          <p className="font-display text-[15px] font-bold">{platform ? "School Platform" : "Harrow Green"}</p>
+          <p className="text-[11px] text-primary-foreground/50">{platform ? "Super Admin Console" : "School Operations"}</p>
         </div>
       </div>
       <p className="px-3 pb-1 pt-5 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35">
-        Workspace
+        {platform ? "Platform" : "Workspace"}
       </p>
       <nav aria-label="Main navigation" className="flex flex-col gap-0.5">
-        {navigation.map((item) => {
+        {links.map((item) => {
           const active = pathname === item.to;
           const Icon = item.icon;
           return (
@@ -71,17 +78,10 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <div className="mt-auto rounded-md bg-primary-foreground/5 px-2 py-3 ring-1 ring-primary-foreground/10">
         <div className="flex items-center gap-2.5">
-          <img
-            src={headTeacher}
-            alt="Dr. Adaeze Okafor"
-            width={512}
-            height={512}
-            loading="lazy"
-            className="size-9 rounded-md object-cover ring-1 ring-primary-foreground/15"
-          />
+          {platform ? <div className="grid size-9 place-items-center rounded-md bg-highlight/20 text-highlight"><ShieldCheck className="size-4" /></div> : <img src={headTeacher} alt="Dr. Adaeze Okafor" width={512} height={512} loading="lazy" className="size-9 rounded-md object-cover ring-1 ring-primary-foreground/15" />}
           <div className="min-w-0 leading-tight">
-            <p className="truncate text-sm font-medium">Dr. Adaeze Okafor</p>
-            <p className="text-[11px] text-primary-foreground/45">Head Teacher</p>
+            <p className="truncate text-sm font-medium">{platform ? "Akwasi Julian" : "Dr. Adaeze Okafor"}</p>
+            <p className="text-[11px] text-primary-foreground/45">{platform ? "Super Admin" : "Head Teacher"}</p>
           </div>
         </div>
       </div>
@@ -89,18 +89,18 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-export function SchoolShell({ children, title = "Overview" }: { children: ReactNode; title?: string }) {
+export function SchoolShell({ children, title = "Overview", platform = false }: { children: ReactNode; title?: string; platform?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
       <div className="sticky top-0 hidden h-screen lg:block">
-        <Sidebar />
+        <Sidebar platform={platform} />
       </div>
       {menuOpen ? (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative z-10 h-full"><Sidebar onNavigate={() => setMenuOpen(false)} /></div>
+          <div className="relative z-10 h-full"><Sidebar platform={platform} onNavigate={() => setMenuOpen(false)} /></div>
           <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25" onClick={() => setMenuOpen(false)} />
         </div>
       ) : null}
@@ -118,7 +118,7 @@ export function SchoolShell({ children, title = "Overview" }: { children: ReactN
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden text-xs text-muted-foreground sm:inline">Term II · Week 9</span>
-            <Button size="sm">New entry</Button>
+            <Button size="sm">{platform ? "Add school" : "New entry"}</Button>
           </div>
         </header>
         <main className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</main>
