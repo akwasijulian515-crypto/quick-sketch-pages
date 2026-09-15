@@ -24,7 +24,7 @@ const roles = [
   { label: "Student", icon: GraduationCap, ready: false, note: "Coming soon" },
   { label: "Parent", icon: HeartHandshake, ready: false, note: "Coming soon" },
   { label: "Finance", icon: Wallet, ready: false, note: "Coming soon" },
-  { label: "Admin", icon: ShieldCheck, ready: false, note: "Coming soon" },
+  { label: "Admin", icon: ShieldCheck, ready: true, note: "Accounts & roles" },
 ];
 
 function LoginPage() {
@@ -34,7 +34,7 @@ function LoginPage() {
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     sessionStorage.setItem("hg-role", role.toLowerCase());
-    navigate({ to: "/teacher" });
+    navigate({ to: role === "Admin" ? "/admin" : "/teacher" });
   }
 
   return (
