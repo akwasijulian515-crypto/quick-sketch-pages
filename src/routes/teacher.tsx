@@ -248,7 +248,7 @@ function Attendance() {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstWeekday = new Date(year, month, 1).getDay();
   const [selected, setSelected] = useState(now.getDate());
-  const [klass, setKlass] = useState(classes[0]);
+  const [klass, setKlass] = useState<string>(classes[0] ?? "All classes");
 
   const monthLabel = now.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 
