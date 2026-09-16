@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AttendanceRouteImport } from './routes/attendance'
+import { Route as AttendanceOverviewRouteImport } from './routes/attendance-overview'
 import { Route as ClassesRouteImport } from './routes/classes'
 import { Route as CouponsRouteImport } from './routes/coupons'
 import { Route as FinanceRouteImport } from './routes/finance'
@@ -19,6 +20,7 @@ import { Route as GradesRouteImport } from './routes/grades'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParentRouteImport } from './routes/parent'
 import { Route as PaymentsRouteImport } from './routes/payments'
+import { Route as SchoolAdminRouteImport } from './routes/school-admin'
 import { Route as StudentRouteImport } from './routes/student'
 import { Route as StudentsRouteImport } from './routes/students'
 import { Route as SubjectsRouteImport } from './routes/subjects'
@@ -38,6 +40,11 @@ const AdminRoute = AdminRouteImport.update({
 const AttendanceRoute = AttendanceRouteImport.update({
   id: '/attendance',
   path: '/attendance',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AttendanceOverviewRoute = AttendanceOverviewRouteImport.update({
+  id: '/attendance-overview',
+  path: '/attendance-overview',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ClassesRoute = ClassesRouteImport.update({
@@ -75,6 +82,11 @@ const PaymentsRoute = PaymentsRouteImport.update({
   path: '/payments',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SchoolAdminRoute = SchoolAdminRouteImport.update({
+  id: '/school-admin',
+  path: '/school-admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StudentRoute = StudentRouteImport.update({
   id: '/student',
   path: '/student',
@@ -105,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
+  '/attendance-overview': typeof AttendanceOverviewRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
   '/finance': typeof FinanceRoute
@@ -112,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
+  '/school-admin': typeof SchoolAdminRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -122,6 +136,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
+  '/attendance-overview': typeof AttendanceOverviewRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
   '/finance': typeof FinanceRoute
@@ -129,6 +144,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
+  '/school-admin': typeof SchoolAdminRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -140,6 +156,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
+  '/attendance-overview': typeof AttendanceOverviewRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
   '/finance': typeof FinanceRoute
@@ -147,6 +164,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
+  '/school-admin': typeof SchoolAdminRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -159,6 +177,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/attendance'
+    | '/attendance-overview'
     | '/classes'
     | '/coupons'
     | '/finance'
@@ -166,6 +185,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/parent'
     | '/payments'
+    | '/school-admin'
     | '/student'
     | '/students'
     | '/subjects'
@@ -176,6 +196,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/attendance'
+    | '/attendance-overview'
     | '/classes'
     | '/coupons'
     | '/finance'
@@ -183,6 +204,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/parent'
     | '/payments'
+    | '/school-admin'
     | '/student'
     | '/students'
     | '/subjects'
@@ -193,6 +215,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/attendance'
+    | '/attendance-overview'
     | '/classes'
     | '/coupons'
     | '/finance'
@@ -200,6 +223,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/parent'
     | '/payments'
+    | '/school-admin'
     | '/student'
     | '/students'
     | '/subjects'
@@ -211,6 +235,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   AttendanceRoute: typeof AttendanceRoute
+  AttendanceOverviewRoute: typeof AttendanceOverviewRoute
   ClassesRoute: typeof ClassesRoute
   CouponsRoute: typeof CouponsRoute
   FinanceRoute: typeof FinanceRoute
@@ -218,6 +243,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ParentRoute: typeof ParentRoute
   PaymentsRoute: typeof PaymentsRoute
+  SchoolAdminRoute: typeof SchoolAdminRoute
   StudentRoute: typeof StudentRoute
   StudentsRoute: typeof StudentsRoute
   SubjectsRoute: typeof SubjectsRoute
@@ -246,6 +272,13 @@ declare module '@tanstack/react-router' {
       path: '/attendance'
       fullPath: '/attendance'
       preLoaderRoute: typeof AttendanceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/attendance-overview': {
+      id: '/attendance-overview'
+      path: '/attendance-overview'
+      fullPath: '/attendance-overview'
+      preLoaderRoute: typeof AttendanceOverviewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/classes': {
@@ -297,6 +330,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PaymentsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/school-admin': {
+      id: '/school-admin'
+      path: '/school-admin'
+      fullPath: '/school-admin'
+      preLoaderRoute: typeof SchoolAdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/student': {
       id: '/student'
       path: '/student'
@@ -339,6 +379,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   AttendanceRoute: AttendanceRoute,
+  AttendanceOverviewRoute: AttendanceOverviewRoute,
   ClassesRoute: ClassesRoute,
   CouponsRoute: CouponsRoute,
   FinanceRoute: FinanceRoute,
@@ -346,6 +387,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ParentRoute: ParentRoute,
   PaymentsRoute: PaymentsRoute,
+  SchoolAdminRoute: SchoolAdminRoute,
   StudentRoute: StudentRoute,
   StudentsRoute: StudentsRoute,
   SubjectsRoute: SubjectsRoute,

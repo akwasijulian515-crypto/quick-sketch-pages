@@ -1,9 +1,10 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Building2,
   BookOpen,
   GraduationCap,
   LayoutDashboard,
+  LogOut,
   Menu,
   ReceiptText,
   School,
@@ -35,10 +36,27 @@ const platformNavigation = [
   { label: "School directory", to: "/admin", icon: Building2 },
 ] as const;
 
+const schoolAdminNavigation = [
+  { label: "Overview", to: "/", icon: LayoutDashboard },
+  { label: "Students", to: "/students", icon: GraduationCap },
+  { label: "Payments", to: "/payments", icon: ReceiptText },
+  { label: "Attendance", to: "/attendance-overview", icon: UserRoundCheck },
+  { label: "Grades", to: "/grades", icon: ScrollText },
+  { label: "Teachers", to: "/teachers", icon: UsersRound },
+  { label: "Subjects", to: "/subjects", icon: BookOpen },
+  { label: "Classes", to: "/classes", icon: School },
+  { label: "Coupons", to: "/coupons", icon: TicketCheck },
+] as const;
 
-function Sidebar({ onNavigate, platform = false }: { onNavigate?: () => void; platform?: boolean }) {
+const parentNavigation = [
+  { label: "My children", to: "/parent", icon: GraduationCap },
+] as const;
+
+
+function Sidebar({ onNavigate, platform = false, schoolAdmin = false, parentPortal = false }: { onNavigate?: () => void; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const links = platform ? platformNavigation : navigation;
+  const navigate = useNavigate();
+  const links = platform ? platformNavigation : schoolAdmin ? schoolAdminNavigation : parentPortal ? parentNavigation : navigation;
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col bg-primary px-3 py-5 text-primary-foreground shadow-2xl shadow-primary/15">
@@ -48,7 +66,7 @@ function Sidebar({ onNavigate, platform = false }: { onNavigate?: () => void; pl
         </div>
         <div className="leading-tight">
           <p className="font-display text-[15px] font-bold">{platform ? "School Platform" : "Harrow Green"}</p>
-          <p className="text-[11px] text-primary-foreground/50">{platform ? "Super Admin Console" : "School Operations"}</p>
+          <p className="text-[11px] text-primary-foreground/50">{platform ? "Super Admin Console" : schoolAdmin ? "School Admin Console" : parentPortal ? "Family Portal" : "School Operations"}</p>
         </div>
       </div>
       <p className="px-3 pb-1 pt-5 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35">
@@ -80,27 +98,39 @@ function Sidebar({ onNavigate, platform = false }: { onNavigate?: () => void; pl
         <div className="flex items-center gap-2.5">
           {platform ? <div className="grid size-9 place-items-center rounded-md bg-highlight/20 text-highlight"><ShieldCheck className="size-4" /></div> : <img src={headTeacher} alt="Dr. Adaeze Okafor" width={512} height={512} loading="lazy" className="size-9 rounded-md object-cover ring-1 ring-primary-foreground/15" />}
           <div className="min-w-0 leading-tight">
-            <p className="truncate text-sm font-medium">{platform ? "Akwasi Julian" : "Dr. Adaeze Okafor"}</p>
-            <p className="text-[11px] text-primary-foreground/45">{platform ? "Super Admin" : "Head Teacher"}</p>
+            <p className="truncate text-sm font-medium">{platform ? "Akwasi Julian" : schoolAdmin ? "School Administrator" : parentPortal ? "Mrs. Mensah" : "Dr. Adaeze Okafor"}</p>
+            <p className="text-[11px] text-primary-foreground/45">{platform ? "Super Admin" : schoolAdmin ? "School Admin" : parentPortal ? "Parent" : "Head Teacher"}</p>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            sessionStorage.removeItem("hg-role");
+            onNavigate?.();
+            navigate({ to: "/login" });
+          }}
+          className="mt-3 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-primary-foreground/60 transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground"
+        >
+          <LogOut className="size-3.5" />Sign out
+        </button>
       </div>
     </aside>
   );
 }
 
-export function SchoolShell({ children, title = "Overview", platform = false }: { children: ReactNode; title?: string; platform?: boolean }) {
+export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, parentPortal = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
       <div className="sticky top-0 hidden h-screen lg:block">
-        <Sidebar platform={platform} />
+        <Sidebar platform={platform} schoolAdmin={schoolAdmin} parentPortal={parentPortal} />
       </div>
       {menuOpen ? (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative z-10 h-full"><Sidebar platform={platform} onNavigate={() => setMenuOpen(false)} /></div>
+          <div className="relative z-10 h-full"><Sidebar platform={platform} schoolAdmin={schoolAdmin} parentPortal={parentPortal} onNavigate={() => setMenuOpen(false)} /></div>
           <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25" onClick={() => setMenuOpen(false)} />
         </div>
       ) : null}
@@ -118,7 +148,17 @@ export function SchoolShell({ children, title = "Overview", platform = false }: 
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden text-xs text-muted-foreground sm:inline">Term II · Week 9</span>
-            <Button size="sm">{platform ? "Add school" : "New entry"}</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                sessionStorage.removeItem("hg-role");
+                navigate({ to: "/login" });
+              }}
+            >
+              <LogOut />Sign out
+            </Button>
+            <Button size="sm">{platform ? "Add school" : schoolAdmin ? "Add user" : parentPortal ? "Pay fees" : "New entry"}</Button>
           </div>
         </header>
         <main className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</main>
