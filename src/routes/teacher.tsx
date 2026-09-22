@@ -25,10 +25,57 @@ const tabs = [
   { id: "coupons", label: "Coupons", icon: TicketCheck },
 ] as const;
 
+type AttendanceStatus = "present" | "late" | "absent";
+type RegisterStudent = { id: string; name: string; admissionNumber: string; status: AttendanceStatus; timeIn: string; note?: string };
+type ScoreField = "classTest" | "project" | "homework" | "groupWork" | "exam";
+type StudentScores = Record<ScoreField, string>;
+type LearnerProfile = { conduct: string; attitude: string; interest: string; remark: string };
+
+const initialRegister: RegisterStudent[] = [
+  { id: "stu-001", name: "Abena Ofori", admissionNumber: "HGA-2B-001", status: "present", timeIn: "07:36" },
+  { id: "stu-002", name: "Daniel Boateng", admissionNumber: "HGA-2B-002", status: "present", timeIn: "07:42" },
+  { id: "stu-003", name: "Eunice Agyeman", admissionNumber: "HGA-2B-003", status: "late", timeIn: "08:14", note: "Transport delay" },
+  { id: "stu-004", name: "Felix Nyarko", admissionNumber: "HGA-2B-004", status: "present", timeIn: "07:39" },
+  { id: "stu-005", name: "Gloria Mensah", admissionNumber: "HGA-2B-005", status: "absent", timeIn: "-", note: "Parent notified" },
+  { id: "stu-006", name: "Isaac Amankwah", admissionNumber: "HGA-2B-006", status: "present", timeIn: "07:45" },
+  { id: "stu-007", name: "Janet Asiedu", admissionNumber: "HGA-2B-007", status: "present", timeIn: "07:32" },
+  { id: "stu-008", name: "Kofi Owusu", admissionNumber: "HGA-2B-008", status: "late", timeIn: "08:08", note: "Assembly" },
+];
+
+function statusLabel(status: AttendanceStatus) { return `${status.charAt(0).toUpperCase()}${status.slice(1)}`; }
+const subjects = ["Mathematics", "Integrated Science", "ICT"];
+const scoreLimits: Record<ScoreField, number> = { classTest: 10, project: 20, homework: 10, groupWork: 10, exam: 100 };
+const emptyScores: StudentScores = { classTest: "", project: "", homework: "", groupWork: "", exam: "" };
+const emptyProfile: LearnerProfile = { conduct: "Good", attitude: "Good", interest: "Good", remark: "" };
+function calculateScore(scores: StudentScores) { return Number(scores.classTest || 0) + Number(scores.project || 0) + Number(scores.homework || 0) + Number(scores.groupWork || 0) + Number(scores.exam || 0) / 2; }
+function gradeFor(score: number) { return score >= 80 ? "A" : score >= 70 ? "B+" : score >= 60 ? "B" : score >= 50 ? "C+" : score >= 40 ? "C" : "D"; }
+
 function TeacherPortal() {
   const navigate = useNavigate();
   const [allowed, setAllowed] = useState(false);
   const [tab, setTab] = useState<(typeof tabs)[number]["id"]>("register");
+  const [register, setRegister] = useState(initialRegister);
+  const [subject, setSubject] = useState(subjects[0]!);
+  const [gradeBook, setGradeBook] = useState<Record<string, StudentScores>>(() => Object.fromEntries(initialRegister.map((student) => [student.id, { ...emptyScores }])));
+  const [gradeView, setGradeView] = useState<"scores" | "profile">("scores");
+  const [profiles, setProfiles] = useState<Record<string, LearnerProfile>>(() => Object.fromEntries(initialRegister.map((student) => [student.id, { ...emptyProfile }])));
+
+  const presentCount = register.filter((student) => student.status === "present").length;
+  const lateCount = register.filter((student) => student.status === "late").length;
+  const absentCount = register.filter((student) => student.status === "absent").length;
+
+  function setAttendance(studentId: string, status: AttendanceStatus) {
+    setRegister((current) => current.map((student) => student.id === studentId ? { ...student, status, timeIn: status === "absent" ? "-" : student.timeIn === "-" ? "08:00" : student.timeIn } : student));
+  }
+
+  function updateScore(studentId: string, field: ScoreField, value: string) {
+    if (value !== "" && (!/^\d*(\.\d{0,2})?$/.test(value) || Number(value) > scoreLimits[field])) return;
+    setGradeBook((current) => ({ ...current, [studentId]: { ...(current[studentId] ?? emptyScores), [field]: value } }));
+  }
+
+  function updateProfile(studentId: string, field: keyof LearnerProfile, value: string) {
+    setProfiles((current) => ({ ...current, [studentId]: { ...(current[studentId] ?? emptyProfile), [field]: value } }));
+  }
 
   useEffect(() => {
     if (sessionStorage.getItem("hg-role") === "teacher") {
@@ -80,7 +127,7 @@ function TeacherPortal() {
 
         <section className="mt-6 grid gap-3 sm:grid-cols-3">
           {[
-            { label: "Present today", value: "38", note: "of 42 students" },
+            { label: "Present today", value: String(presentCount), note: `of ${register.length} students shown` },
             { label: "Grades pending", value: "2", note: "subjects to submit" },
             { label: "Coupons issued", value: "5", note: "this week" },
           ].map((stat) => (
@@ -98,32 +145,25 @@ function TeacherPortal() {
               {tab === "register" ? "Today's register" : tab === "grades" ? "Grade entry" : "Coupon generation"}
             </h2>
             <p className="text-xs text-muted-foreground">
-              {tab === "register" ? "Mark each student present, late, or absent." : tab === "grades" ? "Enter scores for your subjects." : "Issue coupons to paid students."}
+              {tab === "register" ? "Mark each student present, late, or absent." : tab === "grades" ? "Coursework totals 50 marks; half of the 100-mark exam creates the final score out of 100." : "Issue coupons to paid students."}
             </p>
           </div>
+          {tab === "grades" && <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/20 px-5 py-3"><div className="flex rounded-md border border-input bg-background/70 p-1"><button type="button" onClick={() => setGradeView("scores")} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", gradeView === "scores" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>Academic scores</button><button type="button" onClick={() => setGradeView("profile")} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", gradeView === "profile" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>Conduct & remarks</button></div>{gradeView === "scores" ? <label className="flex items-center gap-2 text-sm"><span className="text-xs font-medium text-muted-foreground">Assigned subject</span><select value={subject} onChange={(event) => setSubject(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring">{subjects.map((item) => <option key={item}>{item}</option>)}</select></label> : <span className="text-xs text-muted-foreground">Term-wide learner profile</span>}<span className="text-xs text-muted-foreground">Form 2B · {register.length} students shown</span></div>}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-sm">
+            <table className={cn("w-full text-left text-sm", tab === "grades" ? gradeView === "scores" ? "min-w-[1040px]" : "min-w-[920px]" : "min-w-[560px]")}>
               <thead className="bg-muted/60 text-xs text-muted-foreground">
                 <tr>
-                  {(tab === "register" ? ["Student", "Status", "Time in", "Note"] : tab === "grades" ? ["Student", "Subject", "Score", "Grade"] : ["Student", "Coupon", "Issued", "Status"]).map((column) => (
+                  {(tab === "register" ? ["Student", "Status", "Time in", "Note"] : tab === "grades" ? gradeView === "scores" ? ["Student", "Class test /10", "Project /20", "Homework /10", "Group work /10", "Exam /100", "Final /100", "Grade"] : ["Student", "Conduct", "Attitude", "Interest", "Teacher remark"] : ["Student", "Coupon", "Issued", "Status"]).map((column) => (
                     <th key={column} className="px-5 py-3 font-medium">{column}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/70">
-                {[0, 1, 2, 3, 4].map((row) => (
-                  <tr key={row}>
-                    {[0, 1, 2, 3].map((cell) => (
-                      <td key={cell} className="px-5 py-4">
-                        <div className={cn("h-3 rounded", cell === 0 ? "w-28 bg-primary/15" : "w-20 bg-muted-foreground/15")} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {tab === "register" ? register.map((student) => <tr key={student.id} className="hover:bg-muted/30"><td className="px-5 py-3"><p className="font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></td><td className="px-5 py-3"><div className="flex gap-1.5">{(["present", "late", "absent"] as const).map((status) => <button key={status} type="button" onClick={() => setAttendance(student.id, status)} className={cn("rounded-full px-2 py-1 text-xs font-medium transition-colors", student.status === status ? status === "present" ? "bg-emerald-500 text-white" : status === "late" ? "bg-amber-500 text-white" : "bg-rose-500 text-white" : "bg-muted text-muted-foreground hover:bg-muted-foreground/15")}>{statusLabel(status)}</button>)}</div></td><td className="px-5 py-3 font-mono text-xs text-secondary-foreground">{student.timeIn}</td><td className="px-5 py-3 text-xs text-muted-foreground">{student.note ?? "-"}</td></tr>) : tab === "grades" ? gradeView === "scores" ? register.map((student) => { const scores = gradeBook[student.id] ?? emptyScores; const finalScore = calculateScore(scores); return <tr key={student.id} className="hover:bg-muted/30"><td className="px-5 py-3"><p className="font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></td>{(["classTest", "project", "homework", "groupWork", "exam"] as const).map((field) => <td key={field} className="px-3 py-3"><input inputMode="decimal" value={scores[field]} onChange={(event) => updateScore(student.id, field, event.target.value)} placeholder="0" className="h-9 w-20 rounded-md border border-input bg-background/70 px-2 text-center text-sm outline-none focus:ring-2 focus:ring-ring" /></td>)}<td className="px-5 py-3 font-display text-base">{finalScore.toFixed(1)}</td><td className="px-5 py-3"><span className={cn("rounded-full px-2 py-1 text-xs font-medium", finalScore >= 50 ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/10 text-amber-700")}>{gradeFor(finalScore)}</span></td></tr> }) : register.map((student) => { const profile = profiles[student.id] ?? emptyProfile; return <tr key={student.id} className="hover:bg-muted/30"><td className="px-5 py-3"><p className="font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></td>{(["conduct", "attitude", "interest"] as const).map((field) => <td key={field} className="px-3 py-3"><select value={profile[field]} onChange={(event) => updateProfile(student.id, field, event.target.value)} className="h-9 w-28 rounded-md border border-input bg-background/70 px-2 text-sm outline-none focus:ring-2 focus:ring-ring">{["Excellent", "Very good", "Good", "Fair", "Needs support"].map((value) => <option key={value}>{value}</option>)}</select></td>)}<td className="px-3 py-3"><input value={profile.remark} onChange={(event) => updateProfile(student.id, "remark", event.target.value)} placeholder="Add a short remark" className="h-9 w-full min-w-64 rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></td></tr> }) : [0, 1, 2, 3, 4].map((row) => <tr key={row}>{[0, 1, 2, 3].map((cell) => <td key={cell} className="px-5 py-4"><div className={cn("h-3 rounded", cell === 0 ? "w-28 bg-primary/15" : "w-20 bg-muted-foreground/15")} /></td>)}</tr>)}
               </tbody>
             </table>
           </div>
-          <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">Ready for live class records.</div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground"><span>{tab === "register" ? `${presentCount} present · ${lateCount} late · ${absentCount} absent` : tab === "grades" ? gradeView === "scores" ? `${subject}: coursework /50 + exam ÷ 2 = final /100` : "Teacher assessments used in the terminal report" : "Ready for live class records."}</span>{(tab === "register" || tab === "grades") && <span>Showing 8 of 42 students</span>}</div>
         </section>
       </main>
     </div>

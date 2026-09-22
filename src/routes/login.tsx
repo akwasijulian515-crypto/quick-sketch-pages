@@ -21,7 +21,7 @@ export const Route = createFileRoute("/login")({
 
 const roles = [
   { label: "Teacher", icon: UserRoundCheck, ready: true, note: "Register, grades & coupons" },
-  { label: "Student", icon: GraduationCap, ready: false, note: "Coming soon" },
+  { label: "Student", icon: GraduationCap, ready: true, note: "Learning, results & fees" },
   { label: "Parent", icon: HeartHandshake, ready: true, note: "Children, fees & updates" },
   { label: "Finance", icon: Wallet, ready: true, note: "Payments & receipts" },
   { label: "School Admin", icon: ShieldCheck, ready: true, note: "Users & terminal reports" },
@@ -34,7 +34,7 @@ function LoginPage() {
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     sessionStorage.setItem("hg-role", role.toLowerCase());
-    navigate({ to: role === "School Admin" ? "/school-admin" : role === "Finance" ? "/finance" : role === "Parent" ? "/parent" : "/teacher" });
+    navigate({ to: role === "School Admin" ? "/school-admin" : role === "Finance" ? "/finance" : role === "Parent" ? "/parent" : role === "Student" ? "/student" : "/teacher" });
   }
 
   return (
