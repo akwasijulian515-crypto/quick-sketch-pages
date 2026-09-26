@@ -7,7 +7,7 @@ import { SchoolShell } from "@/components/school-shell";
 type SkeletonPageProps = {
   title: string;
   description: string;
-  action: string;
+  action?: string;
   icon: LucideIcon;
   stats: Array<{ label: string; value: string; note: string }>;
   columns: string[];
@@ -23,7 +23,7 @@ export function PageSkeleton({ title, description, action, icon: Icon, stats, co
             <h1 className="font-display text-3xl font-bold">{title}</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{description}</p>
           </div>
-          <Button><Plus />{action}</Button>
+          {action ? <Button><Plus />{action}</Button> : null}
         </div>
 
         <section className="mt-7 grid gap-3 sm:grid-cols-3">
