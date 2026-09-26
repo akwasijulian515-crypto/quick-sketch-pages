@@ -188,7 +188,7 @@ const attendanceStatuses = ["present", "late", "absent"] as const;
 type AttendanceStatus = (typeof attendanceStatuses)[number];
 
 function statusLabel(status: AttendanceStatus) {
-  return status[0].toUpperCase() + status.slice(1);
+  return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 function MarkEntry() {
