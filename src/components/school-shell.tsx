@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const navigation = [
-  { label: "Overview", to: "/", icon: LayoutDashboard },
+  { label: "Overview", to: "/dashboard", icon: LayoutDashboard },
   { label: "Students", to: "/students", icon: GraduationCap },
   { label: "Payments", to: "/payments", icon: ReceiptText },
   { label: "Attendance", to: "/attendance", icon: UserRoundCheck },
