@@ -14,6 +14,7 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AttendanceRouteImport } from './routes/attendance'
 import { Route as ClassesRouteImport } from './routes/classes'
 import { Route as CouponsRouteImport } from './routes/coupons'
+import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as GradesRouteImport } from './routes/grades'
 import { Route as LoginRouteImport } from './routes/login'
@@ -48,6 +49,11 @@ const ClassesRoute = ClassesRouteImport.update({
 const CouponsRoute = CouponsRouteImport.update({
   id: '/coupons',
   path: '/coupons',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FinanceRoute = FinanceRouteImport.update({
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/attendance': typeof AttendanceRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
+  '/dashboard': typeof DashboardRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
   '/login': typeof LoginRoute
@@ -124,6 +131,7 @@ export interface FileRoutesByTo {
   '/attendance': typeof AttendanceRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
+  '/dashboard': typeof DashboardRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
   '/login': typeof LoginRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/attendance': typeof AttendanceRoute
   '/classes': typeof ClassesRoute
   '/coupons': typeof CouponsRoute
+  '/dashboard': typeof DashboardRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
   '/login': typeof LoginRoute
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/attendance'
     | '/classes'
     | '/coupons'
+    | '/dashboard'
     | '/finance'
     | '/grades'
     | '/login'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/attendance'
     | '/classes'
     | '/coupons'
+    | '/dashboard'
     | '/finance'
     | '/grades'
     | '/login'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/attendance'
     | '/classes'
     | '/coupons'
+    | '/dashboard'
     | '/finance'
     | '/grades'
     | '/login'
@@ -213,6 +225,7 @@ export interface RootRouteChildren {
   AttendanceRoute: typeof AttendanceRoute
   ClassesRoute: typeof ClassesRoute
   CouponsRoute: typeof CouponsRoute
+  DashboardRoute: typeof DashboardRoute
   FinanceRoute: typeof FinanceRoute
   GradesRoute: typeof GradesRoute
   LoginRoute: typeof LoginRoute
@@ -260,6 +273,13 @@ declare module '@tanstack/react-router' {
       path: '/coupons'
       fullPath: '/coupons'
       preLoaderRoute: typeof CouponsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/finance': {
@@ -341,6 +361,7 @@ const rootRouteChildren: RootRouteChildren = {
   AttendanceRoute: AttendanceRoute,
   ClassesRoute: ClassesRoute,
   CouponsRoute: CouponsRoute,
+  DashboardRoute: DashboardRoute,
   FinanceRoute: FinanceRoute,
   GradesRoute: GradesRoute,
   LoginRoute: LoginRoute,
