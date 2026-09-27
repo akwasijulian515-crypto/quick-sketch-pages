@@ -85,6 +85,7 @@ function LoginPage() {
           </label>
           <Button type="submit" className="w-full">Sign in as {role}</Button>
         </form>
+        <Button variant="outline" className="mt-3 w-full" onClick={() => navigate({ to: "/guest" })}>Continue as guest</Button>
         <p className="mt-4 text-center text-[11px] text-muted-foreground">Front-end preview only — no real accounts yet.</p>
       </div>
     </div>
