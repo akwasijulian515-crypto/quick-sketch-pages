@@ -140,8 +140,8 @@ function TeacherPortal() {
         </div>
 
         {tab === "dashboard" ? <Dashboard /> : null}
-        {tab === "marks" ? <MarkEntry /> : null}
-        {tab === "attendance" ? <Attendance /> : null}
+        {tab === "marks" ? <Attendance /> : null}
+        {tab === "attendance" ? <MarkEntry /> : null}
         {tab === "materials" ? <Materials /> : null}
       </main>
     </div>
