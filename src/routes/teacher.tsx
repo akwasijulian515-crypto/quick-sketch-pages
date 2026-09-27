@@ -140,8 +140,8 @@ function TeacherPortal() {
         </div>
 
         {tab === "dashboard" ? <Dashboard /> : null}
-        {tab === "marks" ? <MarkEntry /> : null}
-        {tab === "attendance" ? <Attendance /> : null}
+        {tab === "marks" ? <Attendance /> : null}
+        {tab === "attendance" ? <MarkEntry /> : null}
         {tab === "materials" ? <Materials /> : null}
       </main>
     </div>
@@ -211,7 +211,7 @@ function MarkEntry() {
   }
 
   return (
-    <Panel title="Mark entry" note="Pick a date, then mark each student present, late, or absent.">
+    <Panel title="Attendance register" note="Pick a date, then mark each student present, late, or absent.">
       <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <label className="flex items-center gap-2 text-sm">
           <CalendarDays className="size-4 text-muted-foreground" />
