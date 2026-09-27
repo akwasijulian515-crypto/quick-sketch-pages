@@ -140,8 +140,8 @@ function TeacherPortal() {
         </div>
 
         {tab === "dashboard" ? <Dashboard /> : null}
-        {tab === "marks" ? <Attendance /> : null}
-        {tab === "attendance" ? <MarkEntry /> : null}
+        {tab === "marks" ? <Scores /> : null}
+        {tab === "attendance" ? <><MarkEntry /><Attendance /></> : null}
         {tab === "materials" ? <Materials /> : null}
       </main>
     </div>
@@ -261,6 +261,82 @@ function MarkEntry() {
       <div className="flex items-center gap-3 border-t border-border px-5 py-3">
         <Button size="sm" onClick={() => setSaved(true)}>Save register</Button>
         {saved ? <span className="text-xs text-secondary-foreground">Saved for {date} (preview only).</span> : null}
+      </div>
+    </Panel>
+  );
+}
+
+const scoreParts = [
+  { key: "test", label: "Class test", max: 10 },
+  { key: "project", label: "Project", max: 20 },
+  { key: "group", label: "Group work", max: 10 },
+  { key: "homework", label: "Homework", max: 10 },
+  { key: "exam", label: "Exam", max: 100 },
+] as const;
+type ScoreKey = (typeof scoreParts)[number]["key"];
+
+function Scores() {
+  const [subject, setSubject] = useState(subjects[0] ?? "");
+  const [scores, setScores] = useState<Record<string, Partial<Record<ScoreKey, number>>>>({});
+  const [saved, setSaved] = useState(false);
+
+  function update(student: string, key: ScoreKey, max: number, raw: string) {
+    const n = raw === "" ? undefined : Math.min(max, Math.max(0, Number(raw)));
+    setScores((p) => ({ ...p, [student]: { ...p[student], [key]: n } }));
+    setSaved(false);
+  }
+
+  return (
+    <Panel title="Mark entry" note="Class score (50) = test 10 + project 20 + group 10 + homework 10. Exam out of 100, halved to 50. Total = 100.">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-3">
+        <select value={subject} onChange={(e) => setSubject(e.target.value)} className="h-9 rounded-md border border-input bg-background/70 px-3 text-sm">
+          {subjects.map((s) => <option key={s}>{s}</option>)}
+        </select>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[720px] text-sm">
+          <thead className="text-xs text-muted-foreground">
+            <tr className="border-b border-border">
+              <th className="px-4 py-2 text-left font-medium">Student</th>
+              {scoreParts.map((p) => <th key={p.key} className="px-2 py-2 font-medium">{p.label} /{p.max}</th>)}
+              <th className="px-2 py-2 font-medium">Class /50</th>
+              <th className="px-2 py-2 font-medium">Exam /50</th>
+              <th className="px-4 py-2 font-medium">Total /100</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/70">
+            {students.map((student) => {
+              const s = scores[student] ?? {};
+              const classScore = (s.test ?? 0) + (s.project ?? 0) + (s.group ?? 0) + (s.homework ?? 0);
+              const examHalf = (s.exam ?? 0) / 2;
+              return (
+                <tr key={student}>
+                  <td className="px-4 py-2">{student}</td>
+                  {scoreParts.map((p) => (
+                    <td key={p.key} className="px-2 py-2 text-center">
+                      <input
+                        type="number"
+                        min={0}
+                        max={p.max}
+                        value={s[p.key] ?? ""}
+                        onChange={(e) => update(student, p.key, p.max, e.target.value)}
+                        aria-label={`${p.label} for ${student}`}
+                        className="h-8 w-16 rounded-md border border-input bg-background/70 px-2 text-center text-sm"
+                      />
+                    </td>
+                  ))}
+                  <td className="px-2 py-2 text-center">{classScore}</td>
+                  <td className="px-2 py-2 text-center">{examHalf}</td>
+                  <td className="px-4 py-2 text-center font-semibold">{classScore + examHalf}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex items-center gap-3 border-t border-border px-5 py-3">
+        <Button size="sm" onClick={() => setSaved(true)}>Save marks</Button>
+        {saved ? <span className="text-xs text-secondary-foreground">Saved for {subject} (preview only).</span> : null}
       </div>
     </Panel>
   );

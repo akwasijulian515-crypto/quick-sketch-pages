@@ -20,21 +20,22 @@ export const Route = createFileRoute("/login")({
 });
 
 const roles = [
-  { label: "Teacher", icon: UserRoundCheck, ready: true, note: "Register, grades & coupons" },
-  { label: "Student", icon: GraduationCap, ready: false, note: "Coming soon" },
-  { label: "Parent", icon: HeartHandshake, ready: false, note: "Coming soon" },
-  { label: "Finance", icon: Wallet, ready: false, note: "Coming soon" },
-  { label: "Admin", icon: ShieldCheck, ready: false, note: "Coming soon" },
-];
+  { label: "Teacher", icon: UserRoundCheck, ready: true, note: "Attendance & marks", to: "/teacher" },
+  { label: "Student", icon: GraduationCap, ready: true, note: "Grades & timetable", to: "/student" },
+  { label: "Parent", icon: HeartHandshake, ready: true, note: "Your ward's progress", to: "/parent" },
+  { label: "Finance", icon: Wallet, ready: true, note: "Fees & payments", to: "/finance" },
+  { label: "Admin", icon: ShieldCheck, ready: true, note: "Whole school", to: "/dashboard" },
+] as const;
 
 function LoginPage() {
   const navigate = useNavigate();
-  const [role, setRole] = useState("Teacher");
+  const [role, setRole] = useState<string>("Teacher");
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     sessionStorage.setItem("hg-role", role.toLowerCase());
-    navigate({ to: "/teacher" });
+    const target = roles.find((r) => r.label === role)?.to ?? "/teacher";
+    navigate({ to: target });
   }
 
   return (
@@ -85,6 +86,7 @@ function LoginPage() {
           </label>
           <Button type="submit" className="w-full">Sign in as {role}</Button>
         </form>
+        <Button variant="outline" className="mt-3 w-full" onClick={() => navigate({ to: "/guest" })}>Continue as guest</Button>
         <p className="mt-4 text-center text-[11px] text-muted-foreground">Front-end preview only — no real accounts yet.</p>
       </div>
     </div>

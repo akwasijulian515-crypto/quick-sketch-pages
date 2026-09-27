@@ -17,6 +17,7 @@ import { Route as CouponsRouteImport } from './routes/coupons'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as FinanceRouteImport } from './routes/finance'
 import { Route as GradesRouteImport } from './routes/grades'
+import { Route as GuestRouteImport } from './routes/guest'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ParentRouteImport } from './routes/parent'
 import { Route as PaymentsRouteImport } from './routes/payments'
@@ -64,6 +65,11 @@ const FinanceRoute = FinanceRouteImport.update({
 const GradesRoute = GradesRouteImport.update({
   id: '/grades',
   path: '/grades',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GuestRoute = GuestRouteImport.update({
+  id: '/guest',
+  path: '/guest',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -116,6 +122,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
+  '/guest': typeof GuestRoute
   '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
@@ -134,6 +141,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
+  '/guest': typeof GuestRoute
   '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
@@ -153,6 +161,7 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/finance': typeof FinanceRoute
   '/grades': typeof GradesRoute
+  '/guest': typeof GuestRoute
   '/login': typeof LoginRoute
   '/parent': typeof ParentRoute
   '/payments': typeof PaymentsRoute
@@ -173,6 +182,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/finance'
     | '/grades'
+    | '/guest'
     | '/login'
     | '/parent'
     | '/payments'
@@ -191,6 +201,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/finance'
     | '/grades'
+    | '/guest'
     | '/login'
     | '/parent'
     | '/payments'
@@ -209,6 +220,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/finance'
     | '/grades'
+    | '/guest'
     | '/login'
     | '/parent'
     | '/payments'
@@ -228,6 +240,7 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   FinanceRoute: typeof FinanceRoute
   GradesRoute: typeof GradesRoute
+  GuestRoute: typeof GuestRoute
   LoginRoute: typeof LoginRoute
   ParentRoute: typeof ParentRoute
   PaymentsRoute: typeof PaymentsRoute
@@ -294,6 +307,13 @@ declare module '@tanstack/react-router' {
       path: '/grades'
       fullPath: '/grades'
       preLoaderRoute: typeof GradesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/guest': {
+      id: '/guest'
+      path: '/guest'
+      fullPath: '/guest'
+      preLoaderRoute: typeof GuestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -364,6 +384,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   FinanceRoute: FinanceRoute,
   GradesRoute: GradesRoute,
+  GuestRoute: GuestRoute,
   LoginRoute: LoginRoute,
   ParentRoute: ParentRoute,
   PaymentsRoute: PaymentsRoute,
