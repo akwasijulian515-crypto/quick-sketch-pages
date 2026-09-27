@@ -24,6 +24,7 @@ import { Route as ParentRouteImport } from './routes/parent'
 import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as ReconciliationRouteImport } from './routes/reconciliation'
 import { Route as SchoolAdminRouteImport } from './routes/school-admin'
+import { Route as SignupRouteImport } from './routes/signup'
 import { Route as StudentRouteImport } from './routes/student'
 import { Route as StudentsRouteImport } from './routes/students'
 import { Route as SubjectsRouteImport } from './routes/subjects'
@@ -105,6 +106,11 @@ const SchoolAdminRoute = SchoolAdminRouteImport.update({
   path: '/school-admin',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StudentRoute = StudentRouteImport.update({
   id: '/student',
   path: '/student',
@@ -147,6 +153,7 @@ export interface FileRoutesByFullPath {
   '/payments': typeof PaymentsRoute
   '/reconciliation': typeof ReconciliationRoute
   '/school-admin': typeof SchoolAdminRoute
+  '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -169,6 +176,7 @@ export interface FileRoutesByTo {
   '/payments': typeof PaymentsRoute
   '/reconciliation': typeof ReconciliationRoute
   '/school-admin': typeof SchoolAdminRoute
+  '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -192,6 +200,7 @@ export interface FileRoutesById {
   '/payments': typeof PaymentsRoute
   '/reconciliation': typeof ReconciliationRoute
   '/school-admin': typeof SchoolAdminRoute
+  '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
@@ -216,6 +225,7 @@ export interface FileRouteTypes {
     | '/payments'
     | '/reconciliation'
     | '/school-admin'
+    | '/signup'
     | '/student'
     | '/students'
     | '/subjects'
@@ -238,6 +248,7 @@ export interface FileRouteTypes {
     | '/payments'
     | '/reconciliation'
     | '/school-admin'
+    | '/signup'
     | '/student'
     | '/students'
     | '/subjects'
@@ -260,6 +271,7 @@ export interface FileRouteTypes {
     | '/payments'
     | '/reconciliation'
     | '/school-admin'
+    | '/signup'
     | '/student'
     | '/students'
     | '/subjects'
@@ -283,6 +295,7 @@ export interface RootRouteChildren {
   PaymentsRoute: typeof PaymentsRoute
   ReconciliationRoute: typeof ReconciliationRoute
   SchoolAdminRoute: typeof SchoolAdminRoute
+  SignupRoute: typeof SignupRoute
   StudentRoute: typeof StudentRoute
   StudentsRoute: typeof StudentsRoute
   SubjectsRoute: typeof SubjectsRoute
@@ -397,6 +410,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SchoolAdminRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/student': {
       id: '/student'
       path: '/student'
@@ -451,6 +471,7 @@ const rootRouteChildren: RootRouteChildren = {
   PaymentsRoute: PaymentsRoute,
   ReconciliationRoute: ReconciliationRoute,
   SchoolAdminRoute: SchoolAdminRoute,
+  SignupRoute: SignupRoute,
   StudentRoute: StudentRoute,
   StudentsRoute: StudentsRoute,
   SubjectsRoute: SubjectsRoute,

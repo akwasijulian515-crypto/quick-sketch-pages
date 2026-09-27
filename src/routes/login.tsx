@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { GraduationCap, HeartHandshake, ShieldCheck, UserRoundCheck, Wallet } from "lucide-react";
+import { Building2, GraduationCap, HeartHandshake, ShieldCheck, UserRoundCheck, Wallet } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -86,6 +86,7 @@ function LoginPage() {
           <Button type="submit" className="w-full">Sign in as {role}</Button>
         </form>
         <Button variant="outline" className="mt-3 w-full" onClick={() => navigate({ to: "/guest" })}>Continue as guest</Button>
+        <Button variant="ghost" className="mt-2 w-full" onClick={() => navigate({ to: "/signup" })}><Building2 />Register your school</Button>
         <p className="mt-4 text-center text-[11px] text-muted-foreground">Front-end preview only — no real accounts yet.</p>
       </div>
     </div>
