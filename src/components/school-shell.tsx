@@ -39,6 +39,7 @@ const schoolAdminNavigation = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
   { label: "Students", to: "/students", icon: GraduationCap },
   { label: "Payments", to: "/payments", icon: ReceiptText },
+  { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText },
   { label: "Grades", to: "/grades", icon: ScrollText },
   { label: "Teachers", to: "/teachers", icon: UsersRound },
   { label: "Classes", to: "/classes", icon: School },

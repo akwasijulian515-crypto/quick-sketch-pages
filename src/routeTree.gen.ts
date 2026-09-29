@@ -31,6 +31,7 @@ import { Route as StudentsRouteImport } from './routes/students'
 import { Route as SubjectsRouteImport } from './routes/subjects'
 import { Route as TeacherRouteImport } from './routes/teacher'
 import { Route as TeachersRouteImport } from './routes/teachers'
+import { Route as TerminalReportsRouteImport } from './routes/terminal-reports'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -142,6 +143,11 @@ const TeachersRoute = TeachersRouteImport.update({
   path: '/teachers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TerminalReportsRoute = TerminalReportsRouteImport.update({
+  id: '/terminal-reports',
+  path: '/terminal-reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -166,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRoute
   '/teachers': typeof TeachersRoute
+  '/terminal-reports': typeof TerminalReportsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -190,6 +197,7 @@ export interface FileRoutesByTo {
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRoute
   '/teachers': typeof TeachersRoute
+  '/terminal-reports': typeof TerminalReportsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -215,6 +223,7 @@ export interface FileRoutesById {
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRoute
   '/teachers': typeof TeachersRoute
+  '/terminal-reports': typeof TerminalReportsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -241,6 +250,7 @@ export interface FileRouteTypes {
     | '/subjects'
     | '/teacher'
     | '/teachers'
+    | '/terminal-reports'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -265,6 +275,7 @@ export interface FileRouteTypes {
     | '/subjects'
     | '/teacher'
     | '/teachers'
+    | '/terminal-reports'
   id:
     | '__root__'
     | '/'
@@ -289,6 +300,7 @@ export interface FileRouteTypes {
     | '/subjects'
     | '/teacher'
     | '/teachers'
+    | '/terminal-reports'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -314,6 +326,7 @@ export interface RootRouteChildren {
   SubjectsRoute: typeof SubjectsRoute
   TeacherRoute: typeof TeacherRoute
   TeachersRoute: typeof TeachersRoute
+  TerminalReportsRoute: typeof TerminalReportsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -472,6 +485,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TeachersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/terminal-reports': {
+      id: '/terminal-reports'
+      path: '/terminal-reports'
+      fullPath: '/terminal-reports'
+      preLoaderRoute: typeof TerminalReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -498,6 +518,7 @@ const rootRouteChildren: RootRouteChildren = {
   SubjectsRoute: SubjectsRoute,
   TeacherRoute: TeacherRoute,
   TeachersRoute: TeachersRoute,
+  TerminalReportsRoute: TerminalReportsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
