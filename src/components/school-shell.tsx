@@ -1,6 +1,7 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Building2,
+  CalendarDays,
   BookOpen,
   GraduationCap,
   LayoutDashboard,
@@ -40,6 +41,7 @@ const schoolAdminNavigation = [
   { label: "Students", to: "/students", icon: GraduationCap },
   { label: "Payments", to: "/payments", icon: ReceiptText },
   { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText },
+  { label: "Academic setup", to: "/academic-setup", icon: CalendarDays },
   { label: "Grades", to: "/grades", icon: ScrollText },
   { label: "Teachers", to: "/teachers", icon: UsersRound },
   { label: "Classes", to: "/classes", icon: School },

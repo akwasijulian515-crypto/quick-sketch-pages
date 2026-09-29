@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AcademicSetupRouteImport } from './routes/academic-setup'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AttendanceRouteImport } from './routes/attendance'
 import { Route as AttendanceOverviewRouteImport } from './routes/attendance-overview'
@@ -32,10 +33,16 @@ import { Route as SubjectsRouteImport } from './routes/subjects'
 import { Route as TeacherRouteImport } from './routes/teacher'
 import { Route as TeachersRouteImport } from './routes/teachers'
 import { Route as TerminalReportsRouteImport } from './routes/terminal-reports'
+import { Route as TeacherPromotionRouteImport } from './routes/teacher/promotion'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AcademicSetupRoute = AcademicSetupRouteImport.update({
+  id: '/academic-setup',
+  path: '/academic-setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminRoute = AdminRouteImport.update({
@@ -148,9 +155,15 @@ const TerminalReportsRoute = TerminalReportsRouteImport.update({
   path: '/terminal-reports',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TeacherPromotionRoute = TeacherPromotionRouteImport.update({
+  id: '/promotion',
+  path: '/promotion',
+  getParentRoute: () => TeacherRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/academic-setup': typeof AcademicSetupRoute
   '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
   '/attendance-overview': typeof AttendanceOverviewRoute
@@ -170,12 +183,14 @@ export interface FileRoutesByFullPath {
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
-  '/teacher': typeof TeacherRoute
+  '/teacher': typeof TeacherRouteWithChildren
   '/teachers': typeof TeachersRoute
   '/terminal-reports': typeof TerminalReportsRoute
+  '/teacher/promotion': typeof TeacherPromotionRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/academic-setup': typeof AcademicSetupRoute
   '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
   '/attendance-overview': typeof AttendanceOverviewRoute
@@ -195,13 +210,15 @@ export interface FileRoutesByTo {
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
-  '/teacher': typeof TeacherRoute
+  '/teacher': typeof TeacherRouteWithChildren
   '/teachers': typeof TeachersRoute
   '/terminal-reports': typeof TerminalReportsRoute
+  '/teacher/promotion': typeof TeacherPromotionRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/academic-setup': typeof AcademicSetupRoute
   '/admin': typeof AdminRoute
   '/attendance': typeof AttendanceRoute
   '/attendance-overview': typeof AttendanceOverviewRoute
@@ -221,14 +238,16 @@ export interface FileRoutesById {
   '/student': typeof StudentRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
-  '/teacher': typeof TeacherRoute
+  '/teacher': typeof TeacherRouteWithChildren
   '/teachers': typeof TeachersRoute
   '/terminal-reports': typeof TerminalReportsRoute
+  '/teacher/promotion': typeof TeacherPromotionRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/academic-setup'
     | '/admin'
     | '/attendance'
     | '/attendance-overview'
@@ -251,9 +270,11 @@ export interface FileRouteTypes {
     | '/teacher'
     | '/teachers'
     | '/terminal-reports'
+    | '/teacher/promotion'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/academic-setup'
     | '/admin'
     | '/attendance'
     | '/attendance-overview'
@@ -276,9 +297,11 @@ export interface FileRouteTypes {
     | '/teacher'
     | '/teachers'
     | '/terminal-reports'
+    | '/teacher/promotion'
   id:
     | '__root__'
     | '/'
+    | '/academic-setup'
     | '/admin'
     | '/attendance'
     | '/attendance-overview'
@@ -301,10 +324,12 @@ export interface FileRouteTypes {
     | '/teacher'
     | '/teachers'
     | '/terminal-reports'
+    | '/teacher/promotion'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AcademicSetupRoute: typeof AcademicSetupRoute
   AdminRoute: typeof AdminRoute
   AttendanceRoute: typeof AttendanceRoute
   AttendanceOverviewRoute: typeof AttendanceOverviewRoute
@@ -324,7 +349,7 @@ export interface RootRouteChildren {
   StudentRoute: typeof StudentRoute
   StudentsRoute: typeof StudentsRoute
   SubjectsRoute: typeof SubjectsRoute
-  TeacherRoute: typeof TeacherRoute
+  TeacherRoute: typeof TeacherRouteWithChildren
   TeachersRoute: typeof TeachersRoute
   TerminalReportsRoute: typeof TerminalReportsRoute
 }
@@ -336,6 +361,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/academic-setup': {
+      id: '/academic-setup'
+      path: '/academic-setup'
+      fullPath: '/academic-setup'
+      preLoaderRoute: typeof AcademicSetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin': {
@@ -492,11 +524,30 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TerminalReportsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/teacher/promotion': {
+      id: '/teacher/promotion'
+      path: '/promotion'
+      fullPath: '/teacher/promotion'
+      preLoaderRoute: typeof TeacherPromotionRouteImport
+      parentRoute: typeof TeacherRoute
+    }
   }
 }
 
+interface TeacherRouteChildren {
+  TeacherPromotionRoute: typeof TeacherPromotionRoute
+}
+
+const TeacherRouteChildren: TeacherRouteChildren = {
+  TeacherPromotionRoute: TeacherPromotionRoute,
+}
+
+const TeacherRouteWithChildren =
+  TeacherRoute._addFileChildren(TeacherRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AcademicSetupRoute: AcademicSetupRoute,
   AdminRoute: AdminRoute,
   AttendanceRoute: AttendanceRoute,
   AttendanceOverviewRoute: AttendanceOverviewRoute,
@@ -516,7 +567,7 @@ const rootRouteChildren: RootRouteChildren = {
   StudentRoute: StudentRoute,
   StudentsRoute: StudentsRoute,
   SubjectsRoute: SubjectsRoute,
-  TeacherRoute: TeacherRoute,
+  TeacherRoute: TeacherRouteWithChildren,
   TeachersRoute: TeachersRoute,
   TerminalReportsRoute: TerminalReportsRoute,
 }

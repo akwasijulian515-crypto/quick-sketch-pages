@@ -1,5 +1,5 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { BookOpenCheck, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { ArrowUpRight, BookOpenCheck, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -135,6 +135,7 @@ function TeacherPortal() {
                 <Icon />{label}
               </Button>
             ))}
+            <Button asChild size="sm" variant="outline"><Link to="/teacher/promotion"><ArrowUpRight />Promotion</Link></Button>
           </div>
         </div>
 
