@@ -6,13 +6,13 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load .env if it exists
+// Load .env or .env.local if they exist
 try {
   if (typeof process.loadEnvFile === "function") {
-    const envPath = path.resolve(process.cwd(), ".env");
-    if (fs.existsSync(envPath)) {
-      process.loadEnvFile(envPath);
-    }
+    const envLocal = path.resolve(process.cwd(), ".env.local");
+    const envMain = path.resolve(process.cwd(), ".env");
+    if (fs.existsSync(envLocal)) process.loadEnvFile(envLocal);
+    if (fs.existsSync(envMain)) process.loadEnvFile(envMain);
   }
 } catch {
   // Ignore env loading errors
@@ -49,7 +49,7 @@ async function runMigration() {
   for (let i = 0; i < statements.length; i++) {
     const stmt = statements[i];
     try {
-      await sql(stmt);
+      await sql.query(stmt);
     } catch (err) {
       console.error(`\x1b[31mError executing statement ${i + 1}:\x1b[0m\n${stmt}\n`, err);
       process.exit(1);
