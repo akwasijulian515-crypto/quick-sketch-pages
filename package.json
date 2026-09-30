@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "db:migrate": "node src/server/migrate.js"
+    "db:migrate": "node scripts/migrate.mjs"
   },
   "overrides": {
     "rolldown": "1.2.1"
