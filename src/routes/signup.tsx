@@ -24,8 +24,31 @@ function SchoolSignupPage() {
   const [submitted, setSubmitted] = useState(false);
 
   function next(event: FormEvent) { event.preventDefault(); setStep((current) => Math.min(current + 1, 3)); }
-  function submit(event: FormEvent) { event.preventDefault(); setSubmitted(true); }
-  function loadCrest(file: File | undefined) { if (!file) return; const reader = new FileReader(); reader.onload = () => setCrest(typeof reader.result === "string" ? reader.result : null); reader.readAsDataURL(file); }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    try {
+      const response = await fetch("/api/onboarding/applications", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ schoolName, subdomain, contactName: adminName, email, phone, primaryColor: color, crestUrl: crest }),
+      });
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? "Could not submit your application");
+      setSubmitted(true);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not submit your application");
+    }
+  }
+  function loadCrest(file: File | undefined) {
+    if (!file) return;
+    if (file.size > 512 * 1024) {
+      window.alert("Crest images must be 512 KB or smaller");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setCrest(typeof reader.result === "string" ? reader.result : null);
+    reader.readAsDataURL(file);
+  }
 
   if (submitted) return <div className="relative grid min-h-screen place-items-center bg-background px-4 font-body text-foreground"><div className="pointer-events-none fixed inset-0 ambient-wash" /><main className="glass-panel rise relative w-full max-w-md rounded-lg p-8 text-center"><div className="mx-auto grid size-12 place-items-center rounded-full bg-emerald-500/10 text-emerald-700"><CheckCircle2 className="size-6" /></div><h1 className="mt-5 font-display text-2xl font-bold">Application received</h1><p className="mt-2 text-sm text-muted-foreground">We&apos;ll review <strong>{schoolName}</strong> and email {email} once the {subdomain}.yourdomain.com workspace is approved.</p><Button className="mt-6" onClick={() => navigate({ to: "/login" })}>Return to sign in</Button></main></div>;
 
