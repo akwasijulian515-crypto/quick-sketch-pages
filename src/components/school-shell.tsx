@@ -19,6 +19,7 @@ import {
 import { useState, type ReactNode } from "react";
 
 import headTeacher from "@/assets/head-teacher.jpg";
+import { useTenantBranding } from "./tenant-branding-provider";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -62,7 +63,7 @@ const financeNavigation = [
 ] as const;
 
 
-function Sidebar({ onNavigate, platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { onNavigate?: () => void; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
+function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { onNavigate?: () => void; schoolName: string; crestUrl: string | null; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const navigate = useNavigate();
   const links = platform ? platformNavigation : schoolAdmin ? schoolAdminNavigation : parentPortal ? parentNavigation : studentPortal ? studentNavigation : finance ? financeNavigation : navigation;
@@ -70,11 +71,11 @@ function Sidebar({ onNavigate, platform = false, schoolAdmin = false, parentPort
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col overflow-y-auto overscroll-contain bg-primary px-3 py-5 text-primary-foreground shadow-2xl shadow-primary/15">
       <div className="flex items-center gap-2.5 px-2 py-1.5">
-        <div className="grid size-9 place-items-center rounded-md bg-highlight font-display text-base font-bold text-highlight-foreground shadow-sm">
-          {platform ? <ShieldCheck className="size-4" /> : "H"}
+        <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-highlight font-display text-base font-bold text-highlight-foreground shadow-sm">
+          {platform ? <ShieldCheck className="size-4" /> : crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
         </div>
         <div className="leading-tight">
-          <p className="font-display text-[15px] font-bold">{platform ? "School Platform" : "Harrow Green"}</p>
+          <p className="font-display text-[15px] font-bold">{platform ? "School Platform" : schoolName}</p>
           <p className="text-[11px] text-primary-foreground/50">{platform ? "Super Admin Console" : schoolAdmin ? "School Admin Console" : parentPortal ? "Family Portal" : studentPortal ? "Student Portal" : finance ? "Finance Workspace" : "School Operations"}</p>
         </div>
       </div>
@@ -130,16 +131,17 @@ function Sidebar({ onNavigate, platform = false, schoolAdmin = false, parentPort
 export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const navigate = useNavigate();
+  const { schoolName, crestUrl } = useTenantBranding();
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
       <div className="sticky top-0 hidden h-screen lg:block">
-        <Sidebar platform={platform} schoolAdmin={schoolAdmin} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} />
+        <Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={schoolAdmin} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} />
       </div>
       {menuOpen ? (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative z-10 h-full"><Sidebar platform={platform} schoolAdmin={schoolAdmin} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
+          <div className="relative z-10 h-full"><Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={schoolAdmin} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
           <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25" onClick={() => setMenuOpen(false)} />
         </div>
       ) : null}

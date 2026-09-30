@@ -33,7 +33,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
   if (url.pathname === "/api/school") {
     const tenant = resolveTenant(request, env.ROOT_DOMAIN);
-    const requestedSubdomain = tenant.subdomain ?? (env.ROOT_DOMAIN === "localhost" ? "harrowgreen" : null);
+    const previewSubdomain = env.ROOT_DOMAIN === "localhost" ? url.searchParams.get("tenant")?.trim().toLowerCase() ?? null : null;
+    if (previewSubdomain && !validSubdomain(previewSubdomain)) return badRequest("Invalid tenant preview subdomain");
+    const requestedSubdomain = tenant.subdomain ?? previewSubdomain ?? (env.ROOT_DOMAIN === "localhost" ? "harrowgreen" : null);
     if (!requestedSubdomain) return json({ school: null });
 
     const sql = database(env);
