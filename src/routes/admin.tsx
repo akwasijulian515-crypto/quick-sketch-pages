@@ -46,7 +46,49 @@ function SuperAdminPage() {
   return <SchoolShell title="Super Admin" platform><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><ShieldCheck className="size-5" /></div><h1 className="font-display text-3xl font-bold">School Platform</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Control school tenants, approve onboarding, and oversee platform health without entering a school&apos;s operational workspace.</p></div><Button onClick={() => setCreating(true)}><Plus />Create school</Button></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Active schools" value={String(schools.filter((school) => school.status === "Active").length)} note={`${schools.length} total tenant workspaces`} /><Metric label="Pending onboarding" value={String(pending.length)} note="Requires Super Admin approval" /><Metric label="Platform students" value={schools.reduce((total, school) => total + school.students, 0).toLocaleString()} note="Across active and trial schools" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={tab === "schools"} set={() => setTab("schools")} label="School directory" /><Tab active={tab === "onboarding"} set={() => setTab("onboarding")} label={`Onboarding (${pending.length})`} /><Tab active={tab === "platform"} set={() => setTab("platform")} label="Platform health" /></div>{tab === "schools" && <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schools or subdomains" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>}</div>{tab === "schools" && <Directory schools={filtered} setStatus={updateStatus} />}{tab === "onboarding" && <Onboarding applications={applications} approve={approve} openSignup={() => navigate({ to: "/signup" })} />}{tab === "platform" && <Health schools={schools} />}</section></div>{creating && <CreateDialog name={name} subdomain={subdomain} color={color} setName={(value) => { setName(value); setSubdomain(slugify(value)); }} setSubdomain={(value) => setSubdomain(slugify(value))} setColor={setColor} close={() => setCreating(false)} submit={createSchool} />}</SchoolShell>;
 }
 
-function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: string, status: SchoolStatus) => void }) { return <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["School", "Workspace", "Students", "Admins", "Status", "Control"].map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{schools.map((school) => <tr key={school.id} className="hover:bg-muted/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><div className="grid size-8 place-items-center rounded-md text-white" style={{ backgroundColor: school.color }}><Building2 className="size-4" /></div><span className="font-medium">{school.name}</span></div></td><td className="px-5 py-4 font-mono text-xs text-secondary-foreground">{school.subdomain}.yourdomain.com</td><td className="px-5 py-4">{school.students.toLocaleString()}</td><td className="px-5 py-4">{school.admins}</td><td className="px-5 py-4"><Status status={school.status} /></td><td className="px-5 py-4"><select value={school.status} onChange={(event) => setStatus(school.id, event.target.value as SchoolStatus)} className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none"><option>Active</option><option>Trial</option><option>Suspended</option></select></td></tr>)}</tbody></table>{schools.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No schools match that search.</p>}</div>; }
+function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: string, status: SchoolStatus) => void }) {
+  const [directorySchools, setDirectorySchools] = useState(schools);
+  const [platformToken, setPlatformToken] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadSchools(event: FormEvent) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/platform/schools", { headers: { authorization: `Bearer ${platformToken}` } });
+      const payload = await response.json().catch(() => null) as { error?: string; schools?: Array<{ id: string; name: string; subdomain: string; status: string; primaryColor: string; students: number; admins: number }> } | null;
+      if (!response.ok) throw new Error(payload?.error ?? "Could not load schools");
+      const savedSchools = (payload?.schools ?? []).map((school) => ({
+        ...school,
+        status: school.status === "active" ? "Active" : school.status === "suspended" ? "Suspended" : "Trial",
+        color: school.primaryColor,
+      }));
+      setDirectorySchools(savedSchools);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load schools");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function updateDirectoryStatus(id: string, status: SchoolStatus) {
+    setDirectorySchools((current) => current.map((school) => school.id === id ? { ...school, status } : school));
+    setStatus(id, status);
+  }
+
+  return <div>
+    <form onSubmit={loadSchools} className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-end">
+      <label className="block min-w-0 flex-1 text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Platform admin token</span><input required type="password" autoComplete="current-password" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input w-full" /></label>
+      <Button type="submit" disabled={loading}>{loading ? "Loading..." : "Load saved schools"}</Button>
+    </form>
+    {error && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error}</p>}
+    <DirectoryTable schools={directorySchools} setStatus={updateDirectoryStatus} />
+  </div>;
+}
+
+function DirectoryTable({ schools, setStatus }: { schools: School[]; setStatus: (id: string, status: SchoolStatus) => void }) { return <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["School", "Workspace", "Students", "Admins", "Status", "Control"].map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{schools.map((school) => <tr key={school.id} className="hover:bg-muted/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><div className="grid size-8 place-items-center rounded-md text-white" style={{ backgroundColor: school.color }}><Building2 className="size-4" /></div><span className="font-medium">{school.name}</span></div></td><td className="px-5 py-4 font-mono text-xs text-secondary-foreground">{school.subdomain}.yourdomain.com</td><td className="px-5 py-4">{school.students.toLocaleString()}</td><td className="px-5 py-4">{school.admins}</td><td className="px-5 py-4"><Status status={school.status} /></td><td className="px-5 py-4"><select value={school.status} onChange={(event) => setStatus(school.id, event.target.value as SchoolStatus)} className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none"><option>Active</option><option>Trial</option><option>Suspended</option></select></td></tr>)}</tbody></table>{schools.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No schools loaded. Enter the platform token above to load saved schools.</p>}</div>; }
 function Onboarding({ applications, approve, openSignup }: { applications: Application[]; approve: (application: Application) => void; openSignup: () => void }) {
   const [platformToken, setPlatformToken] = useState("");
   const [loading, setLoading] = useState(false);

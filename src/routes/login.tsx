@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Building2, GraduationCap, HeartHandshake, ShieldCheck, UserRoundCheck, Wallet } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
+import { useTenantBranding } from "../components/tenant-branding-provider";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -30,35 +31,7 @@ const roles = [
 function LoginPage() {
   const navigate = useNavigate();
   const [role, setRole] = useState("Teacher");
-  const [school, setSchool] = useState<{ name: string; subdomain: string; primaryColor: string; crestUrl: string | null } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadSchool() {
-      try {
-        const response = await fetch("/api/school");
-        const payload = (await response.json()) as { school?: { name?: string; subdomain?: string; primaryColor?: string; crestUrl?: string | null } | null };
-        if (!cancelled && payload.school) {
-          setSchool({
-            name: payload.school.name ?? "Harrow Green Academy",
-            subdomain: payload.school.subdomain ?? "harrowgreen",
-            primaryColor: payload.school.primaryColor ?? "#1f5c3b",
-            crestUrl: payload.school.crestUrl ?? null,
-          });
-        }
-      } catch {
-        if (!cancelled) setSchool({ name: "Harrow Green Academy", subdomain: "harrowgreen", primaryColor: "#1f5c3b", crestUrl: null });
-      }
-    }
-
-    void loadSchool();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const primaryColor = school?.primaryColor ?? "#1f5c3b";
-  const schoolName = school?.name ?? "Harrow Green Academy";
+  const { schoolName, subdomain, primaryColor, crestUrl } = useTenantBranding();
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -72,7 +45,7 @@ function LoginPage() {
       <div className="glass-panel rise relative w-full max-w-md rounded-lg p-6 sm:p-8" style={{ boxShadow: `0 24px 64px -32px ${primaryColor}99` }}>
         <div className="flex items-center gap-2.5">
           <div className="grid size-9 place-items-center overflow-hidden rounded-md text-base font-bold text-primary-foreground" style={{ backgroundColor: primaryColor }}>
-            {school?.crestUrl ? <img src={school.crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "H")}
+            {crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "H")}
           </div>
           <div className="leading-tight">
             <p className="font-display text-[15px] font-bold">{schoolName}</p>
@@ -108,7 +81,7 @@ function LoginPage() {
         <form onSubmit={handleSubmit} className="mt-5 space-y-3">
           <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Email</span>
-            <input required type="email" placeholder="you@harrowgreen.edu" className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+            <input required type="email" placeholder={`you@${subdomain}.edu`} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Password</span>
