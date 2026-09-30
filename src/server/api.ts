@@ -1,4 +1,4 @@
-import { database, type RuntimeEnv } from "./database";
+import { database, resolveRuntimeEnv, type RuntimeEnv } from "./database";
 import { resolveTenant } from "./tenant";
 
 type SchoolRecord = { id: string; name: string; subdomain: string; status: "trial" | "active" | "suspended"; createdAt: string };
@@ -28,6 +28,7 @@ function validCrestUrl(value: unknown): value is string | null {
 }
 
 export async function handleApiRequest(request: Request, env: RuntimeEnv): Promise<Response> {
+  env = resolveRuntimeEnv(env);
   const url = new URL(request.url);
   if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
   if (url.pathname === "/api/school") {
