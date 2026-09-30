@@ -1,7 +1,7 @@
 import { database, resolveRuntimeEnv, type RuntimeEnv } from "./database";
 import { resolveTenant } from "./tenant";
 
-type SchoolRecord = { id: string; name: string; subdomain: string; status: "trial" | "active" | "suspended"; createdAt: string };
+type SchoolRecord = { id: string; name: string; subdomain: string; status: "trial" | "active" | "suspended"; createdAt: string; primaryColor?: string; students?: number; admins?: number };
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
 const badRequest = (message: string) => json({ error: message }, 400);
@@ -190,8 +190,25 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
   const sql = database(env);
   if (request.method === "GET") {
-    const rows = await sql`select id, name, subdomain, status, created_at from schools order by created_at desc limit 100`;
-    return json({ schools: rows.map((row) => ({ id: String(row["id"]), name: String(row["name"]), subdomain: String(row["subdomain"]), status: row["status"], createdAt: new Date(String(row["created_at"])).toISOString() })) satisfies SchoolRecord[] });
+    const rows = await sql`
+      select s.id, s.name, s.subdomain, s.status, s.created_at,
+             coalesce(s.primary_color, '#1f5c3b') as primary_color,
+             (select count(*)::int from students st where st.school_id = s.id) as student_count,
+             (select count(*)::int from memberships m where m.school_id = s.id and m.role = 'school_admin') as admin_count
+      from schools s
+      order by s.created_at desc
+      limit 100
+    `;
+    return json({ schools: rows.map((row) => ({
+      id: String(row["id"]),
+      name: String(row["name"]),
+      subdomain: String(row["subdomain"]),
+      status: row["status"],
+      createdAt: new Date(String(row["created_at"])).toISOString(),
+      primaryColor: String(row["primary_color"]),
+      students: Number(row["student_count"]),
+      admins: Number(row["admin_count"]),
+    })) satisfies SchoolRecord[] });
   }
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
