@@ -16,6 +16,27 @@ function validSubdomain(value: string) { return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z
 export async function handleApiRequest(request: Request, env: RuntimeEnv): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
+  if (url.pathname === "/api/school") {
+    const tenant = resolveTenant(request, env.ROOT_DOMAIN);
+    const requestedSubdomain = tenant.subdomain ?? (env.ROOT_DOMAIN === "localhost" ? "harrowgreen" : null);
+    if (!requestedSubdomain) return json({ school: null });
+
+    const sql = database(env);
+    const rows = await sql`select id, name, subdomain, status, coalesce(primary_color, '#1f5c3b') as primary_color, crest_url from schools where subdomain = ${requestedSubdomain} limit 1`;
+    const school = rows[0];
+    return json({
+      school: school
+        ? {
+            id: String(school["id"]),
+            name: String(school["name"]),
+            subdomain: String(school["subdomain"]),
+            status: school["status"],
+            primaryColor: String(school["primary_color"]),
+            crestUrl: school["crest_url"] ? String(school["crest_url"]) : null,
+          }
+        : null,
+    });
+  }
 
   if (url.pathname !== "/api/platform/schools") return json({ error: "Not found" }, 404);
   if (!env.DATABASE_URL || !env.PLATFORM_ADMIN_TOKEN) return json({ error: "Platform API is not configured" }, 503);

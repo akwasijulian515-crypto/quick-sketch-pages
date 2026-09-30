@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Building2, GraduationCap, HeartHandshake, ShieldCheck, UserRoundCheck, Wallet } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,35 @@ const roles = [
 function LoginPage() {
   const navigate = useNavigate();
   const [role, setRole] = useState("Teacher");
+  const [school, setSchool] = useState<{ name: string; subdomain: string; primaryColor: string; crestUrl: string | null } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSchool() {
+      try {
+        const response = await fetch("/api/school");
+        const payload = (await response.json()) as { school?: { name?: string; subdomain?: string; primaryColor?: string; crestUrl?: string | null } | null };
+        if (!cancelled && payload.school) {
+          setSchool({
+            name: payload.school.name ?? "Harrow Green Academy",
+            subdomain: payload.school.subdomain ?? "harrowgreen",
+            primaryColor: payload.school.primaryColor ?? "#1f5c3b",
+            crestUrl: payload.school.crestUrl ?? null,
+          });
+        }
+      } catch {
+        if (!cancelled) setSchool({ name: "Harrow Green Academy", subdomain: "harrowgreen", primaryColor: "#1f5c3b", crestUrl: null });
+      }
+    }
+
+    void loadSchool();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const primaryColor = school?.primaryColor ?? "#1f5c3b";
+  const schoolName = school?.name ?? "Harrow Green Academy";
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -40,11 +69,13 @@ function LoginPage() {
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-background px-4 font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
-      <div className="glass-panel rise relative w-full max-w-md rounded-lg p-6 sm:p-8">
+      <div className="glass-panel rise relative w-full max-w-md rounded-lg p-6 sm:p-8" style={{ boxShadow: `0 24px 64px -32px ${primaryColor}99` }}>
         <div className="flex items-center gap-2.5">
-          <div className="grid size-9 place-items-center rounded-md bg-primary font-display text-base font-bold text-primary-foreground">H</div>
+          <div className="grid size-9 place-items-center overflow-hidden rounded-md text-base font-bold text-primary-foreground" style={{ backgroundColor: primaryColor }}>
+            {school?.crestUrl ? <img src={school.crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "H")}
+          </div>
           <div className="leading-tight">
-            <p className="font-display text-[15px] font-bold">Harrow Green</p>
+            <p className="font-display text-[15px] font-bold">{schoolName}</p>
             <p className="text-[11px] text-muted-foreground">Portal sign in</p>
           </div>
         </div>
@@ -83,7 +114,7 @@ function LoginPage() {
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Password</span>
             <input required type="password" placeholder="••••••••" className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
           </label>
-          <Button type="submit" className="w-full">Sign in as {role}</Button>
+          <Button type="submit" className="w-full" style={{ backgroundColor: primaryColor, color: "#fff" }}>Sign in as {role}</Button>
         </form>
         <Button variant="outline" className="mt-3 w-full" onClick={() => navigate({ to: "/guest" })}>Continue as guest</Button>
         <Button variant="ghost" className="mt-2 w-full" onClick={() => navigate({ to: "/signup" })}><Building2 />Register your school</Button>

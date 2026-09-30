@@ -21,7 +21,19 @@ try {
   await client.query("create table if not exists schema_migrations (name text primary key, applied_at timestamptz not null default now())");
   const { rows } = await client.query("select name from schema_migrations");
   const done = new Set(rows.map((r) => r.name));
-  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) {
+  const migrationFiles = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort((a, b) => {
+      const aSeed = a.toLowerCase().includes("seed");
+      const bSeed = b.toLowerCase().includes("seed");
+      if (aSeed !== bSeed) return aSeed ? 1 : -1;
+
+      const aNumber = Number.parseInt(a.split("_")[0] ?? "0", 10);
+      const bNumber = Number.parseInt(b.split("_")[0] ?? "0", 10);
+      return aNumber - bNumber || a.localeCompare(b);
+    });
+  for (const file of migrationFiles) {
     if (done.has(file)) continue;
     console.log(`Applying ${file}...`);
     await client.query("begin");
