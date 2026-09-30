@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Activity, Building2, CheckCircle2, Clock3, Eye, Mail, Plus, Search, ShieldCheck, UserPlus, X } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
+import { usePlatformSession } from "@/hooks/use-platform-session";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin")({ head: () => ({ meta: [{ title: "Super Admin — School Platform" }, { name: "description", content: "Manage school tenants, onboarding, and platform controls." }] }), component: SuperAdminPage });
@@ -26,8 +27,27 @@ function SuperAdminPage() {
   const filtered = schools.filter((school) => `${school.name} ${school.subdomain}`.toLowerCase().includes(query.trim().toLowerCase()));
   const pending = applications.filter((application) => application.status === "Pending");
   const studentsAvailable = schools.every((school) => school.students !== null);
-  function createSchool(event: FormEvent) { event.preventDefault(); const slug = slugify(subdomain); if (!name.trim() || !slug) return; setSchools((current) => [...current, { id: slug, name: name.trim(), subdomain: slug, students: 0, admins: 1, status: "Trial", color }]); setName(""); setSubdomain(""); setCreating(false); }
-  function approve(application: Application) {
+  async function createSchool(event: FormEvent) {
+    event.preventDefault();
+    const slug = slugify(subdomain);
+    if (!name.trim() || !slug) return;
+    try {
+      const response = await fetch("/api/platform/schools", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), subdomain: slug, primaryColor: color }),
+      });
+      const payload = await response.json().catch(() => null) as { error?: string; school?: { id: string; name: string; subdomain: string; status: string; primaryColor: string } } | null;
+      if (!response.ok || !payload?.school) throw new Error(payload?.error ?? "Could not create school");
+      setSchools((current) => [...current, { id: payload.school!.id, name: payload.school!.name, subdomain: payload.school!.subdomain, students: 0, admins: 0, status: "Trial", color: payload.school!.primaryColor }]);
+      setName("");
+      setSubdomain("");
+      setCreating(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Could not create school");
+    }
+  }
+  const approve = useCallback((application: Application) => {
     setApplications((current) => {
       const existing = current.some((item) => item.id === application.id);
       return existing
@@ -39,25 +59,30 @@ function SuperAdminPage() {
         ? current
         : [...current, { id: application.id, name: application.schoolName, subdomain: application.subdomain, students: 0, admins: 1, status: "Trial", color: application.color }]);
     }
-  }
-  function updateStatus(id: string, status: SchoolStatus) {
-    setSchools((current) => current.map((school) => school.id === id ? { ...school, status } : school));
+  }, []);
+  function updateStatus(id: string, status: SchoolStatus, loadedSchool?: School) {
+    setSchools((current) => {
+      const existing = current.some((school) => school.id === id);
+      if (existing) return current.map((school) => school.id === id ? { ...school, status } : school);
+      return loadedSchool ? [...current, { ...loadedSchool, status }] : current;
+    });
   }
   return <SchoolShell title="Super Admin" platform><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><ShieldCheck className="size-5" /></div><h1 className="font-display text-3xl font-bold">School Platform</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Control school tenants, approve onboarding, and oversee platform health without entering a school&apos;s operational workspace.</p></div><Button onClick={() => setCreating(true)}><Plus />Create school</Button></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Active schools" value={String(schools.filter((school) => school.status === "Active").length)} note={`${schools.length} total tenant workspaces`} /><Metric label="Pending onboarding" value={String(pending.length)} note="Requires Super Admin approval" /><Metric label="Platform students" value={schools.reduce((total, school) => total + school.students, 0).toLocaleString()} note="Across active and trial schools" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={tab === "schools"} set={() => setTab("schools")} label="School directory" /><Tab active={tab === "onboarding"} set={() => setTab("onboarding")} label={`Onboarding (${pending.length})`} /><Tab active={tab === "platform"} set={() => setTab("platform")} label="Platform health" /></div>{tab === "schools" && <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schools or subdomains" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>}</div>{tab === "schools" && <Directory schools={filtered} setStatus={updateStatus} />}{tab === "onboarding" && <Onboarding applications={applications} approve={approve} openSignup={() => navigate({ to: "/signup" })} />}{tab === "platform" && <Health schools={schools} />}</section></div>{creating && <CreateDialog name={name} subdomain={subdomain} color={color} setName={(value) => { setName(value); setSubdomain(slugify(value)); }} setSubdomain={(value) => setSubdomain(slugify(value))} setColor={setColor} close={() => setCreating(false)} submit={createSchool} />}</SchoolShell>;
 }
 
-function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: string, status: SchoolStatus) => void }) {
+function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: string, status: SchoolStatus, loadedSchool?: School) => void }) {
   const [directorySchools, setDirectorySchools] = useState(schools);
   const [platformToken, setPlatformToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const session = usePlatformSession();
 
-  async function loadSchools(event: FormEvent) {
-    event.preventDefault();
+  const loadSchools = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/platform/schools", { headers: { authorization: `Bearer ${platformToken}` } });
+      const response = await fetch("/api/platform/schools");
       const payload = await response.json().catch(() => null) as { error?: string; schools?: Array<{ id: string; name: string; subdomain: string; status: string; primaryColor: string; students: number; admins: number }> } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not load schools");
       const savedSchools = (payload?.schools ?? []).map((school) => ({
@@ -66,25 +91,56 @@ function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: 
         color: school.primaryColor,
       }));
       setDirectorySchools(savedSchools);
+      savedSchools.forEach((school) => setStatus(school.id, school.status, school));
+      setLoaded(true);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load schools");
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    if (session.authenticated) void loadSchools();
+  }, [session.authenticated, loadSchools]);
+
+  async function signIn(event: FormEvent) {
+    event.preventDefault();
+    if (await session.signIn(platformToken)) setPlatformToken("");
   }
 
-  function updateDirectoryStatus(id: string, status: SchoolStatus) {
+  async function updateDirectoryStatus(id: string, status: SchoolStatus) {
+    try {
+      const response = await fetch(`/api/platform/schools/${encodeURIComponent(id)}/status`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: status.toLowerCase() }),
+      });
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? "Could not update school status");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not update school status");
+      return;
+    }
     setDirectorySchools((current) => current.map((school) => school.id === id ? { ...school, status } : school));
     setStatus(id, status);
   }
 
   return <div>
-    <form onSubmit={loadSchools} className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-end">
-      <label className="block min-w-0 flex-1 text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Platform admin token</span><input required type="password" autoComplete="current-password" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input w-full" /></label>
-      <Button type="submit" disabled={loading}>{loading ? "Loading..." : "Load saved schools"}</Button>
-    </form>
-    {error && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error}</p>}
-    <DirectoryTable schools={directorySchools} setStatus={updateDirectoryStatus} />
+    {session.checkingSession ? <p className="border-b border-border px-5 py-4 text-sm text-muted-foreground">Checking Super Admin session...</p> : session.authenticated ? (
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+        <p className="text-xs text-muted-foreground">{loaded ? `${directorySchools.length} saved schools loaded` : "Loading saved schools..."}</p>
+        <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void loadSchools()} disabled={loading}>{loading ? "Loading..." : "Refresh schools"}</Button><Button size="sm" variant="ghost" onClick={() => void session.signOut()}>Sign out</Button></div>
+      </div>
+    ) : (
+      <form onSubmit={signIn} className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-end">
+        <label className="block min-w-0 flex-1 text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Platform admin token</span><input required type="password" autoComplete="current-password" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input w-full" /></label>
+        <Button type="submit">Sign in to platform</Button>
+      </form>
+    )}
+    {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
+    {session.authenticated && <DirectoryTable schools={directorySchools} setStatus={updateDirectoryStatus} />}
+    {!session.authenticated && !session.checkingSession && <p className="px-5 py-10 text-center text-sm text-muted-foreground">Sign in to load schools saved in Neon.</p>}
   </div>;
 }
 
@@ -95,13 +151,13 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const session = usePlatformSession();
 
-  async function loadApplications(event: FormEvent) {
-    event.preventDefault();
+  const loadApplications = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/platform/applications", { headers: { authorization: `Bearer ${platformToken}` } });
+      const response = await fetch("/api/platform/applications");
       const payload = await response.json().catch(() => null) as { error?: string; applications?: Array<{ id: string; schoolName: string; subdomain: string; applicant: string; email: string; submitted: string; color: string }> } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not load applications");
       for (const item of payload?.applications ?? []) {
@@ -113,6 +169,15 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
     } finally {
       setLoading(false);
     }
+  }, [approve]);
+
+  useEffect(() => {
+    if (session.authenticated) void loadApplications();
+  }, [session.authenticated, loadApplications]);
+
+  async function signIn(event: FormEvent) {
+    event.preventDefault();
+    if (await session.signIn(platformToken)) setPlatformToken("");
   }
 
   async function approveApplication(application: Application) {
@@ -121,11 +186,11 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
     try {
       const response = await fetch(`/api/platform/applications/${encodeURIComponent(application.id)}/approve`, {
         method: "POST",
-        headers: { authorization: `Bearer ${platformToken}` },
       });
       const payload = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not approve this application");
       approve({ ...application, status: "Approved" });
+      await loadApplications();
     } catch (approvalError) {
       setError(approvalError instanceof Error ? approvalError.message : "Could not approve this application");
     } finally {
@@ -138,14 +203,21 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
       <div><h2 className="font-display text-lg font-bold">School applications</h2><p className="mt-1 text-xs text-muted-foreground">Approval creates a trial tenant and first School Admin workspace.</p></div>
       <Button size="sm" variant="outline" onClick={openSignup}><Mail />Open onboarding</Button>
     </div>
-    <form onSubmit={loadApplications} className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-end">
-      <label className="block min-w-0 flex-1 text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Platform admin token</span><input required type="password" autoComplete="current-password" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input w-full" /></label>
-      <Button type="submit" disabled={loading}>{loading ? "Loading..." : "Load applications"}</Button>
-    </form>
-    {error && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error}</p>}
+    {session.checkingSession ? <p className="border-b border-border px-5 py-4 text-sm text-muted-foreground">Checking Super Admin session...</p> : session.authenticated ? (
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+        <p className="text-xs text-muted-foreground">{loaded ? `${applications.filter((application) => application.status === "Pending").length} pending applications` : "Loading applications..."}</p>
+        <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void loadApplications()} disabled={loading}>{loading ? "Loading..." : "Refresh queue"}</Button><Button size="sm" variant="ghost" onClick={() => void session.signOut()}>Sign out</Button></div>
+      </div>
+    ) : (
+      <form onSubmit={signIn} className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-end">
+        <label className="block min-w-0 flex-1 text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Platform admin token</span><input required type="password" autoComplete="current-password" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input w-full" /></label>
+        <Button type="submit">Sign in to platform</Button>
+      </form>
+    )}
+    {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
     <div className="divide-y divide-border/70">
-      {applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md text-white" style={{ backgroundColor: application.color }}><Building2 className="size-4" /></div><div><p className="font-medium">{application.schoolName}</p><p className="mt-0.5 text-xs text-muted-foreground">{application.subdomain}.yourdomain.com · {application.submitted}</p><p className="mt-1 text-xs text-secondary-foreground">{application.applicant} · {application.email}</p></div></div>{application.status === "Pending" ? <Button size="sm" disabled={approvingId === application.id} onClick={() => void approveApplication(application)}><CheckCircle2 />{approvingId === application.id ? "Approving..." : "Approve tenant"}</Button> : <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"><CheckCircle2 className="size-4" />Tenant created</span>}</article>)}
-      {loaded && applications.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No pending applications.</p>}
+      {session.authenticated && applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md text-white" style={{ backgroundColor: application.color }}><Building2 className="size-4" /></div><div><p className="font-medium">{application.schoolName}</p><p className="mt-0.5 text-xs text-muted-foreground">{application.subdomain}.yourdomain.com · {application.submitted}</p><p className="mt-1 text-xs text-secondary-foreground">{application.applicant} · {application.email}</p></div></div>{application.status === "Pending" ? <Button size="sm" disabled={approvingId === application.id} onClick={() => void approveApplication(application)}><CheckCircle2 />{approvingId === application.id ? "Approving..." : "Approve tenant"}</Button> : <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"><CheckCircle2 className="size-4" />Tenant created</span>}</article>)}
+      {session.authenticated && loaded && applications.every((application) => application.status !== "Pending") && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No pending applications.</p>}
     </div>
   </div>;
 }
