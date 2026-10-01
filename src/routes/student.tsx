@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
 
-export const Route = createFileRoute("/student")({ head: () => ({ meta: [{ title: "Student Portal — Harrow Green" }, { name: "description", content: "Follow your learning, attendance, results, and school notices." }] }), component: StudentPortal });
+export const Route = createFileRoute("/student")({ head: () => ({ meta: [{ title: "Student Portal — Klasora" }, { name: "description", content: "Follow your learning, attendance, results, and school notices." }] }), component: StudentPortal });
 
 const results = [{ subject: "English Language", score: "82%", grade: "A" }, { subject: "Mathematics", score: "74%", grade: "B" }, { subject: "Integrated Science", score: "79%", grade: "B+" }, { subject: "Social Studies", score: "86%", grade: "A" }];
 const lessons = [{ time: "08:00", subject: "Mathematics", room: "Room 4" }, { time: "10:15", subject: "Integrated Science", room: "Lab 1" }, { time: "12:30", subject: "English Language", room: "Room 4" }];

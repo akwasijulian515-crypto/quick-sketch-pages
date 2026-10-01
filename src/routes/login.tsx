@@ -9,10 +9,10 @@ import { Button } from "@/components/ui/button";
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Sign in — Harrow Green" },
-      { name: "description", content: "Sign in to your Harrow Green school portal." },
-      { property: "og:title", content: "Sign in — Harrow Green" },
-      { property: "og:description", content: "Sign in to your Harrow Green school portal." },
+      { title: "Sign in — Klasora" },
+      { name: "description", content: "Sign in to your school's Klasora portal." },
+      { property: "og:title", content: "Sign in — Klasora" },
+      { property: "og:description", content: "Sign in to your school's Klasora portal." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],

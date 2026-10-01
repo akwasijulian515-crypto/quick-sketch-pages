@@ -7,7 +7,7 @@ import { SchoolShell } from "@/components/school-shell";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/reconciliation")({
-  head: () => ({ meta: [{ title: "Daily Reconciliation — Harrow Green" }, { name: "description", content: "Review gateway-verified collections and payment exceptions." }] }),
+  head: () => ({ meta: [{ title: "Daily Reconciliation — Klasora" }, { name: "description", content: "Review gateway-verified collections and payment exceptions." }] }),
   component: ReconciliationPage,
 });
 

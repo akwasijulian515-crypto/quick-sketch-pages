@@ -82,7 +82,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
         for (const [property, value] of Object.entries(themeStyle(primaryColor))) {
           document.documentElement.style.setProperty(property, value);
         }
-        document.title = `${nextBranding.schoolName} | School Portal`;
+        document.title = `${nextBranding.schoolName} | Klasora`;
       } catch {
         // Keep the platform defaults when no tenant is available.
       }

@@ -76,8 +76,8 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
           {platform ? <ShieldCheck className="size-4" /> : crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
         </div>
         <div className="leading-tight">
-          <p className="font-display text-[15px] font-bold">{platform ? "School Platform" : schoolName}</p>
-          <p className="text-[11px] text-primary-foreground/50">{platform ? "Super Admin Console" : schoolAdmin ? "School Admin Console" : parentPortal ? "Family Portal" : studentPortal ? "Student Portal" : finance ? "Finance Workspace" : "School Operations"}</p>
+          <p className="font-display text-[15px] font-bold">{platform ? "Klasora" : schoolName}</p>
+          <p className="text-[11px] text-primary-foreground/50">{platform ? "Klasora Platform" : schoolAdmin ? "School Admin Console" : parentPortal ? "Family Portal" : studentPortal ? "Student Portal" : finance ? "Finance Workspace" : "School Operations"}</p>
         </div>
       </div>
       <p className="px-3 pb-1 pt-5 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35">

@@ -6,7 +6,7 @@ import { SchoolShell } from "@/components/school-shell";
 export const Route = createFileRoute("/academic-setup")({
   head: () => ({
     meta: [
-      { title: "Academic Setup — Harrow Green" },
+      { title: "Academic Setup — Klasora" },
       { name: "description", content: "Set the school year, terms, calendar, and promotion window." },
     ],
   }),

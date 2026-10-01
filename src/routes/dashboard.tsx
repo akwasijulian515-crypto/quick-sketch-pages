@@ -7,9 +7,9 @@ import { SchoolShell } from "@/components/school-shell";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({ meta: [
-    { title: "Overview — Harrow Green" },
+    { title: "Overview — Klasora" },
     { name: "description", content: "View today's attendance, payments, classes, and recent school activity." },
-    { property: "og:title", content: "Overview — Harrow Green" },
+    { property: "og:title", content: "Overview — Klasora" },
     { property: "og:description", content: "View today's attendance, payments, classes, and recent school activity." },
     { property: "og:type", content: "website" },
     { name: "twitter:card", content: "summary_large_image" },

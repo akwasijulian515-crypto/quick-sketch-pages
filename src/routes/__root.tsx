@@ -78,10 +78,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Harrow Green School Operations" },
+      { title: "Klasora | School operations" },
       { name: "description", content: "School attendance, payments, grades, classes, and student operations." },
-      { name: "author", content: "Harrow Green" },
-      { property: "og:title", content: "Harrow Green School Operations" },
+      { name: "author", content: "Klasora" },
+      { property: "og:title", content: "Klasora | School operations" },
       { property: "og:description", content: "A clear workspace for daily school operations." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

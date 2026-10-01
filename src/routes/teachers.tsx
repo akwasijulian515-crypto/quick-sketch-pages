@@ -7,7 +7,7 @@ import { SchoolShell } from "@/components/school-shell";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/teachers")({
-  head: () => ({ meta: [{ title: "Teachers — Harrow Green" }, { name: "description", content: "Manage teachers, subjects, and teaching assignments." }] }),
+  head: () => ({ meta: [{ title: "Teachers — Klasora" }, { name: "description", content: "Manage teachers, subjects, and teaching assignments." }] }),
   component: TeachersPage,
 });
 

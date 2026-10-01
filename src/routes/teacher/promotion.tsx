@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getNeonAccessToken, neonAuthClient } from "../../auth/client";
 
-export const Route = createFileRoute("/teacher/promotion")({ head: () => ({ meta: [{ title: "Class Promotion — Harrow Green" }, { name: "description", content: "Class teacher promotion register." }] }), component: PromotionPage });
+export const Route = createFileRoute("/teacher/promotion")({ head: () => ({ meta: [{ title: "Class Promotion — Klasora" }, { name: "description", content: "Class teacher promotion register." }] }), component: PromotionPage });
 
 type Decision = "Promote" | "Repeat" | "Transfer" | "Graduate";
 const learners = [{ id: "1", name: "Abena Ofori", admission: "HGA-2B-001", attendance: "96%", average: "76%", profile: "Excellent" }, { id: "2", name: "Daniel Boateng", admission: "HGA-2B-002", attendance: "94%", average: "63%", profile: "Good" }, { id: "3", name: "Eunice Agyeman", admission: "HGA-2B-003", attendance: "91%", average: "71%", profile: "Very good" }, { id: "4", name: "Felix Nyarko", admission: "HGA-2B-004", attendance: "86%", average: "48%", profile: "Needs support" }, { id: "5", name: "Gloria Mensah", admission: "HGA-2B-005", attendance: "89%", average: "58%", profile: "Good" }];

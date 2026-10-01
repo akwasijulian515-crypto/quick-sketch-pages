@@ -7,7 +7,7 @@ import { SchoolShell } from "@/components/school-shell";
 export const Route = createFileRoute("/terminal-reports")({
   head: () => ({
     meta: [
-      { title: "Terminal Reports — Harrow Green" },
+      { title: "Terminal Reports — Klasora" },
       { name: "description", content: "Generate standards-based terminal reports." },
     ],
   }),

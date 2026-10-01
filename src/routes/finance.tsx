@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/finance")({ head: () => ({ meta: [{ title: "Finance — Harrow Green" }, { name: "description", content: "Record daily fees and school-fee payments." }] }), component: FinancePage });
+export const Route = createFileRoute("/finance")({ head: () => ({ meta: [{ title: "Finance — Klasora" }, { name: "description", content: "Record daily fees and school-fee payments." }] }), component: FinancePage });
 
 type PaymentStatus = "verified" | "pending" | "recorded";
 type Payment = { id: string; receipt?: string; student: string; className: string; fee: "Daily payment" | "School fees"; amount: number; method: string; date: string; status: PaymentStatus; reference: string };

@@ -4,7 +4,7 @@ import { CircleAlert, ClipboardCheck } from "lucide-react";
 import { SchoolShell } from "@/components/school-shell";
 
 export const Route = createFileRoute("/attendance-overview")({
-  head: () => ({ meta: [{ title: "Attendance Overview — Harrow Green" }, { name: "description", content: "School Admin attendance monitoring." }] }),
+  head: () => ({ meta: [{ title: "Attendance Overview — Klasora" }, { name: "description", content: "School Admin attendance monitoring." }] }),
   component: AttendanceOverview,
 });
 

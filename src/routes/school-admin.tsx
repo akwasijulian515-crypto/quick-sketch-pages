@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
 
 export const Route = createFileRoute("/school-admin")({
-  head: () => ({ meta: [{ title: "School Admin — Harrow Green" }, { name: "description", content: "Manage users, invitations, and terminal reports." }] }),
+  head: () => ({ meta: [{ title: "School Admin — Klasora" }, { name: "description", content: "Manage users, invitations, and terminal reports." }] }),
   component: SchoolAdminPage,
 });
 

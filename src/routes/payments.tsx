@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/payments")({ head: () => ({ meta: [{ title: "Payments — Harrow Green" }, { name: "description", content: "Set school fees, review collections, and reconcile daily payments." }] }), component: PaymentsPage });
+export const Route = createFileRoute("/payments")({ head: () => ({ meta: [{ title: "Payments — Klasora" }, { name: "description", content: "Set school fees, review collections, and reconcile daily payments." }] }), component: PaymentsPage });
 
 type FeeRule = { id: string; className: string; fee: string; amount: number; frequency: "Daily" | "Termly"; startsOn: string; active: boolean };
 const initialFeeRules: FeeRule[] = [];

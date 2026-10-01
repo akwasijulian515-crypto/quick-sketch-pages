@@ -9,9 +9,9 @@ import { getNeonAccessToken, neonAuthClient } from "../auth/client";
 export const Route = createFileRoute("/teacher")({
   head: () => ({
     meta: [
-      { title: "Teacher Portal — Harrow Green" },
+      { title: "Teacher Portal — Klasora" },
       { name: "description", content: "Teacher register, grade entry, and coupon tools." },
-      { property: "og:title", content: "Teacher Portal — Harrow Green" },
+      { property: "og:title", content: "Teacher Portal — Klasora" },
       { property: "og:description", content: "Teacher register, grade entry, and coupon tools." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

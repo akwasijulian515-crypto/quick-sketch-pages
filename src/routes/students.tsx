@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/students")({ head: () => ({ meta: [{ title: "Students — Harrow Green" }, { name: "description", content: "Admit students, manage profiles, and monitor attendance." }] }), component: StudentsPage });
+export const Route = createFileRoute("/students")({ head: () => ({ meta: [{ title: "Students — Klasora" }, { name: "description", content: "Admit students, manage profiles, and monitor attendance." }] }), component: StudentsPage });
 
 type StudentStatus = "Active" | "Transferred" | "Graduated" | "Withdrawn";
 type Student = { id: string; name: string; admission: string; className: string; gender: string; dob: string; payment: string; attendance: string; status: StudentStatus; guardian: string; phone: string; address: string; emergency: string; medical: string };
