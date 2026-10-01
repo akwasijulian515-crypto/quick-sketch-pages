@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
 import { usePlatformSession } from "@/hooks/use-platform-session";
 import { cn } from "@/lib/utils";
+import { getNeonAccessToken } from "../auth/client";
 
 export const Route = createFileRoute("/admin")({ head: () => ({ meta: [{ title: "Super Admin — School Platform" }, { name: "description", content: "Manage school tenants, onboarding, and platform controls." }] }), component: SuperAdminPage });
 
@@ -13,6 +14,14 @@ type SchoolStatus = "Active" | "Trial" | "Suspended";
 type School = { id: string; name: string; subdomain: string; students: number | null; admins: number | null; status: SchoolStatus; color: string };
 type Application = { id: string; schoolName: string; subdomain: string; applicant: string; email: string; submitted: string; color: string; status: "Pending" | "Approved" };
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+
+async function platformAuthHeaders() {
+  try {
+    return { authorization: `Bearer ${await getNeonAccessToken()}` };
+  } catch {
+    return {};
+  }
+}
 
 function SuperAdminPage() {
   const navigate = useNavigate();
@@ -34,7 +43,7 @@ function SuperAdminPage() {
     try {
       const response = await fetch("/api/platform/schools", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...await platformAuthHeaders() },
         body: JSON.stringify({ name: name.trim(), subdomain: slug, primaryColor: color }),
       });
       const payload = await response.json().catch(() => null) as { error?: string; school?: { id: string; name: string; subdomain: string; status: string; primaryColor: string } } | null;
@@ -71,6 +80,7 @@ function SuperAdminPage() {
 }
 
 function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: string, status: SchoolStatus, loadedSchool?: School) => void }) {
+  const navigate = useNavigate();
   const [directorySchools, setDirectorySchools] = useState(schools);
   const [platformToken, setPlatformToken] = useState("");
   const [loading, setLoading] = useState(false);
@@ -82,7 +92,7 @@ function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: 
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/platform/schools");
+      const response = await fetch("/api/platform/schools", { headers: await platformAuthHeaders() });
       const payload = await response.json().catch(() => null) as { error?: string; schools?: Array<{ id: string; name: string; subdomain: string; status: string; primaryColor: string; students: number; admins: number }> } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not load schools");
       const savedSchools = (payload?.schools ?? []).map((school) => ({
@@ -104,7 +114,7 @@ function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: 
     if (session.authenticated) void loadSchools();
   }, [session.authenticated, loadSchools]);
 
-  async function signIn(event: FormEvent) {
+  async function signInWithPlatformToken(event: FormEvent) {
     event.preventDefault();
     if (await session.signIn(platformToken)) setPlatformToken("");
   }
@@ -113,7 +123,7 @@ function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: 
     try {
       const response = await fetch(`/api/platform/schools/${encodeURIComponent(id)}/status`, {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...await platformAuthHeaders() },
         body: JSON.stringify({ status: status.toLowerCase() }),
       });
       const payload = await response.json().catch(() => null) as { error?: string } | null;
@@ -133,10 +143,16 @@ function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: 
         <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void loadSchools()} disabled={loading}>{loading ? "Loading..." : "Refresh schools"}</Button><Button size="sm" variant="ghost" onClick={() => void session.signOut()}>Sign out</Button></div>
       </div>
     ) : (
-      <form onSubmit={signIn} className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-end">
-        <label className="block min-w-0 flex-1 text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Platform admin token</span><input required type="password" autoComplete="current-password" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input w-full" /></label>
-        <Button type="submit">Sign in to platform</Button>
-      </form>
+      <div className="border-b border-border px-5 py-4">
+        <p className="mb-3 text-sm text-muted-foreground">Sign in with your Super Admin account. The platform token remains available for initial setup.</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <Button onClick={() => navigate({ to: "/login" })}>Sign in with account</Button>
+          <form onSubmit={signInWithPlatformToken} className="flex min-w-0 flex-1 gap-2">
+            <input required type="password" autoComplete="current-password" aria-label="Platform admin token" placeholder="Platform admin token" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input min-w-0 flex-1" />
+            <Button type="submit" variant="outline">Use token</Button>
+          </form>
+        </div>
+      </div>
     )}
     {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
     {session.authenticated && <DirectoryTable schools={directorySchools} setStatus={updateDirectoryStatus} />}
@@ -146,8 +162,9 @@ function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: 
 
 function DirectoryTable({ schools, setStatus }: { schools: School[]; setStatus: (id: string, status: SchoolStatus) => void }) { return <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["School", "Workspace", "Students", "Admins", "Status", "Control"].map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{schools.map((school) => <tr key={school.id} className="hover:bg-muted/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><div className="grid size-8 place-items-center rounded-md text-white" style={{ backgroundColor: school.color }}><Building2 className="size-4" /></div><span className="font-medium">{school.name}</span></div></td><td className="px-5 py-4 font-mono text-xs text-secondary-foreground">{school.subdomain}.yourdomain.com</td><td className="px-5 py-4">{school.students.toLocaleString()}</td><td className="px-5 py-4">{school.admins}</td><td className="px-5 py-4"><Status status={school.status} /></td><td className="px-5 py-4"><select value={school.status} onChange={(event) => setStatus(school.id, event.target.value as SchoolStatus)} className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none"><option>Active</option><option>Trial</option><option>Suspended</option></select></td></tr>)}</tbody></table>{schools.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No schools loaded. Enter the platform token above to load saved schools.</p>}</div>; }
 function Onboarding({ applications, approve, openSignup }: { applications: Application[]; approve: (application: Application) => void; openSignup: () => void }) {
-  const [platformToken, setPlatformToken] = useState("");
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [platformToken, setPlatformToken] = useState("");
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -157,7 +174,7 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/platform/applications");
+      const response = await fetch("/api/platform/applications", { headers: await platformAuthHeaders() });
       const payload = await response.json().catch(() => null) as { error?: string; applications?: Array<{ id: string; schoolName: string; subdomain: string; applicant: string; email: string; submitted: string; color: string }> } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not load applications");
       for (const item of payload?.applications ?? []) {
@@ -175,7 +192,7 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
     if (session.authenticated) void loadApplications();
   }, [session.authenticated, loadApplications]);
 
-  async function signIn(event: FormEvent) {
+  async function signInWithPlatformToken(event: FormEvent) {
     event.preventDefault();
     if (await session.signIn(platformToken)) setPlatformToken("");
   }
@@ -186,6 +203,7 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
     try {
       const response = await fetch(`/api/platform/applications/${encodeURIComponent(application.id)}/approve`, {
         method: "POST",
+        headers: await platformAuthHeaders(),
       });
       const payload = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not approve this application");
@@ -209,10 +227,16 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
         <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void loadApplications()} disabled={loading}>{loading ? "Loading..." : "Refresh queue"}</Button><Button size="sm" variant="ghost" onClick={() => void session.signOut()}>Sign out</Button></div>
       </div>
     ) : (
-      <form onSubmit={signIn} className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-end">
-        <label className="block min-w-0 flex-1 text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Platform admin token</span><input required type="password" autoComplete="current-password" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input w-full" /></label>
-        <Button type="submit">Sign in to platform</Button>
-      </form>
+      <div className="border-b border-border px-5 py-4">
+        <p className="mb-3 text-sm text-muted-foreground">Sign in with your Super Admin account. The platform token remains available for initial setup.</p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <Button onClick={() => navigate({ to: "/login" })}>Sign in with account</Button>
+          <form onSubmit={signInWithPlatformToken} className="flex min-w-0 flex-1 gap-2">
+            <input required type="password" autoComplete="current-password" aria-label="Platform admin token" placeholder="Platform admin token" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input min-w-0 flex-1" />
+            <Button type="submit" variant="outline">Use token</Button>
+          </form>
+        </div>
+      </div>
     )}
     {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
     <div className="divide-y divide-border/70">

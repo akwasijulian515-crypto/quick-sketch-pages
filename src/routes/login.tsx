@@ -1,10 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Building2, GraduationCap, HeartHandshake, ShieldCheck, UserRoundCheck, Wallet } from "lucide-react";
+import { Building2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { useTenantBranding } from "../components/tenant-branding-provider";
+import { getNeonAccessToken, neonAuthClient } from "../auth/client";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -20,23 +20,123 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
-const roles = [
-  { label: "Teacher", icon: UserRoundCheck, ready: true, note: "Register, grades & coupons" },
-  { label: "Student", icon: GraduationCap, ready: true, note: "Learning, results & fees" },
-  { label: "Parent", icon: HeartHandshake, ready: true, note: "Children, fees & updates" },
-  { label: "Finance", icon: Wallet, ready: true, note: "Payments & receipts" },
-  { label: "School Admin", icon: ShieldCheck, ready: true, note: "Users & terminal reports" },
-];
-
 function LoginPage() {
   const navigate = useNavigate();
-  const [role, setRole] = useState("Teacher");
   const { schoolName, subdomain, primaryColor, crestUrl } = useTenantBranding();
+  const [mode, setMode] = useState<"sign-in" | "activate" | "verify">("sign-in");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
-  function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    sessionStorage.setItem("hg-role", role.toLowerCase());
-    navigate({ to: role === "School Admin" ? "/school-admin" : role === "Finance" ? "/finance" : role === "Parent" ? "/parent" : role === "Student" ? "/student" : "/teacher" });
+    if (!neonAuthClient) {
+      setError("Neon Auth is not configured for this environment");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      if (mode === "verify") {
+        const result = await neonAuthClient.emailOtp.verifyEmail({ email: email.trim().toLowerCase(), otp: verificationCode.trim() });
+        if (result.error) throw new Error(result.error.message);
+        setMode("sign-in");
+        setVerificationCode("");
+        setMessage("Email verified. Sign in with your password to continue.");
+        return;
+      }
+
+      if (mode === "activate") {
+        const eligibilityResponse = await fetch("/api/auth/eligibility", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        });
+        const eligibility = await eligibilityResponse.json().catch(() => null) as { error?: string; eligible?: boolean } | null;
+        if (!eligibilityResponse.ok) throw new Error(eligibility?.error ?? "Could not check account eligibility");
+        if (!eligibility?.eligible) throw new Error("This email is not attached to an approved school account yet");
+        const result = await neonAuthClient.signUp.email({ name: name.trim(), email: email.trim().toLowerCase(), password });
+        if (result.error) throw new Error(result.error.message);
+        if (!result.data.user.emailVerified) {
+          setMode("verify");
+          setMessage("Enter the verification code sent to your email.");
+          return;
+        }
+        setMode("sign-in");
+        setMessage("Account created. Check your email to verify it, then sign in to continue.");
+        return;
+      }
+
+      const result = await neonAuthClient.signIn.email({ email: email.trim().toLowerCase(), password });
+      if (result.error) throw new Error(result.error.message);
+      const token = await getNeonAccessToken();
+      const previewTenant = new URLSearchParams(window.location.search).get("tenant");
+      const contextUrl = previewTenant ? `/api/auth/context?tenant=${encodeURIComponent(previewTenant)}` : "/api/auth/context";
+      const response = await fetch(contextUrl, { headers: { authorization: `Bearer ${token}` } });
+      const payload = await response.json().catch(() => null) as { error?: string; membership?: { role?: string; schoolId?: string | null; subdomain?: string | null } } | null;
+      if (!response.ok || !payload?.membership?.role) throw new Error(payload?.error ?? "This account has no school access");
+
+      sessionStorage.setItem("hg-role", payload.membership.role);
+      if (payload.membership.role === "super_admin") {
+        navigate({ to: "/admin" });
+        return;
+      }
+      if (payload.membership.subdomain) sessionStorage.setItem("hg-school", payload.membership.subdomain);
+      if (payload.membership.role === "school_admin") navigate({ to: "/school-admin" });
+      else if (payload.membership.role === "teacher") navigate({ to: "/teacher" });
+      else if (payload.membership.role === "finance") navigate({ to: "/finance" });
+      else if (payload.membership.role === "parent") navigate({ to: "/parent" });
+      else if (payload.membership.role === "student") navigate({ to: "/student" });
+      else throw new Error("This account role is not supported yet");
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Sign-in failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestPasswordReset() {
+    if (!neonAuthClient || !email.trim()) {
+      setError("Enter your approved account email first");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await neonAuthClient.requestPasswordReset({
+        email: email.trim().toLowerCase(),
+        redirectTo: `${window.location.origin}/login`,
+      });
+      if (result.error) throw new Error(result.error.message);
+      setMessage("If this account exists, a password reset link has been sent.");
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : "Could not request a password reset");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendVerificationCode() {
+    if (!neonAuthClient || !email.trim()) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await neonAuthClient.sendVerificationEmail({ email: email.trim().toLowerCase(), callbackURL: window.location.href });
+      if (result.error) throw new Error(result.error.message);
+      setMessage("A new verification code has been sent.");
+    } catch (resendError) {
+      setError(resendError instanceof Error ? resendError.message : "Could not resend the verification code");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -53,45 +153,28 @@ function LoginPage() {
           </div>
         </div>
 
-        <h1 className="mt-6 font-display text-2xl font-bold">Welcome back</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Choose your role and sign in to continue.</p>
-
-        <div className="mt-5 grid grid-cols-2 gap-2">
-          {roles.map(({ label, icon: Icon, ready, note }) => (
-            <button
-              key={label}
-              type="button"
-              disabled={!ready}
-              onClick={() => setRole(label)}
-              className={cn(
-                "flex items-start gap-2.5 rounded-md border border-border p-3 text-left transition-colors",
-                role === label ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "bg-background/60",
-                !ready && "cursor-not-allowed opacity-45",
-              )}
-            >
-              <Icon className="mt-0.5 size-4 shrink-0 text-secondary-foreground" />
-              <span className="leading-tight">
-                <span className="block text-sm font-medium">{label}</span>
-                <span className="block text-[11px] text-muted-foreground">{note}</span>
-              </span>
-            </button>
-          ))}
-        </div>
+        <h1 className="mt-6 font-display text-2xl font-bold">{mode === "sign-in" ? "Welcome back" : mode === "activate" ? "Activate your school account" : "Verify your email"}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{mode === "sign-in" ? "Sign in with the email approved for your school." : mode === "activate" ? "Use the email submitted with your school application." : `Enter the code sent to ${email}.`}</p>
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-3">
-          <label className="block text-sm">
+          {mode === "activate" && <label className="block text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Your name</span><input required value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></label>}
+          {mode !== "verify" && <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Email</span>
-            <input required type="email" placeholder={`you@${subdomain}.edu`} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
-          </label>
-          <label className="block text-sm">
+            <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder={`you@${subdomain}.edu`} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+          </label>}
+          {mode === "verify" ? <label className="block text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Email verification code</span><input required inputMode="numeric" autoComplete="one-time-code" value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></label> : <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Password</span>
-            <input required type="password" placeholder="••••••••" className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
-          </label>
-          <Button type="submit" className="w-full" style={{ backgroundColor: primaryColor, color: "#fff" }}>Sign in as {role}</Button>
+            <input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "sign-in" ? "current-password" : "new-password"} minLength={8} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+          </label>}
+          {mode === "sign-in" && <button type="button" disabled={busy} onClick={() => void requestPasswordReset()} className="text-xs font-medium text-secondary-foreground underline-offset-4 hover:underline">Forgot password?</button>}
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          {message && <p role="status" className="text-sm text-secondary-foreground">{message}</p>}
+          <Button type="submit" disabled={busy} className="w-full" style={{ backgroundColor: primaryColor, color: "#fff" }}>{busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : mode === "activate" ? "Create account" : "Verify email"}</Button>
         </form>
+        {mode === "verify" ? <Button variant="outline" className="mt-3 w-full" disabled={busy} onClick={() => void resendVerificationCode()}>Resend verification code</Button> : <Button variant="outline" className="mt-3 w-full" onClick={() => { setError(""); setMessage(""); setMode((current) => current === "sign-in" ? "activate" : "sign-in"); }}>{mode === "sign-in" ? "First time? Activate your account" : "Already activated? Sign in"}</Button>}
         <Button variant="outline" className="mt-3 w-full" onClick={() => navigate({ to: "/guest" })}>Continue as guest</Button>
         <Button variant="ghost" className="mt-2 w-full" onClick={() => navigate({ to: "/signup" })}><Building2 />Register your school</Button>
-        <p className="mt-4 text-center text-[11px] text-muted-foreground">Front-end preview only — no real accounts yet.</p>
+        <p className="mt-4 text-center text-[11px] text-muted-foreground">Access is granted only to an approved school membership.</p>
       </div>
     </div>
   );

@@ -16,9 +16,10 @@ import {
   UsersRound,
   ShieldCheck,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import headTeacher from "@/assets/head-teacher.jpg";
+import { getNeonAccessToken, neonAuthClient } from "../auth/client";
 import { useTenantBranding } from "./tenant-branding-provider";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -116,6 +117,8 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
           type="button"
           onClick={() => {
             sessionStorage.removeItem("hg-role");
+            sessionStorage.removeItem("hg-school");
+            void neonAuthClient?.signOut();
             onNavigate?.();
             navigate({ to: "/login" });
           }}
@@ -130,8 +133,43 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
 
 export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
   const navigate = useNavigate();
   const { schoolName, crestUrl } = useTenantBranding();
+
+  useEffect(() => {
+    if (platform) return;
+    let cancelled = false;
+
+    async function verifySchoolAccess() {
+      try {
+        const token = await getNeonAccessToken();
+        const previewTenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+        const contextUrl = previewTenant ? `/api/auth/context?tenant=${encodeURIComponent(previewTenant)}` : "/api/auth/context";
+        const response = await fetch(contextUrl, { headers: { authorization: `Bearer ${token}` } });
+        const payload = await response.json().catch(() => null) as { error?: string; membership?: { role?: string } } | null;
+        const role = payload?.membership?.role;
+        const allowed = response.ok && (
+          schoolAdmin ? role === "school_admin" :
+          parentPortal ? role === "parent" :
+          studentPortal ? role === "student" :
+          finance ? role === "finance" :
+          role === "teacher" || role === "school_admin"
+        );
+        if (!allowed) throw new Error(payload?.error ?? "This account does not have access to this page");
+        if (!cancelled) setAuthorized(true);
+      } catch {
+        if (!cancelled) window.location.assign(`/login${window.location.search}`);
+      }
+    }
+
+    void verifySchoolAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [platform, schoolAdmin, parentPortal, studentPortal, finance]);
+
+  if (!platform && !authorized) return <div className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">Verifying school access...</div>;
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
@@ -164,6 +202,8 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
               size="sm"
               onClick={() => {
                 sessionStorage.removeItem("hg-role");
+                sessionStorage.removeItem("hg-school");
+                void neonAuthClient?.signOut();
                 navigate({ to: "/login" });
               }}
             >

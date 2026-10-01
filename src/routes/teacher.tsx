@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { getNeonAccessToken, neonAuthClient } from "../auth/client";
 
 export const Route = createFileRoute("/teacher")({
   head: () => ({
@@ -91,11 +92,24 @@ function TeacherPortal() {
   }
 
   useEffect(() => {
-    if (sessionStorage.getItem("hg-role") === "teacher") {
-      setAllowed(true);
-    } else {
-      navigate({ to: "/login" });
+    let cancelled = false;
+    async function verifyTeacher() {
+      try {
+        const token = await getNeonAccessToken();
+        const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+        const endpoint = tenant ? `/api/auth/context?tenant=${encodeURIComponent(tenant)}` : "/api/auth/context";
+        const response = await fetch(endpoint, { headers: { authorization: `Bearer ${token}` } });
+        const payload = await response.json().catch(() => null) as { membership?: { role?: string } } | null;
+        if (!response.ok || payload?.membership?.role !== "teacher") throw new Error("Teacher membership is required");
+        if (!cancelled) setAllowed(true);
+      } catch {
+        if (!cancelled) window.location.assign(`/login${window.location.search}`);
+      }
     }
+    void verifyTeacher();
+    return () => {
+      cancelled = true;
+    };
   }, [navigate]);
 
   if (!allowed) return null;
@@ -116,6 +130,7 @@ function TeacherPortal() {
           size="sm"
           onClick={() => {
             sessionStorage.removeItem("hg-role");
+            void neonAuthClient?.signOut();
             navigate({ to: "/login" });
           }}
         >

@@ -1,5 +1,6 @@
 import { database, resolveRuntimeEnv, type RuntimeEnv } from "./database";
 import { resolveTenant } from "./tenant";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 type SchoolRecord = { id: string; name: string; subdomain: string; status: "trial" | "active" | "suspended"; createdAt: string; primaryColor?: string; students?: number; admins?: number };
 
@@ -18,9 +19,31 @@ function platformTokenFromRequest(request: Request) {
   }
 }
 
-function isPlatformAdmin(request: Request, env: RuntimeEnv) {
+async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
   const token = platformTokenFromRequest(request);
-  return Boolean(env.PLATFORM_ADMIN_TOKEN && token === env.PLATFORM_ADMIN_TOKEN);
+  if (!token) return false;
+  if (env.PLATFORM_ADMIN_TOKEN && token === env.PLATFORM_ADMIN_TOKEN) return true;
+  if (!env.DATABASE_URL || !env.NEON_AUTH_URL) return false;
+
+  try {
+    const { payload } = await jwtVerify(token, authJwks(env.NEON_AUTH_URL));
+    const userId = typeof payload.sub === "string" ? payload.sub : "";
+    const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+    if (!userId || !email) return false;
+
+    const sql = database(env);
+    const users = await sql`select email, "emailVerified" as email_verified from neon_auth.user where id = ${userId} limit 1`;
+    const authUser = users[0];
+    if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== email) return false;
+    const memberships = await sql`
+      select 1 from users u join memberships m on m.user_id = u.id
+      where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null
+      limit 1
+    `;
+    return memberships.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function platformSessionCookie(token: string, request: Request, maxAge: number) {
@@ -32,6 +55,16 @@ function validSubdomain(value: string) { return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z
 
 const validPrimaryColor = (value: string) => /^#[0-9a-f]{6}$/i.test(value);
 const maxCrestUrlLength = 700_000;
+let cachedAuthJwksUrl = "";
+let cachedAuthJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+
+function authJwks(authUrl: string) {
+  const normalizedUrl = authUrl.replace(/\/+$/, "");
+  if (cachedAuthJwks && cachedAuthJwksUrl === normalizedUrl) return cachedAuthJwks;
+  cachedAuthJwksUrl = normalizedUrl;
+  cachedAuthJwks = createRemoteJWKSet(new URL(`${normalizedUrl}/.well-known/jwks.json`));
+  return cachedAuthJwks;
+}
 
 function validCrestUrl(value: unknown): value is string | null {
   if (value == null || value === "") return true;
@@ -49,9 +82,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const url = new URL(request.url);
   if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
   if (url.pathname === "/api/platform/session") {
-    if (!env.PLATFORM_ADMIN_TOKEN) return json({ error: "Platform API is not configured" }, 503);
+    if (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL) return json({ error: "Platform API is not configured" }, 503);
     if (request.method === "GET") {
-      return isPlatformAdmin(request, env) ? json({ authenticated: true }) : json({ error: "Unauthorized" }, 401);
+      return await isPlatformAdmin(request, env) ? json({ authenticated: true }) : json({ error: "Unauthorized" }, 401);
     }
     if (request.method === "DELETE") {
       return json({ authenticated: false }, 200, { "set-cookie": platformSessionCookie("", request, 0) });
@@ -86,6 +119,90 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             crestUrl: school["crest_url"] ? String(school["crest_url"]) : null,
           }
         : null,
+    });
+  }
+
+  if (url.pathname === "/api/auth/eligibility") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    if (!env.DATABASE_URL) return json({ error: "Database is not configured" }, 503);
+    const payload: unknown = await request.json().catch(() => null);
+    const email = payload && typeof payload === "object" && "email" in payload && typeof payload.email === "string"
+      ? payload.email.trim().toLowerCase()
+      : "";
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid email address");
+
+    const sql = database(env);
+    const rows = await sql`
+      select m.role, s.status as school_status
+      from users u
+      join memberships m on m.user_id = u.id
+      left join schools s on s.id = m.school_id
+      where lower(u.email) = ${email}
+    `;
+    const eligible = rows.some((row) => row["role"] === "super_admin" || row["school_status"] === "trial" || row["school_status"] === "active");
+    return json({ eligible });
+  }
+
+  if (url.pathname === "/api/auth/context") {
+    if (!env.DATABASE_URL || !env.NEON_AUTH_URL) return json({ error: "Neon Auth is not configured" }, 503);
+    const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    if (!bearer) return json({ error: "Authentication is required" }, 401);
+
+    let authUserId: string;
+    let tokenEmail: string;
+    try {
+      const verified = await jwtVerify(bearer, authJwks(env.NEON_AUTH_URL));
+      authUserId = typeof verified.payload.sub === "string" ? verified.payload.sub : "";
+      tokenEmail = typeof verified.payload.email === "string" ? verified.payload.email.trim().toLowerCase() : "";
+      if (!authUserId || !tokenEmail) return json({ error: "The sign-in token is missing user identity" }, 401);
+    } catch {
+      return json({ error: "The sign-in token is invalid or expired" }, 401);
+    }
+
+    const sql = database(env);
+    const authUsers = await sql`
+      select id, email, "emailVerified" as email_verified
+      from neon_auth.user
+      where id = ${authUserId}
+      limit 1
+    `;
+    const authUser = authUsers[0];
+    if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== tokenEmail) {
+      return json({ error: "Verify your email address before using a school portal" }, 403);
+    }
+
+    const memberships = await sql`
+      select m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
+             coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
+      from users u
+      join memberships m on m.user_id = u.id
+      left join schools s on s.id = m.school_id
+      where lower(u.email) = ${tokenEmail}
+    `;
+    const platformAdmin = memberships.find((row) => row["role"] === "super_admin" && row["school_id"] == null);
+    if (platformAdmin) return json({ user: { email: tokenEmail }, membership: { role: "super_admin", schoolId: null } });
+
+    const tenant = resolveTenant(request, env.ROOT_DOMAIN);
+    const previewSubdomain = env.ROOT_DOMAIN === "localhost" ? url.searchParams.get("tenant")?.trim().toLowerCase() ?? null : null;
+    const requestedSubdomain = tenant.subdomain ?? previewSubdomain;
+    const schoolMemberships = memberships.filter((row) => row["school_id"] != null);
+    const selectedMembership = requestedSubdomain
+      ? schoolMemberships.find((row) => row["subdomain"] === requestedSubdomain)
+      : schoolMemberships.length === 1 ? schoolMemberships[0] : undefined;
+    if (!selectedMembership) return json({ error: "This account does not have access to this school" }, 403);
+    if (selectedMembership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
+
+    return json({
+      user: { email: tokenEmail },
+      membership: {
+        role: String(selectedMembership["role"]),
+        schoolId: String(selectedMembership["school_id"]),
+        schoolName: String(selectedMembership["school_name"]),
+        subdomain: String(selectedMembership["subdomain"]),
+        status: selectedMembership["school_status"],
+        primaryColor: String(selectedMembership["primary_color"]),
+        crestUrl: selectedMembership["crest_url"] ? String(selectedMembership["crest_url"]) : null,
+      },
     });
   }
 
@@ -131,8 +248,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
 
   if (url.pathname === "/api/platform/applications" || url.pathname.startsWith("/api/platform/applications/")) {
-    if (!env.DATABASE_URL || !env.PLATFORM_ADMIN_TOKEN) return json({ error: "Platform API is not configured" }, 503);
-    if (!isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
+    if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL)) return json({ error: "Platform API is not configured" }, 503);
+    if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
 
     const sql = database(env);
     if (url.pathname === "/api/platform/applications" && request.method === "GET") {
@@ -220,8 +337,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
   const schoolStatusMatch = url.pathname.match(/^\/api\/platform\/schools\/([0-9a-f-]+)\/status$/i);
   if (url.pathname !== "/api/platform/schools" && !schoolStatusMatch) return json({ error: "Not found" }, 404);
-  if (!env.DATABASE_URL || !env.PLATFORM_ADMIN_TOKEN) return json({ error: "Platform API is not configured" }, 503);
-  if (!isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
+  if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL)) return json({ error: "Platform API is not configured" }, 503);
+  if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
 
   const sql = database(env);
   if (schoolStatusMatch) {
