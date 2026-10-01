@@ -321,13 +321,20 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       `;
       const school = rows[0];
       if (!school) return json({ error: "Application was not found or is no longer pending" }, 404);
+      const subdomain = String(school["subdomain"]);
+      const tenantLoginUrl = env.ROOT_DOMAIN === "localhost"
+        ? new URL(`/login?tenant=${encodeURIComponent(subdomain)}`, request.url).toString()
+        : env.ROOT_DOMAIN
+          ? `https://${subdomain}.${env.ROOT_DOMAIN}/login`
+          : null;
       return json({ school: {
         id: String(school["id"]),
         name: String(school["name"]),
-        subdomain: String(school["subdomain"]),
+        subdomain,
         status: school["status"],
         primaryColor: String(school["primary_color"]),
         adminUserId: String(school["admin_user_id"]),
+        tenantLoginUrl,
       } });
     } catch (error) {
       if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That school subdomain is already in use" }, 409);

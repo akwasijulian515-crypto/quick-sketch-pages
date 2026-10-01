@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Activity, Building2, CheckCircle2, Clock3, Eye, Mail, Plus, Search, ShieldCheck, UserPlus, X } from "lucide-react";
+import { Activity, Building2, Check, CheckCircle2, Clock3, Copy, Eye, Mail, Plus, Search, ShieldCheck, UserPlus, X } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -168,6 +168,8 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [approvedLoginUrl, setApprovedLoginUrl] = useState("");
+  const [copiedLoginUrl, setCopiedLoginUrl] = useState(false);
   const session = usePlatformSession();
 
   const loadApplications = useCallback(async () => {
@@ -205,14 +207,25 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
         method: "POST",
         headers: await platformAuthHeaders(),
       });
-      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      const payload = await response.json().catch(() => null) as { error?: string; school?: { tenantLoginUrl?: string | null } } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not approve this application");
+      setApprovedLoginUrl(payload?.school?.tenantLoginUrl ?? "");
+      setCopiedLoginUrl(false);
       approve({ ...application, status: "Approved" });
       await loadApplications();
     } catch (approvalError) {
       setError(approvalError instanceof Error ? approvalError.message : "Could not approve this application");
     } finally {
       setApprovingId(null);
+    }
+  }
+
+  async function copyApprovedLoginUrl() {
+    try {
+      await navigator.clipboard.writeText(approvedLoginUrl);
+      setCopiedLoginUrl(true);
+    } catch {
+      setError("Could not copy the login link; select and copy it manually.");
     }
   }
 
@@ -239,6 +252,7 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
       </div>
     )}
     {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
+    {approvedLoginUrl && <div role="status" className="flex flex-col gap-3 border-b border-emerald-500/20 bg-emerald-500/5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-medium text-emerald-800">Tenant approved. Share this login link with the school admin:</p><a href={approvedLoginUrl} className="mt-1 block break-all text-sm text-secondary-foreground underline">{approvedLoginUrl}</a></div><Button size="sm" variant="outline" onClick={() => void copyApprovedLoginUrl()}>{copiedLoginUrl ? <Check /> : <Copy />}{copiedLoginUrl ? "Copied" : "Copy link"}</Button></div>}
     <div className="divide-y divide-border/70">
       {session.authenticated && applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md text-white" style={{ backgroundColor: application.color }}><Building2 className="size-4" /></div><div><p className="font-medium">{application.schoolName}</p><p className="mt-0.5 text-xs text-muted-foreground">{application.subdomain}.yourdomain.com · {application.submitted}</p><p className="mt-1 text-xs text-secondary-foreground">{application.applicant} · {application.email}</p></div></div>{application.status === "Pending" ? <Button size="sm" disabled={approvingId === application.id} onClick={() => void approveApplication(application)}><CheckCircle2 />{approvingId === application.id ? "Approving..." : "Approve tenant"}</Button> : <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"><CheckCircle2 className="size-4" />Tenant created</span>}</article>)}
       {session.authenticated && loaded && applications.every((application) => application.status !== "Pending") && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No pending applications.</p>}
