@@ -172,7 +172,6 @@ function LoginPage() {
           <Button type="submit" disabled={busy} className="w-full" style={{ backgroundColor: primaryColor, color: "#fff" }}>{busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : mode === "activate" ? "Create account" : "Verify email"}</Button>
         </form>
         {mode === "verify" ? <Button variant="outline" className="mt-3 w-full" disabled={busy} onClick={() => void resendVerificationCode()}>Resend verification code</Button> : <Button variant="outline" className="mt-3 w-full" onClick={() => { setError(""); setMessage(""); setMode((current) => current === "sign-in" ? "activate" : "sign-in"); }}>{mode === "sign-in" ? "First time? Activate your account" : "Already activated? Sign in"}</Button>}
-        <Button variant="outline" className="mt-3 w-full" onClick={() => navigate({ to: "/guest" })}>Continue as guest</Button>
         <Button variant="ghost" className="mt-2 w-full" onClick={() => navigate({ to: "/signup" })}><Building2 />Register your school</Button>
         <p className="mt-4 text-center text-[11px] text-muted-foreground">Access is granted only to an approved school membership.</p>
       </div>
