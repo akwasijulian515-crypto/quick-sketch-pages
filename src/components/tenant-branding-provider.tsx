@@ -57,7 +57,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    const previewTenant = new URLSearchParams(window.location.search).get("tenant");
+    const previewTenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
     const endpoint = previewTenant ? `/api/school?tenant=${encodeURIComponent(previewTenant)}` : "/api/school";
 
     async function loadBranding() {
