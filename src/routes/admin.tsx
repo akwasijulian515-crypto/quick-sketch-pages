@@ -169,6 +169,8 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [approvedLoginUrl, setApprovedLoginUrl] = useState("");
+  const [invitationNotice, setInvitationNotice] = useState("");
+  const [invitationSent, setInvitationSent] = useState(false);
   const [copiedLoginUrl, setCopiedLoginUrl] = useState(false);
   const session = usePlatformSession();
 
@@ -207,9 +209,17 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
         method: "POST",
         headers: await platformAuthHeaders(),
       });
-      const payload = await response.json().catch(() => null) as { error?: string; school?: { tenantLoginUrl?: string | null } } | null;
+      const payload = await response.json().catch(() => null) as {
+        error?: string;
+        school?: { tenantLoginUrl?: string | null };
+        invitation?: { sent: boolean; error?: string };
+      } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not approve this application");
       setApprovedLoginUrl(payload?.school?.tenantLoginUrl ?? "");
+      setInvitationSent(payload?.invitation?.sent ?? false);
+      setInvitationNotice(payload?.invitation?.sent
+        ? `Invitation email sent to ${application.email}.`
+        : `Tenant approved, but the invitation email was not sent. ${payload?.invitation?.error ?? "Use the activation link below to invite the school admin manually."}`);
       setCopiedLoginUrl(false);
       approve({ ...application, status: "Approved" });
       await loadApplications();
@@ -252,7 +262,7 @@ function Onboarding({ applications, approve, openSignup }: { applications: Appli
       </div>
     )}
     {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
-    {approvedLoginUrl && <div role="status" className="flex flex-col gap-3 border-b border-emerald-500/20 bg-emerald-500/5 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-medium text-emerald-800">Tenant approved. Share this login link with the school admin:</p><a href={approvedLoginUrl} className="mt-1 block break-all text-sm text-secondary-foreground underline">{approvedLoginUrl}</a></div><Button size="sm" variant="outline" onClick={() => void copyApprovedLoginUrl()}>{copiedLoginUrl ? <Check /> : <Copy />}{copiedLoginUrl ? "Copied" : "Copy link"}</Button></div>}
+    {invitationNotice && <div role="status" className={cn("flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between", invitationSent ? "border-emerald-500/20 bg-emerald-500/5" : "border-amber-500/20 bg-amber-500/5")}><div><p className={cn("text-sm font-medium", invitationSent ? "text-emerald-800" : "text-amber-800")}>{invitationNotice}</p>{approvedLoginUrl && <a href={approvedLoginUrl} className="mt-1 block break-all text-sm text-secondary-foreground underline">{approvedLoginUrl}</a>}</div>{approvedLoginUrl && <Button size="sm" variant="outline" onClick={() => void copyApprovedLoginUrl()}>{copiedLoginUrl ? <Check /> : <Copy />}{copiedLoginUrl ? "Copied" : "Copy link"}</Button>}</div>}
     <div className="divide-y divide-border/70">
       {session.authenticated && applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md text-white" style={{ backgroundColor: application.color }}><Building2 className="size-4" /></div><div><p className="font-medium">{application.schoolName}</p><p className="mt-0.5 text-xs text-muted-foreground">{application.subdomain}.yourdomain.com · {application.submitted}</p><p className="mt-1 text-xs text-secondary-foreground">{application.applicant} · {application.email}</p></div></div>{application.status === "Pending" ? <Button size="sm" disabled={approvingId === application.id} onClick={() => void approveApplication(application)}><CheckCircle2 />{approvingId === application.id ? "Approving..." : "Approve tenant"}</Button> : <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"><CheckCircle2 className="size-4" />Tenant created</span>}</article>)}
       {session.authenticated && loaded && applications.every((application) => application.status !== "Pending") && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No pending applications.</p>}

@@ -77,6 +77,56 @@ function validCrestUrl(value: unknown): value is string | null {
   }
 }
 
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
+}
+
+async function sendSchoolAdminInvitation(
+  env: RuntimeEnv,
+  recipient: string,
+  contactName: string,
+  schoolName: string,
+  activationUrl: string,
+) {
+  if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
+    return { sent: false, error: "Resend is not configured. Set RESEND_API_KEY and RESEND_FROM_EMAIL." };
+  }
+
+  const safeName = escapeHtml(contactName);
+  const safeSchool = escapeHtml(schoolName);
+  const safeUrl = escapeHtml(activationUrl);
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        from: env.RESEND_FROM_EMAIL,
+        to: [recipient],
+        subject: `Your ${schoolName} workspace is ready on Klasora`,
+        html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#183237"><h1 style="color:#1f5c3b">Welcome to Klasora</h1><p>Hello ${safeName},</p><p>Your school workspace for <strong>${safeSchool}</strong> has been approved.</p><p>Use the button below to activate your School Admin account. You will verify your email and choose a password.</p><p style="margin:28px 0"><a href="${safeUrl}" style="background:#1f5c3b;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;font-weight:600">Activate your account</a></p><p>If the button does not work, copy this link into your browser:<br><a href="${safeUrl}">${safeUrl}</a></p></div>`,
+        text: `Hello ${contactName},\n\nYour school workspace for ${schoolName} has been approved on Klasora.\n\nActivate your School Admin account, verify your email, and choose a password here:\n${activationUrl}\n`,
+      }),
+    });
+    if (!response.ok) {
+      console.error("Resend rejected the school-admin invitation", response.status);
+      return { sent: false, error: "Resend could not deliver the invitation. Check your Resend sender configuration." };
+    }
+    return { sent: true as const };
+  } catch (error) {
+    console.error("Could not send school-admin invitation", error);
+    return { sent: false, error: "Could not reach Resend to deliver the invitation." };
+  }
+}
+
 export async function handleApiRequest(request: Request, env: RuntimeEnv): Promise<Response> {
   env = resolveRuntimeEnv(env);
   const url = new URL(request.url);
@@ -314,10 +364,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           returning id
         )
         select inserted_school.id, inserted_school.name, inserted_school.subdomain,
-               inserted_school.status, inserted_school.primary_color, upserted_user.id as admin_user_id
+               inserted_school.status, inserted_school.primary_color, upserted_user.id as admin_user_id,
+               pending_application.contact_email as admin_email,
+               pending_application.contact_name
         from inserted_school
         cross join upserted_user
         cross join approved_application
+        cross join pending_application
       `;
       const school = rows[0];
       if (!school) return json({ error: "Application was not found or is no longer pending" }, 404);
@@ -327,6 +380,17 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         : env.ROOT_DOMAIN
           ? `https://${subdomain}.${env.ROOT_DOMAIN}/login`
           : null;
+      const activationUrl = tenantLoginUrl ? new URL(tenantLoginUrl) : null;
+      activationUrl?.searchParams.set("mode", "activate");
+      const invitation = activationUrl && typeof rows[0]?.["admin_email"] === "string"
+        ? await sendSchoolAdminInvitation(
+          env,
+          String(rows[0]["admin_email"]),
+          String(rows[0]["contact_name"]),
+          String(school["name"]),
+          activationUrl.toString(),
+        )
+        : { sent: false, error: "The tenant login address is not configured. Set ROOT_DOMAIN before sending invitations." };
       return json({ school: {
         id: String(school["id"]),
         name: String(school["name"]),
@@ -335,7 +399,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         primaryColor: String(school["primary_color"]),
         adminUserId: String(school["admin_user_id"]),
         tenantLoginUrl,
-      } });
+      }, invitation });
     } catch (error) {
       if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That school subdomain is already in use" }, 409);
       throw error;

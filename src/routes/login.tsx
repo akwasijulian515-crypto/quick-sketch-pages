@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Building2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { useTenantBranding } from "../components/tenant-branding-provider";
 import { getNeonAccessToken, neonAuthClient } from "../auth/client";
@@ -31,6 +31,12 @@ function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("mode") === "activate") {
+      setMode("activate");
+    }
+  }, []);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
