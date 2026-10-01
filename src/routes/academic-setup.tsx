@@ -1,22 +1,38 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CalendarDays, CheckCircle2, CircleAlert, GraduationCap, LockKeyhole } from "lucide-react";
-import { useState } from "react";
+import { CalendarDays } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
-import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/academic-setup")({ head: () => ({ meta: [{ title: "Academic Setup — Harrow Green" }, { name: "description", content: "Set the school year, terms, calendar, and promotion window." }] }), component: AcademicSetupPage });
-
-const terms = [{ name: "Term 1", dates: "9 Sep - 13 Dec 2024", status: "Completed" }, { name: "Term 2", dates: "7 Jan - 11 Apr 2025", status: "Completed" }, { name: "Term 3", dates: "5 May - 1 Aug 2025", status: "Current" }];
-const days = Array.from({ length: 31 }, (_, index) => index + 1);
+export const Route = createFileRoute("/academic-setup")({
+  head: () => ({
+    meta: [
+      { title: "Academic Setup — Harrow Green" },
+      { name: "description", content: "Set the school year, terms, calendar, and promotion window." },
+    ],
+  }),
+  component: AcademicSetupPage,
+});
 
 function AcademicSetupPage() {
-  const [tab, setTab] = useState<"terms" | "calendar" | "promotion">("terms"); const [holidays, setHolidays] = useState<number[]>([1, 2, 3]); const [termThreeClosed, setTermThreeClosed] = useState(() => sessionStorage.getItem("hg-term-three-closed") === "true");
-  function toggleHoliday(day: number) { setHolidays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day]); }
-  function togglePromotionWindow() { setTermThreeClosed((current) => { const next = !current; sessionStorage.setItem("hg-term-three-closed", String(next)); return next; }); }
-  return <SchoolShell title="Academic setup" schoolAdmin><div className="mx-auto max-w-6xl rise"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CalendarDays className="size-5" /></div><h1 className="font-display text-3xl font-bold">Academic setup</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Manage the school year, teaching terms, non-school days, and the Term 3 promotion window.</p></div><section className="glass-panel mt-6 overflow-hidden rounded-lg"><div className="flex overflow-x-auto border-b border-border p-4"><Tab active={tab === "terms"} onClick={() => setTab("terms")}>Academic year & terms</Tab><Tab active={tab === "calendar"} onClick={() => setTab("calendar")}>School calendar</Tab><Tab active={tab === "promotion"} onClick={() => setTab("promotion")}>Promotion window</Tab></div>{tab === "terms" ? <div className="p-5"><div className="grid gap-4 md:grid-cols-3"><Setting label="Academic year" value="2024 / 2025" /><Setting label="Current term" value="Term 3" /><Setting label="School days" value="Monday - Friday" /></div><div className="mt-6 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Term", "Dates", "Status", "Action"].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{terms.map((term) => <tr key={term.name}><td className="px-4 py-4 font-medium">{term.name}</td><td className="px-4 py-4">{term.dates}</td><td className="px-4 py-4"><Badge value={term.status} /></td><td className="px-4 py-4"><Button size="sm" variant="outline" disabled={term.status === "Current" || term.status === "Completed"}>{term.status === "Current" ? "Current term" : "Closed"}</Button></td></tr>)}</tbody></table></div></div> : tab === "calendar" ? <div className="p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-display text-lg font-bold">July 2025</h2><p className="mt-1 text-sm text-muted-foreground">Click a date to mark or unmark it as a holiday. Marked days are excluded from attendance expectations.</p></div><span className="rounded-full bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-700">{holidays.length} holiday days marked</span></div><div className="mt-5 grid grid-cols-7 gap-2 text-center text-xs"><>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => <span key={day} className="py-2 font-medium text-muted-foreground">{day}</span>)}</>{Array.from({ length: 1 }, (_, index) => <span key={`blank-${index}`} />)}{days.map((day) => { const holiday = holidays.includes(day); const weekend = (day + 1) % 7 === 0 || (day + 2) % 7 === 0; return <button key={day} type="button" onClick={() => !weekend && toggleHoliday(day)} disabled={weekend} className={cn("aspect-square rounded-md border p-1 text-sm transition-colors", holiday ? "border-amber-500/30 bg-amber-500/15 font-semibold text-amber-800" : weekend ? "border-transparent bg-muted/40 text-muted-foreground/50" : "border-border bg-background hover:border-primary/30 hover:bg-primary/5")}>{day}</button>; })}</div><div className="mt-5 flex flex-wrap gap-4 text-xs text-muted-foreground"><span className="inline-flex items-center gap-2"><i className="size-3 rounded-sm bg-amber-500/20" />Holiday / closure</span><span className="inline-flex items-center gap-2"><i className="size-3 rounded-sm bg-muted" />Weekend</span><span>Tip: click every closure day; attendance ignores them automatically once data is connected.</span></div></div> : <div className="p-5"><div className="grid gap-4 lg:grid-cols-5"><div className="lg:col-span-3"><GraduationCap className="size-6 text-primary" /><h2 className="mt-3 font-display text-xl font-bold">Term 3 promotion</h2><p className="mt-2 max-w-xl text-sm text-muted-foreground">Class teachers promote their own students after final marks, attendance, conduct, and reports are complete. Closing Term 3 unlocks their promotion register.</p><div className={cn("mt-5 rounded-md border p-4 text-sm", termThreeClosed ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700" : "border-amber-500/25 bg-amber-500/10 text-amber-700")}>{termThreeClosed ? <span className="flex items-center gap-2"><CheckCircle2 className="size-5" />Promotion is open for class teachers.</span> : <span className="flex items-center gap-2"><LockKeyhole className="size-5" />Promotion stays locked until you close Term 3.</span>}</div><Button className="mt-5" onClick={togglePromotionWindow}>{termThreeClosed ? "Reopen Term 3" : "Close Term 3 & open promotion"}</Button></div><aside className="rounded-lg border border-border bg-muted/30 p-5 lg:col-span-2"><h3 className="font-display text-lg font-bold">Before opening</h3><ul className="mt-3 space-y-3 text-sm text-muted-foreground"><li className="flex gap-2"><CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />All class registers reviewed</li><li className="flex gap-2"><CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />Marks and learner profiles entered</li><li className="flex gap-2"><CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />Terminal reports generated</li></ul></aside></div></div>}</section></div></SchoolShell>;
+  return (
+    <SchoolShell title="Academic setup" schoolAdmin>
+      <div className="mx-auto max-w-6xl rise">
+        <div>
+          <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">
+            <CalendarDays className="size-5" />
+          </div>
+          <h1 className="font-display text-3xl font-bold">Academic setup</h1>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+            Manage the school year, teaching terms, non-school days, and the promotion window.
+          </p>
+        </div>
+        <section className="glass-panel mt-6 rounded-lg border border-dashed border-border p-12 text-center">
+          <h2 className="font-display text-lg font-bold">Live academic configuration is not connected</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            School-year dates, term status, calendar closures, and promotion settings will appear here when connected to your school records.
+          </p>
+        </section>
+      </div>
+    </SchoolShell>
+  );
 }
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) { return <button type="button" onClick={onClick} className={cn("rounded px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors", active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>{children}</button>; }
-function Setting({ label, value }: { label: string; value: string }) { return <div className="rounded-lg border border-border bg-background/60 p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 font-display text-lg">{value}</p></div>; }
-function Badge({ value }: { value: string }) { return <span className={cn("rounded-full px-2 py-1 text-xs font-medium", value === "Current" ? "bg-primary/10 text-primary" : "bg-emerald-500/10 text-emerald-700")}>{value}</span>; }

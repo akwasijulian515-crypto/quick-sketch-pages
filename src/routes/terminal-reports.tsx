@@ -1,35 +1,61 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { FileDown, FileText, Files, ShieldCheck } from "lucide-react";
-import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
-import { cn } from "@/lib/utils";
-import { downloadTerminalReports, type TerminalReportPdfData } from "@/lib/terminal-report-pdf";
 
-export const Route = createFileRoute("/terminal-reports")({ head: () => ({ meta: [{ title: "Terminal Reports — Harrow Green" }, { name: "description", content: "Generate standards-based terminal reports." }] }), component: TerminalReportsPage });
-
-type SubjectResult = { subject: string; score: number; teacher: string; remark: string };
-const results: SubjectResult[] = [
-  { subject: "Mathematics", score: 82, teacher: "Mr. Okoye", remark: "Applies mathematical ideas confidently in unfamiliar problems." },
-  { subject: "English Language", score: 74, teacher: "Mrs. Mensah", remark: "Communicates clearly and is developing strong writing habits." },
-  { subject: "Integrated Science", score: 66, teacher: "Ms. Adjei", remark: "Explains scientific concepts with little guidance." },
-  { subject: "Computing", score: 88, teacher: "Mr. Okoye", remark: "Uses digital tools independently and transfers skills confidently." },
-  { subject: "Social Studies", score: 71, teacher: "Mr. Boadu", remark: "Shows a secure understanding of community and citizenship." },
-];
-const students = ["Abena Ofori", "Daniel Boateng", "Eunice Agyeman"];
-
-function performance(score: number) { return score >= 80 ? { code: "HP", label: "Highly Proficient", tone: "bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-500/20" } : score >= 68 ? { code: "P", label: "Proficient", tone: "bg-sky-500/15 text-sky-700 ring-1 ring-sky-500/20" } : score >= 54 ? { code: "AP", label: "Approaching Proficiency", tone: "bg-amber-500/15 text-amber-700 ring-1 ring-amber-500/20" } : score >= 40 ? { code: "D", label: "Developing", tone: "bg-orange-500/15 text-orange-700 ring-1 ring-orange-500/20" } : { code: "E", label: "Emerging", tone: "bg-rose-500/15 text-rose-700 ring-1 ring-rose-500/20" }; }
+export const Route = createFileRoute("/terminal-reports")({
+  head: () => ({
+    meta: [
+      { title: "Terminal Reports — Harrow Green" },
+      { name: "description", content: "Generate standards-based terminal reports." },
+    ],
+  }),
+  component: TerminalReportsPage,
+});
 
 function TerminalReportsPage() {
-  const [student, setStudent] = useState(students[0]!); const [generated, setGenerated] = useState(false); const average = results.reduce((total, item) => total + item.score, 0) / results.length; const overall = performance(average);
-  const reportData = (name: string): TerminalReportPdfData => ({ student: name, admission: name === "Abena Ofori" ? "HGA-2B-001" : name === "Daniel Boateng" ? "HGA-2B-002" : "HGA-2B-003", className: "Form 2B", term: "Term II, 2023/2024", attendance: "91% (82 of 90 days)", conduct: "Excellent", attitude: "Very good", interest: "Excellent", teacherRemark: `${name} is a focused learner who participates constructively and supports peers.`, results });
-  return <SchoolShell title="Terminal reports" schoolAdmin><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><FileText className="size-5" /></div><h1 className="font-display text-3xl font-bold">Terminal reports</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Generate a criterion-referenced report from entered marks, attendance, learner profile, and teacher remarks.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => downloadTerminalReports(students.map(reportData))}><Files />Download Form 2B PDFs</Button><Button variant="outline" disabled={!generated} onClick={() => downloadTerminalReports([reportData(student)])}><FileDown />Download PDF</Button><Button onClick={() => setGenerated(true)}><FileText />Preview report</Button></div></div><section className="glass-panel mt-6 rounded-lg p-5"><div className="flex flex-wrap items-end gap-4"><Select label="Learner" value={student} onChange={(value) => { setStudent(value); setGenerated(false); }} options={students} /><Select label="Term" value="Term II · 2023/2024" onChange={() => undefined} options={["Term II · 2023/2024", "Term I · 2023/2024"]} /><div className="mb-2 flex items-center gap-2 text-xs text-secondary-foreground"><ShieldCheck className="size-4 text-primary" />NaCCA standards-based levels</div></div></section>{generated ? <Report student={student} average={average} overall={overall} /> : <div className="glass-panel mt-4 rounded-lg border border-dashed border-border p-12 text-center"><FileText className="mx-auto size-7 text-primary/55" /><h2 className="mt-3 font-display text-lg font-bold">Ready to generate</h2><p className="mt-1 text-sm text-muted-foreground">Preview a learner or download one PDF per learner in a single class file.</p></div>}<section className="mt-5 rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground"><p className="font-medium text-secondary-foreground">NaCCA performance levels</p><p className="mt-1">HP: 80%+ · P: 68–79% · AP: 54–67% · D: 40–53% · E: 39% and below. Reports are criterion-referenced, not learner rankings.</p></section></div></SchoolShell>;
+  return (
+    <SchoolShell title="Terminal reports" schoolAdmin>
+      <div className="mx-auto max-w-6xl rise">
+        <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+          <div>
+            <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">
+              <FileText className="size-5" />
+            </div>
+            <h1 className="font-display text-3xl font-bold">Terminal reports</h1>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              Generate a criterion-referenced report from entered marks, attendance, learner profile, and teacher remarks.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" disabled>
+              <Files />Download class reports
+            </Button>
+            <Button variant="outline" disabled>
+              <FileDown />Download report
+            </Button>
+            <Button disabled>
+              <FileText />Preview report
+            </Button>
+          </div>
+        </div>
+
+        <div className="glass-panel mt-6 rounded-lg border border-dashed border-border p-12 text-center">
+          <ShieldCheck className="mx-auto size-7 text-primary/55" />
+          <h2 className="mt-3 font-display text-lg font-bold">Live learner records are not connected</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Report previews and downloads will be available when student results and attendance data are connected.
+          </p>
+        </div>
+
+        <section className="mt-5 rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
+          <p className="font-medium text-secondary-foreground">NaCCA performance levels</p>
+          <p className="mt-1">
+            HP: 80%+ · P: 68–79% · AP: 54–67% · D: 40–53% · E: 39% and below. Reports are criterion-referenced, not learner rankings.
+          </p>
+        </section>
+      </div>
+    </SchoolShell>
+  );
 }
-
-function Report({ student, average, overall }: { student: string; average: number; overall: ReturnType<typeof performance> }) { return <article className="report-print glass-panel mt-4 overflow-hidden rounded-lg shadow-xl shadow-primary/5"><div className="flex flex-wrap items-start justify-between gap-4 bg-primary px-6 py-6 text-primary-foreground sm:px-8"><div className="flex items-center gap-3"><div className="grid size-11 place-items-center rounded-md bg-highlight font-display text-lg font-bold text-highlight-foreground">H</div><div><p className="font-display text-xl font-bold">Harrow Green Academy</p><p className="mt-1 text-sm text-primary-foreground/65">Terminal report · Term II, 2023/2024</p></div></div><div className="rounded-md bg-primary-foreground/10 px-3 py-2 text-right text-xs text-primary-foreground/70"><p>Report ID: HGA-TR-2405-001</p><p className="mt-1">Generated by School Admin</p></div></div><div className="p-6 sm:p-8"><div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4 text-sm sm:grid-cols-3"><Info label="Learner" value={student} /><Info label="Class" value="Form 2B" /><Info label="Admission no." value="HGA-2B-001" /><Info label="Class teacher" value="Mr. Okoye" /><Info label="Term" value="Term II" /><Info label="Academic year" value="2023/2024" /></div><div className="mt-5 grid gap-3 sm:grid-cols-3"><Summary label="Attendance" value="91%" note="82 of 90 school days" /><Summary label="Average score" value={`${average.toFixed(1)}%`} note="Across 5 subjects" /><Summary label="Overall level" value={overall.code} note={overall.label} tone={overall.tone} /></div><section className="mt-7 overflow-x-auto"><div className="flex items-center justify-between"><h2 className="font-display text-lg font-bold">Academic performance</h2><span className="text-xs text-muted-foreground">Criterion-referenced</span></div><table className="mt-3 w-full min-w-[740px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Subject", "Score", "Level", "Teacher", "Teacher remark"].map((heading) => <th key={heading} className="border-y border-border px-3 py-3 font-medium">{heading}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{results.map((result) => { const level = performance(result.score); return <tr key={result.subject} className="hover:bg-muted/30"><td className="px-3 py-3 font-medium">{result.subject}</td><td className="px-3 py-3 font-display text-base">{result.score}%</td><td className="px-3 py-3"><span className={cn("rounded-full px-2 py-1 text-xs font-medium", level.tone)}>{level.code} · {level.label}</span></td><td className="px-3 py-3">{result.teacher}</td><td className="px-3 py-3 text-muted-foreground">{result.remark}</td></tr>; })}</tbody></table></section><section className="mt-7 grid gap-5 md:grid-cols-2"><div className="rounded-lg border border-border bg-background/60 p-5"><h2 className="font-display text-lg font-bold">Learner profile</h2><dl className="mt-3 divide-y divide-border text-sm"><Profile label="Conduct" value="Excellent" /><Profile label="Attitude" value="Very good" /><Profile label="Interest" value="Excellent" /><Profile label="Class teacher&apos;s remark" value="Abena is a focused learner who participates constructively and supports her peers." /></dl></div><div className="rounded-lg border border-primary/20 bg-primary/5 p-5"><h2 className="font-display text-lg font-bold">Performance standard</h2><div className="mt-3 flex items-center gap-2"><span className={cn("rounded-full px-2 py-1 text-xs font-medium", overall.tone)}>{overall.code}</span><span className="font-medium">{overall.label}</span></div><p className="mt-3 text-sm text-muted-foreground">High proficiency; transfers knowledge, skills, and values automatically and flexibly through authentic tasks.</p><div className="mt-5 border-t border-primary/15 pt-4 text-sm">Promotion recommendation: <span className="font-medium">Promoted to next term</span></div></div></section><div className="mt-8 grid grid-cols-2 gap-8 border-t border-border pt-8 text-center text-xs text-muted-foreground"><div className="border-t border-foreground pt-2">Class teacher&apos;s signature</div><div className="border-t border-foreground pt-2">School Administrator&apos;s signature</div></div></div></article>; }
-
-function Select({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) { return <label className="block text-sm font-medium">{label}<select value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 block h-10 min-w-52 rounded-md border border-input bg-background px-3 text-sm">{options.map((item) => <option key={item}>{item}</option>)}</select></label>; }
-function Info({ label, value }: { label: string; value: string }) { return <div><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 font-medium">{value}</p></div>; }
-function Summary({ label, value, note, tone }: { label: string; value: string; note: string; tone?: string }) { return <div className="rounded-lg border border-border bg-background/60 p-4"><p className="text-xs text-muted-foreground">{label}</p><p className={cn("mt-1 font-display text-2xl", tone && "text-secondary-foreground")}>{value}</p><p className="mt-1 text-xs text-muted-foreground">{note}</p></div>; }
-function Profile({ label, value }: { label: string; value: string }) { return <div className="flex justify-between gap-4 py-2.5"><dt className="text-muted-foreground">{label}</dt><dd className="max-w-[65%] text-right font-medium">{value}</dd></div>; }
