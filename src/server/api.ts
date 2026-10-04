@@ -132,7 +132,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const url = new URL(request.url);
   if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
   if (url.pathname === "/api/platform/session") {
-    if (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL) return json({ error: "Platform API is not configured" }, 503);
+    if (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL) {
+      // Not configured yet: treat as signed out so the page shows its sign-in form instead of crashing.
+      if (request.method === "GET" || request.method === "DELETE") return json({ authenticated: false, error: "Platform sign-in is not set up yet" }, 401);
+      return json({ error: "Platform sign-in is not set up yet. Add the PLATFORM_ADMIN_TOKEN secret." }, 503);
+    }
     if (request.method === "GET") {
       return await isPlatformAdmin(request, env) ? json({ authenticated: true }) : json({ error: "Unauthorized" }, 401);
     }
