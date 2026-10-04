@@ -28,7 +28,7 @@ async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
   try {
     const { payload } = await jwtVerify(token, authJwks(env.NEON_AUTH_URL));
     const userId = typeof payload.sub === "string" ? payload.sub : "";
-    const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+    const email = typeof payload["email"] === "string" ? payload["email"].trim().toLowerCase() : "";
     if (!userId || !email) return false;
 
     const sql = database(env);
@@ -176,8 +176,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
     if (!env.DATABASE_URL) return json({ error: "Database is not configured" }, 503);
     const payload: unknown = await request.json().catch(() => null);
-    const email = payload && typeof payload === "object" && "email" in payload && typeof payload.email === "string"
-      ? payload.email.trim().toLowerCase()
+    const email = payload && typeof payload === "object" && "email" in payload && typeof payload["email"] === "string"
+      ? payload["email"].trim().toLowerCase()
       : "";
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid email address");
 
@@ -203,7 +203,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     try {
       const verified = await jwtVerify(bearer, authJwks(env.NEON_AUTH_URL));
       authUserId = typeof verified.payload.sub === "string" ? verified.payload.sub : "";
-      tokenEmail = typeof verified.payload.email === "string" ? verified.payload.email.trim().toLowerCase() : "";
+      tokenEmail = typeof verified.payload["email"] === "string" ? verified.payload["email"].trim().toLowerCase() : "";
       if (!authUserId || !tokenEmail) return json({ error: "The sign-in token is missing user identity" }, 401);
     } catch {
       return json({ error: "The sign-in token is invalid or expired" }, 401);
@@ -264,13 +264,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     const payload: unknown = await request.json().catch(() => null);
     if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
     const application = payload as Record<string, unknown>;
-    const schoolName = typeof application.schoolName === "string" ? application.schoolName.trim() : "";
-    const requestedSubdomain = typeof application.subdomain === "string" ? application.subdomain.trim().toLowerCase() : "";
-    const contactName = typeof application.contactName === "string" ? application.contactName.trim() : "";
-    const contactEmail = typeof application.email === "string" ? application.email.trim().toLowerCase() : "";
-    const contactPhone = typeof application.phone === "string" ? application.phone.trim() : "";
-    const primaryColor = typeof application.primaryColor === "string" ? application.primaryColor : "";
-    const crestUrl = application.crestUrl ?? null;
+    const schoolName = typeof application["schoolName"] === "string" ? application["schoolName"].trim() : "";
+    const requestedSubdomain = typeof application["subdomain"] === "string" ? application["subdomain"].trim().toLowerCase() : "";
+    const contactName = typeof application["contactName"] === "string" ? application["contactName"].trim() : "";
+    const contactEmail = typeof application["email"] === "string" ? application["email"].trim().toLowerCase() : "";
+    const contactPhone = typeof application["phone"] === "string" ? application["phone"].trim() : "";
+    const primaryColor = typeof application["primaryColor"] === "string" ? application["primaryColor"] : "";
+    const crestUrl = application["crestUrl"] ?? null;
 
     if (schoolName.length < 2 || schoolName.length > 160) return badRequest("School name must be 2–160 characters");
     if (!validSubdomain(requestedSubdomain)) return badRequest("Subdomain must use lowercase letters, numbers, and hyphens");
