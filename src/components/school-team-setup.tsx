@@ -67,6 +67,12 @@ export function SchoolTeamSetup() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (window.location.hash === "#staff-setup") {
+      document.getElementById("staff-setup")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+
   async function addMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -116,7 +122,7 @@ export function SchoolTeamSetup() {
   }
 
   return (
-    <section className="glass-panel mt-4 rounded-lg p-5">
+    <section id="staff-setup" className="glass-panel mt-4 scroll-mt-6 rounded-lg p-5">
       <div><h2 className="font-display text-xl font-bold">Staff and teaching assignments</h2><p className="mt-1 text-sm text-muted-foreground">Add a teacher or Finance user, then assign teachers to class subjects so they can enter marks.</p></div>
       {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
       {activationUrl && <p role="status" className="mt-4 break-all rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">Account activation link (share with the new member): <a className="underline" href={activationUrl}>{activationUrl}</a></p>}

@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const navigation = [
-  { label: "Overview", to: "/", icon: LayoutDashboard },
+  { label: "Overview", to: "/dashboard", icon: LayoutDashboard },
   { label: "Students", to: "/students", icon: GraduationCap },
   { label: "Payments", to: "/payments", icon: ReceiptText },
   { label: "Grades", to: "/grades", icon: ScrollText },
@@ -39,7 +39,7 @@ const platformNavigation = [
 ] as const;
 
 const schoolAdminNavigation = [
-  { label: "Overview", to: "/", icon: LayoutDashboard },
+  { label: "Overview", to: "/dashboard", icon: LayoutDashboard },
   { label: "Students", to: "/students", icon: GraduationCap },
   { label: "Payments", to: "/payments", icon: ReceiptText },
   { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText },
@@ -134,6 +134,8 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
 export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, schoolAdminOrTeacher = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; schoolAdminOrTeacher?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [authorized, setAuthorized] = useState(false);
+  const [accessError, setAccessError] = useState("");
+  const [retryAccess, setRetryAccess] = useState(0);
   const [adminView, setAdminView] = useState(schoolAdmin);
   const navigate = useNavigate();
   const { schoolName, crestUrl } = useTenantBranding();
@@ -161,10 +163,14 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
         if (!allowed) throw new Error(payload?.error ?? "This account does not have access to this page");
         if (!cancelled) {
           setAdminView(schoolAdmin || (schoolAdminOrTeacher && role === "school_admin"));
+          setAccessError("");
           setAuthorized(true);
         }
-      } catch {
-        if (!cancelled) window.location.assign(`/login${window.location.search}`);
+      } catch (error) {
+        if (!cancelled) {
+          setAccessError(error instanceof Error ? error.message : "Could not verify school access");
+          setAuthorized(false);
+        }
       }
     }
 
@@ -172,9 +178,9 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
     return () => {
       cancelled = true;
     };
-  }, [platform, schoolAdmin, schoolAdminOrTeacher, parentPortal, studentPortal, finance]);
+  }, [platform, schoolAdmin, schoolAdminOrTeacher, parentPortal, studentPortal, finance, retryAccess]);
 
-  if (!platform && !authorized) return <div className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">Verifying school access...</div>;
+  if (!platform && !authorized) return <div className="grid min-h-screen place-items-center bg-background p-4 text-center"><div className="max-w-md"><p className="text-sm font-medium">{accessError ? "School access could not be verified" : "Verifying school access..."}</p>{accessError && <><p role="alert" className="mt-2 text-sm text-muted-foreground">{accessError}</p><div className="mt-4 flex justify-center gap-2"><Button variant="outline" onClick={() => setRetryAccess((current) => current + 1)}>Try again</Button><Button onClick={() => navigate({ to: "/login" })}>Sign in</Button></div></>}</div></div>;
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">

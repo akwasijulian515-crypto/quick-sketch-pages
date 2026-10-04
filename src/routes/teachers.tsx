@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { BookOpen, Link2, Plus, UsersRound, X } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
+import { SchoolTeamSetup } from "@/components/school-team-setup";
 import { SchoolShell } from "@/components/school-shell";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,11 @@ function TeachersPage() {
   const [assignedTeacher, setAssignedTeacher] = useState("");
   const [assignedClass, setAssignedClass] = useState("");
   const [assignedSubject, setAssignedSubject] = useState("");
+  const [canManageStaff, setCanManageStaff] = useState(false);
+
+  useEffect(() => {
+    setCanManageStaff(sessionStorage.getItem("hg-role") === "school_admin");
+  }, []);
 
   const subjectById = useMemo(() => new Map(subjects.map((subject) => [subject.id, subject])), [subjects]);
 
@@ -56,7 +62,8 @@ function TeachersPage() {
   });
 
   return <SchoolShell title="Teachers & subjects"><div className="mx-auto max-w-6xl rise">
-    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">{view === "teachers" ? <UsersRound className="size-5" /> : <BookOpen className="size-5" />}</div><h1 className="font-display text-3xl font-bold">Teachers & subjects</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Create subjects and assign each teacher to the right class and teaching load.</p></div><Button disabled={view === "teachers"} onClick={() => setDialog(view === "teachers" ? "assignment" : "subject")}><Plus />{view === "teachers" ? "Assign teacher" : "Add subject"}</Button></div>
+    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">{view === "teachers" ? <UsersRound className="size-5" /> : <BookOpen className="size-5" />}</div><h1 className="font-display text-3xl font-bold">Teachers & subjects</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Create subjects and assign each teacher to the right class and teaching load.</p></div>{view === "teachers" ? canManageStaff ? <Button onClick={() => document.getElementById("staff-setup")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Plus />Add a teacher</Button> : null : <Button onClick={() => setDialog("subject")}><Plus />Add subject</Button>}</div>
+    {canManageStaff && <SchoolTeamSetup />}
     <section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Teachers" value="—" note="Live teacher data not connected" /><Metric label="Subjects" value={String(subjects.length)} note="Subjects in this page session" /><Metric label="Teaching assignments" value="—" note="Live assignment data not connected" /></section>
     <section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><button type="button" onClick={() => setView("teachers")} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", view === "teachers" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>Teachers & load</button><button type="button" onClick={() => setView("subjects")} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", view === "subjects" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>Subjects</button></div>{view === "subjects" && <Button size="sm" variant="outline" disabled={teacherNames.length === 0 || classes.length === 0 || subjects.length === 0} onClick={() => setDialog("assignment")}><Link2 />Assign subject</Button>}</div><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{(view === "teachers" ? ["Teacher", "Classes", "Subjects", "Status"] : ["Subject", "Code", "Class assignments", "Responsible teachers"]).map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{view === "teachers" ? teacherRows.map((row) => <tr key={row.teacher} className="hover:bg-muted/30"><td className="px-5 py-4 font-medium">{row.teacher}</td><td className="px-5 py-4">{row.classes}</td><td className="px-5 py-4">{row.subjects}</td><td className="px-5 py-4"><Badge value={row.status} /></td></tr>) : subjects.map((subject) => { const subjectAssignments = assignments.filter((assignment) => assignment.subjectId === subject.id); return <tr key={subject.id} className="hover:bg-muted/30"><td className="px-5 py-4 font-medium">{subject.name}</td><td className="px-5 py-4 font-mono text-xs">{subject.code}</td><td className="px-5 py-4">{subjectAssignments.map((assignment) => assignment.className).join(", ") || "Not assigned"}</td><td className="px-5 py-4">{subjectAssignments.map((assignment) => assignment.teacher).join(", ") || <Badge value="Needs teacher" />}</td></tr> })}{(view === "teachers" ? teacherRows.length === 0 : subjects.length === 0) && <tr><td colSpan={4} className="px-5 py-10 text-center text-sm text-muted-foreground">Live {view === "teachers" ? "teacher and assignment" : "subject"} data is not connected yet.</td></tr>}</tbody></table></div></section>
   </div>{dialog === "subject" && <SubjectDialog name={subjectName} code={subjectCode} setName={setSubjectName} setCode={setSubjectCode} onClose={() => setDialog(null)} onSubmit={createSubject} />}{dialog === "assignment" && <AssignmentDialog teacher={assignedTeacher} className={assignedClass} subject={assignedSubject} subjects={subjects} setTeacher={setAssignedTeacher} setClass={setAssignedClass} setSubject={setAssignedSubject} onClose={() => setDialog(null)} onSubmit={createAssignment} />}</SchoolShell>;
