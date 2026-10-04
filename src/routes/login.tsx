@@ -146,8 +146,28 @@ function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-background px-4 font-body text-foreground">
+    <div className="relative min-h-screen bg-background font-body text-foreground lg:grid lg:grid-cols-2">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
+      <aside className="relative hidden overflow-hidden p-12 text-primary-foreground lg:flex lg:flex-col lg:justify-between" style={{ backgroundColor: primaryColor }}>
+        <div className="pointer-events-none absolute -right-24 -top-24 size-96 rounded-full bg-background/10" />
+        <div className="pointer-events-none absolute -bottom-32 -left-20 size-[28rem] rounded-full bg-background/5" />
+        <div className="relative flex items-center gap-3">
+          <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-background/15 font-display text-xl font-bold ring-1 ring-background/30">
+            {crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "H")}
+          </div>
+          <p className="font-display text-lg font-bold">{schoolName}</p>
+        </div>
+        <div className="relative max-w-md">
+          <h2 className="font-display text-4xl font-bold leading-tight">Every class, mark and payment in one place.</h2>
+          <ul className="mt-8 space-y-3 text-sm opacity-90">
+            <li>— Teachers record attendance and marks</li>
+            <li>— Parents follow progress and pay fees</li>
+            <li>— Administrators keep the school running</li>
+          </ul>
+        </div>
+        <p className="relative text-xs opacity-70">{subdomain} school portal</p>
+      </aside>
+      <div className="relative flex min-h-screen items-center justify-center px-4 py-8">
       <div className="glass-panel rise relative w-full max-w-md rounded-lg p-6 sm:p-8" style={{ boxShadow: `0 24px 64px -32px ${primaryColor}99` }}>
         <div className="flex items-center gap-2.5">
           <div className="grid size-9 place-items-center overflow-hidden rounded-md text-base font-bold text-primary-foreground" style={{ backgroundColor: primaryColor }}>
@@ -180,6 +200,7 @@ function LoginPage() {
         {mode === "verify" ? <Button variant="outline" className="mt-3 w-full" disabled={busy} onClick={() => void resendVerificationCode()}>Resend verification code</Button> : <Button variant="outline" className="mt-3 w-full" onClick={() => { setError(""); setMessage(""); setMode((current) => current === "sign-in" ? "activate" : "sign-in"); }}>{mode === "sign-in" ? "First time? Activate your account" : "Already activated? Sign in"}</Button>}
         <Button variant="ghost" className="mt-2 w-full" onClick={() => navigate({ to: "/signup" })}><Building2 />Register your school</Button>
         <p className="mt-4 text-center text-[11px] text-muted-foreground">Access is granted only to an approved school membership.</p>
+      </div>
       </div>
     </div>
   );
