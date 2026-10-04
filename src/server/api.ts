@@ -150,9 +150,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
   if (url.pathname === "/api/school") {
     const tenant = resolveTenant(request, env.ROOT_DOMAIN);
-    const previewSubdomain = env.ROOT_DOMAIN === "localhost" ? url.searchParams.get("tenant")?.trim().toLowerCase() ?? null : null;
-    if (previewSubdomain && !validSubdomain(previewSubdomain)) return badRequest("Invalid tenant preview subdomain");
-    const requestedSubdomain = tenant.subdomain ?? previewSubdomain ?? (env.ROOT_DOMAIN === "localhost" ? "harrowgreen" : null);
+    const querySubdomain = url.searchParams.get("tenant")?.trim().toLowerCase() ?? null;
+    if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
+    const requestedSubdomain = tenant.subdomain ?? querySubdomain ?? (env.ROOT_DOMAIN === "localhost" ? "harrowgreen" : null);
     if (!requestedSubdomain) return json({ school: null });
 
     const sql = database(env);
@@ -233,8 +233,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (platformAdmin) return json({ user: { email: tokenEmail }, membership: { role: "super_admin", schoolId: null } });
 
     const tenant = resolveTenant(request, env.ROOT_DOMAIN);
-    const previewSubdomain = env.ROOT_DOMAIN === "localhost" ? url.searchParams.get("tenant")?.trim().toLowerCase() ?? null : null;
-    const requestedSubdomain = tenant.subdomain ?? previewSubdomain;
+    const querySubdomain = url.searchParams.get("tenant")?.trim().toLowerCase() ?? null;
+    if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
+    const requestedSubdomain = tenant.subdomain ?? querySubdomain;
     const schoolMemberships = memberships.filter((row) => row["school_id"] != null);
     const selectedMembership = requestedSubdomain
       ? schoolMemberships.find((row) => row["subdomain"] === requestedSubdomain)
@@ -375,22 +376,21 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const school = rows[0];
       if (!school) return json({ error: "Application was not found or is no longer pending" }, 404);
       const subdomain = String(school["subdomain"]);
-      const tenantLoginUrl = env.ROOT_DOMAIN === "localhost"
-        ? new URL(`/login?tenant=${encodeURIComponent(subdomain)}`, request.url).toString()
-        : env.ROOT_DOMAIN
-          ? `https://${subdomain}.${env.ROOT_DOMAIN}/login`
-          : null;
-      const activationUrl = tenantLoginUrl ? new URL(tenantLoginUrl) : null;
-      activationUrl?.searchParams.set("mode", "activate");
-      const invitation = activationUrl && typeof rows[0]?.["admin_email"] === "string"
+      const activationUrl = env.ROOT_DOMAIN && env.ROOT_DOMAIN !== "localhost"
+        ? new URL(`https://${subdomain}.${env.ROOT_DOMAIN}/login`)
+        : new URL("/login", request.url);
+      activationUrl.searchParams.set("tenant", subdomain);
+      activationUrl.searchParams.set("mode", "activate");
+      const tenantLoginUrl = activationUrl.toString();
+      const invitation = typeof rows[0]?.["admin_email"] === "string"
         ? await sendSchoolAdminInvitation(
           env,
           String(rows[0]["admin_email"]),
           String(rows[0]["contact_name"]),
           String(school["name"]),
-          activationUrl.toString(),
+          tenantLoginUrl,
         )
-        : { sent: false, error: "The tenant login address is not configured. Set ROOT_DOMAIN before sending invitations." };
+        : { sent: false, error: "The approved application has no contact email, so the invitation cannot be sent." };
       return json({ school: {
         id: String(school["id"]),
         name: String(school["name"]),
