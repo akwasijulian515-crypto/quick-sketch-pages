@@ -97,7 +97,7 @@ function Directory({ schools, setStatus }: { schools: School[]; setStatus: (id: 
       if (!response.ok) throw new Error(payload?.error ?? "Could not load schools");
       const savedSchools = (payload?.schools ?? []).map((school) => ({
         ...school,
-        status: school.status === "active" ? "Active" : school.status === "suspended" ? "Suspended" : "Trial",
+        status: (school.status === "active" ? "Active" : school.status === "suspended" ? "Suspended" : "Trial") as SchoolStatus,
         color: school.primaryColor,
       }));
       setDirectorySchools(savedSchools);
