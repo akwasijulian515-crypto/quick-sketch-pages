@@ -44,6 +44,7 @@ export function withDatabaseContext(
   query: (tx: NeonQueryFunctionInTransaction<false, false>) => NeonQueryInTransaction,
 ) {
   return sql.transaction((tx) => [
+    tx`set local role klasora_runtime`,
     tx`
       select
         set_config('app.school_id', ${context.schoolId ?? ""}, true),
@@ -52,7 +53,7 @@ export function withDatabaseContext(
     `,
     query(tx),
   ]).then((results) => {
-    const rows = results[1];
+    const rows = results[2];
     if (!rows) throw new Error("Database context transaction returned no query result");
     return rows;
   });
