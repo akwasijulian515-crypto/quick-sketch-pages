@@ -1,95 +1,26 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRight, BookOpenCheck, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
+import { ArrowUpRight, BookOpenCheck, FileText, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { getNeonAccessToken, neonAuthClient } from "../auth/client";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/teacher")({
   head: () => ({
     meta: [
       { title: "Teacher Portal — Klasora" },
-      { name: "description", content: "Teacher register, grade entry, and coupon tools." },
-      { property: "og:title", content: "Teacher Portal — Klasora" },
-      { property: "og:description", content: "Teacher register, grade entry, and coupon tools." },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
+      { name: "description", content: "Teacher mark entry and school tools." },
     ],
   }),
   component: TeacherPortal,
 });
 
-const tabs = [
-  { id: "register", label: "Register", icon: UserRoundCheck },
-  { id: "grades", label: "Grades", icon: BookOpenCheck },
-  { id: "coupons", label: "Coupons", icon: TicketCheck },
-] as const;
-
-type AttendanceStatus = "present" | "late" | "absent";
-type RegisterStudent = { id: string; name: string; admissionNumber: string; status: AttendanceStatus; timeIn: string; note?: string };
-type ScoreField = "classTest" | "project" | "homework" | "groupWork" | "exam";
-type StudentScores = Record<ScoreField, string>;
-type LearnerProfile = { conduct: string; attitude: string; interest: string; remark: string };
-type DailyFeeStatus = "paid" | "unpaid" | "pending";
-type DailyFeeCoupon = { studentId: string; code?: string; paidAt?: string; status: DailyFeeStatus };
-
-const initialRegister: RegisterStudent[] = [
-  { id: "stu-001", name: "Abena Ofori", admissionNumber: "HGA-2B-001", status: "present", timeIn: "07:36" },
-  { id: "stu-002", name: "Daniel Boateng", admissionNumber: "HGA-2B-002", status: "present", timeIn: "07:42" },
-  { id: "stu-003", name: "Eunice Agyeman", admissionNumber: "HGA-2B-003", status: "late", timeIn: "08:14", note: "Transport delay" },
-  { id: "stu-004", name: "Felix Nyarko", admissionNumber: "HGA-2B-004", status: "present", timeIn: "07:39" },
-  { id: "stu-005", name: "Gloria Mensah", admissionNumber: "HGA-2B-005", status: "absent", timeIn: "-", note: "Parent notified" },
-  { id: "stu-006", name: "Isaac Amankwah", admissionNumber: "HGA-2B-006", status: "present", timeIn: "07:45" },
-  { id: "stu-007", name: "Janet Asiedu", admissionNumber: "HGA-2B-007", status: "present", timeIn: "07:32" },
-  { id: "stu-008", name: "Kofi Owusu", admissionNumber: "HGA-2B-008", status: "late", timeIn: "08:08", note: "Assembly" },
-];
-const dailyFeeCoupons: DailyFeeCoupon[] = [
-  { studentId: "stu-001", code: "DF-2B-4817", paidAt: "07:29", status: "paid" },
-  { studentId: "stu-002", status: "unpaid" },
-  { studentId: "stu-003", code: "DF-2B-4818", paidAt: "08:06", status: "paid" },
-  { studentId: "stu-004", code: "DF-2B-4819", paidAt: "07:34", status: "paid" },
-  { studentId: "stu-005", status: "unpaid" },
-  { studentId: "stu-006", status: "pending" },
-  { studentId: "stu-007", code: "DF-2B-4820", paidAt: "07:25", status: "paid" },
-  { studentId: "stu-008", code: "DF-2B-4821", paidAt: "08:04", status: "paid" },
-];
-
-function statusLabel(status: AttendanceStatus) { return `${status.charAt(0).toUpperCase()}${status.slice(1)}`; }
-const subjects = ["Mathematics", "Integrated Science", "ICT"];
-const scoreLimits: Record<ScoreField, number> = { classTest: 10, project: 20, homework: 10, groupWork: 10, exam: 100 };
-const emptyScores: StudentScores = { classTest: "", project: "", homework: "", groupWork: "", exam: "" };
-const emptyProfile: LearnerProfile = { conduct: "Good", attitude: "Good", interest: "Good", remark: "" };
-function calculateScore(scores: StudentScores) { return Number(scores.classTest || 0) + Number(scores.project || 0) + Number(scores.homework || 0) + Number(scores.groupWork || 0) + Number(scores.exam || 0) / 2; }
-function gradeFor(score: number) { return score >= 80 ? "A" : score >= 70 ? "B+" : score >= 60 ? "B" : score >= 50 ? "C+" : score >= 40 ? "C" : "D"; }
+type TeacherTab = "register" | "grades" | "coupons";
 
 function TeacherPortal() {
   const navigate = useNavigate();
   const [allowed, setAllowed] = useState(false);
-  const [tab, setTab] = useState<(typeof tabs)[number]["id"]>("register");
-  const [register, setRegister] = useState(initialRegister);
-  const [subject, setSubject] = useState(subjects[0]!);
-  const [gradeBook, setGradeBook] = useState<Record<string, StudentScores>>(() => Object.fromEntries(initialRegister.map((student) => [student.id, { ...emptyScores }])));
-  const [gradeView, setGradeView] = useState<"scores" | "profile">("scores");
-  const [profiles, setProfiles] = useState<Record<string, LearnerProfile>>(() => Object.fromEntries(initialRegister.map((student) => [student.id, { ...emptyProfile }])));
-
-  const presentCount = register.filter((student) => student.status === "present").length;
-  const lateCount = register.filter((student) => student.status === "late").length;
-  const absentCount = register.filter((student) => student.status === "absent").length;
-  const paidDailyFees = dailyFeeCoupons.filter((coupon) => coupon.status === "paid").length;
-
-  function setAttendance(studentId: string, status: AttendanceStatus) {
-    setRegister((current) => current.map((student) => student.id === studentId ? { ...student, status, timeIn: status === "absent" ? "-" : student.timeIn === "-" ? "08:00" : student.timeIn } : student));
-  }
-
-  function updateScore(studentId: string, field: ScoreField, value: string) {
-    if (value !== "" && (!/^\d*(\.\d{0,2})?$/.test(value) || Number(value) > scoreLimits[field])) return;
-    setGradeBook((current) => ({ ...current, [studentId]: { ...(current[studentId] ?? emptyScores), [field]: value } }));
-  }
-
-  function updateProfile(studentId: string, field: keyof LearnerProfile, value: string) {
-    setProfiles((current) => ({ ...current, [studentId]: { ...(current[studentId] ?? emptyProfile), [field]: value } }));
-  }
+  const [tab, setTab] = useState<TeacherTab>("register");
 
   useEffect(() => {
     let cancelled = false;
@@ -107,132 +38,202 @@ function TeacherPortal() {
       }
     }
     void verifyTeacher();
-    return () => {
-      cancelled = true;
-    };
-  }, [navigate]);
+    return () => { cancelled = true; };
+  }, []);
 
   if (!allowed) return null;
-
-  return (
-    <div className="relative min-h-screen bg-background font-body text-foreground">
-      <div className="pointer-events-none fixed inset-0 ambient-wash" />
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
-        <div className="flex items-center gap-2.5">
-          <div className="grid size-9 place-items-center rounded-md bg-primary font-display text-base font-bold text-primary-foreground">H</div>
-          <div className="leading-tight">
-            <p className="font-display text-[15px] font-bold">Teacher Portal</p>
-            <p className="text-[11px] text-muted-foreground">Mr. Okoye · Form 2B</p>
-          </div>
+  return <div className="relative min-h-screen bg-background font-body text-foreground">
+    <div className="pointer-events-none fixed inset-0 ambient-wash" />
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
+      <div className="flex items-center gap-2.5"><div className="grid size-9 place-items-center rounded-md bg-primary font-display text-base font-bold text-primary-foreground">S</div><div className="leading-tight"><p className="font-display text-[15px] font-bold">Teacher Portal</p><p className="text-[11px] text-muted-foreground">School workspace</p></div></div>
+      <Button variant="outline" size="sm" onClick={() => { void neonAuthClient?.signOut(); navigate({ to: "/login" }); }}><LogOut />Sign out</Button>
+    </header>
+    <main className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+        <div><h1 className="font-display text-2xl font-bold sm:text-3xl">Teacher workspace</h1><p className="mt-1 text-sm text-muted-foreground">Use your assigned classes and subjects to manage school records.</p></div>
+        <div className="flex flex-wrap gap-2">
+          {([
+            ["register", "Register", UserRoundCheck],
+            ["grades", "Grades", BookOpenCheck],
+            ["coupons", "Coupons", TicketCheck],
+          ] as const).map(([id, label, Icon]) => <Button key={id} variant={tab === id ? "default" : "outline"} size="sm" onClick={() => setTab(id)}><Icon />{label}</Button>)}
+          <Button asChild size="sm" variant="outline"><Link to="/terminal-reports"><FileText />Reports</Link></Button>
+          <Button asChild size="sm" variant="outline"><Link to="/teacher/promotion"><ArrowUpRight />Promotion</Link></Button>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            sessionStorage.removeItem("hg-role");
-            void neonAuthClient?.signOut();
-            navigate({ to: "/login" });
-          }}
-        >
-          <LogOut />Sign out
-        </Button>
-      </header>
+      </div>
 
-      <main className="relative mx-auto max-w-5xl px-4 py-6 sm:px-6">
-        <div className="rise flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="font-display text-2xl font-bold sm:text-3xl">Good morning, Mr. Okoye</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Form 2B · 42 students · Today&apos;s register is waiting.</p>
-          </div>
-          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 sm:pb-0">
-            {tabs.map(({ id, label, icon: Icon }) => (
-              <Button key={id} variant={tab === id ? "default" : "outline"} size="sm" className="shrink-0" onClick={() => setTab(id)}>
-                <Icon />{label}
-              </Button>
-            ))}
-            <Button asChild size="sm" variant="outline" className="shrink-0"><Link to="/teacher/promotion"><ArrowUpRight />Promotion</Link></Button>
-          </div>
-        </div>
+      {tab === "grades" ? <TeacherMarkEntry /> : <section className="glass-panel mt-5 rounded-lg border border-dashed border-border p-10 text-center">
+        {tab === "register" ? <UserRoundCheck className="mx-auto size-7 text-primary/55" /> : <TicketCheck className="mx-auto size-7 text-primary/55" />}
+        <h2 className="mt-3 font-display text-lg font-bold">{tab === "register" ? "Attendance records are not connected" : "Daily payment records are not connected"}</h2>
+        <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">{tab === "register" ? "No attendance sessions or learner records are being shown here yet. Connect the attendance workflow before taking a register." : "Payment and coupon status is not available from this workspace yet. Check the Finance portal for supported payment workflows."}</p>
+      </section>}
+    </main>
+  </div>;
+}
 
-        <section className="mt-6 grid grid-cols-3 gap-2 sm:gap-3">
-          {[
-            { label: "Present today", value: String(presentCount), note: `of ${register.length} students shown` },
-            { label: "Grades pending", value: "2", note: "subjects to submit" },
-            { label: "Daily fees paid", value: String(paidDailyFees), note: "in this class today" },
-          ].map((stat) => (
-            <article key={stat.label} className="glass-panel rise min-w-0 rounded-lg p-3 sm:p-5">
-              <p className="text-[11px] font-medium text-muted-foreground sm:text-xs">{stat.label}</p>
-              <p className="mt-1 font-display text-2xl sm:mt-2 sm:text-3xl">{stat.value}</p>
-              <p className="mt-1 hidden text-xs text-secondary-foreground sm:block">{stat.note}</p>
-            </article>
-          ))}
-        </section>
+type MarkAssignment = {
+  class_subject_id: string;
+  class_id: string;
+  class_name: string;
+  subject_id: string;
+  subject_name: string;
+  academic_year_id: string;
+  academic_year_name: string;
+  term_id: string;
+  term_name: string;
+};
 
-        <section className="glass-panel rise mt-4 overflow-hidden rounded-lg">
-          <div className="border-b border-border px-5 py-4">
-            <h2 className="font-display text-lg font-bold">
-              {tab === "register" ? "Today's register" : tab === "grades" ? "Grade entry" : "Daily fee coupons"}
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              {tab === "register" ? "Mark each student present, late, or absent." : tab === "grades" ? "Coursework totals 50 marks; half of the 100-mark exam creates the final score out of 100." : "View Finance-recorded daily-fee clearance. A coupon is proof of payment for today, not a discount or a receipt."}
-            </p>
-          </div>
-          {tab === "grades" && <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/20 px-5 py-3"><div className="flex rounded-md border border-input bg-background/70 p-1"><button type="button" onClick={() => setGradeView("scores")} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", gradeView === "scores" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>Academic scores</button><button type="button" onClick={() => setGradeView("profile")} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", gradeView === "profile" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>Conduct & remarks</button></div>{gradeView === "scores" ? <label className="flex items-center gap-2 text-sm"><span className="text-xs font-medium text-muted-foreground">Assigned subject</span><select value={subject} onChange={(event) => setSubject(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring">{subjects.map((item) => <option key={item}>{item}</option>)}</select></label> : <span className="text-xs text-muted-foreground">Term-wide learner profile</span>}<span className="text-xs text-muted-foreground">Form 2B · {register.length} students shown</span></div>}
-          <ul className="divide-y divide-border/70 md:hidden">
-            {register.map((student) => {
-              const head = <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></div></div>;
-              if (tab === "register") return (
-                <li key={student.id} className="px-4 py-3">
-                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber} · {student.timeIn}</p></div></div>
-                  <div className="mt-2 grid grid-cols-3 gap-2">{(["present", "late", "absent"] as const).map((status) => <button key={status} type="button" onClick={() => setAttendance(student.id, status)} className={cn("h-10 rounded-md text-sm font-medium transition-colors", student.status === status ? status === "present" ? "bg-emerald-500 text-white" : status === "late" ? "bg-amber-500 text-white" : "bg-rose-500 text-white" : "bg-muted text-muted-foreground")}>{statusLabel(status)}</button>)}</div>
-                  {student.note && <p className="mt-2 text-xs text-muted-foreground">{student.note}</p>}
-                </li>
-              );
-              if (tab === "grades" && gradeView === "scores") {
-                const scores = gradeBook[student.id] ?? emptyScores; const finalScore = calculateScore(scores);
-                return (
-                  <li key={student.id} className="px-4 py-3">
-                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></div><div className="shrink-0 text-right"><p className="font-display text-lg leading-none">{finalScore.toFixed(1)}</p><span className={cn("mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium", finalScore >= 50 ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/10 text-amber-700")}>{gradeFor(finalScore)}</span></div></div>
-                    <div className="mt-3 grid grid-cols-3 gap-2">{([["classTest", "Test /10"], ["project", "Project /20"], ["homework", "Homework /10"], ["groupWork", "Group /10"], ["exam", "Exam /100"]] as const).map(([field, label]) => <label key={field} className="block"><span className="mb-1 block text-[11px] text-muted-foreground">{label}</span><input inputMode="decimal" value={scores[field]} onChange={(event) => updateScore(student.id, field, event.target.value)} placeholder="0" className="h-10 w-full rounded-md border border-input bg-background/70 px-2 text-center text-sm outline-none focus:ring-2 focus:ring-ring" /></label>)}</div>
-                  </li>
-                );
-              }
-              if (tab === "grades") {
-                const profile = profiles[student.id] ?? emptyProfile;
-                return (
-                  <li key={student.id} className="px-4 py-3">
-                    {head}
-                    <div className="mt-3 grid grid-cols-3 gap-2">{(["conduct", "attitude", "interest"] as const).map((field) => <label key={field} className="block min-w-0"><span className="mb-1 block text-[11px] capitalize text-muted-foreground">{field}</span><select value={profile[field]} onChange={(event) => updateProfile(student.id, field, event.target.value)} className="h-10 w-full rounded-md border border-input bg-background/70 px-1 text-xs outline-none focus:ring-2 focus:ring-ring">{["Excellent", "Very good", "Good", "Fair", "Needs support"].map((value) => <option key={value}>{value}</option>)}</select></label>)}</div>
-                    <input value={profile.remark} onChange={(event) => updateProfile(student.id, "remark", event.target.value)} placeholder="Add a short remark" className="mt-2 h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
-                  </li>
-                );
-              }
-              const coupon = dailyFeeCoupons.find((item) => item.studentId === student.id); const status = coupon?.status ?? "unpaid";
-              return (
-                <li key={student.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0"><p className="truncate font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{coupon?.code ?? "No coupon"}{coupon?.paidAt ? ` · ${coupon.paidAt}` : ""}</p></div>
-                  <span className={cn("shrink-0 rounded-full px-2 py-1 text-xs font-medium", status === "paid" ? "bg-emerald-500/10 text-emerald-700" : status === "pending" ? "bg-amber-500/10 text-amber-700" : "bg-rose-500/10 text-rose-700")}>{status === "paid" ? "Paid" : status === "pending" ? "Awaiting" : "Not paid"}</span>
-                </li>
-              );
-            })}
-          </ul>
-          <div className="hidden overflow-x-auto md:block">
-            <table className={cn("w-full text-left text-sm", tab === "grades" ? gradeView === "scores" ? "min-w-[1040px]" : "min-w-[920px]" : "min-w-[560px]")}>
-              <thead className="bg-muted/60 text-xs text-muted-foreground">
-                <tr>
-                  {(tab === "register" ? ["Student", "Status", "Time in", "Note"] : tab === "grades" ? gradeView === "scores" ? ["Student", "Class test /10", "Project /20", "Homework /10", "Group work /10", "Exam /100", "Final /100", "Grade"] : ["Student", "Conduct", "Attitude", "Interest", "Teacher remark"] : ["Student", "Daily fee coupon", "Recorded", "Status"]).map((column) => (
-                    <th key={column} className="px-5 py-3 font-medium">{column}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/70">
-                {tab === "register" ? register.map((student) => <tr key={student.id} className="hover:bg-muted/30"><td className="px-5 py-3"><p className="font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></td><td className="px-5 py-3"><div className="flex gap-1.5">{(["present", "late", "absent"] as const).map((status) => <button key={status} type="button" onClick={() => setAttendance(student.id, status)} className={cn("rounded-full px-2 py-1 text-xs font-medium transition-colors", student.status === status ? status === "present" ? "bg-emerald-500 text-white" : status === "late" ? "bg-amber-500 text-white" : "bg-rose-500 text-white" : "bg-muted text-muted-foreground hover:bg-muted-foreground/15")}>{statusLabel(status)}</button>)}</div></td><td className="px-5 py-3 font-mono text-xs text-secondary-foreground">{student.timeIn}</td><td className="px-5 py-3 text-xs text-muted-foreground">{student.note ?? "-"}</td></tr>) : tab === "grades" ? gradeView === "scores" ? register.map((student) => { const scores = gradeBook[student.id] ?? emptyScores; const finalScore = calculateScore(scores); return <tr key={student.id} className="hover:bg-muted/30"><td className="px-5 py-3"><p className="font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></td>{(["classTest", "project", "homework", "groupWork", "exam"] as const).map((field) => <td key={field} className="px-3 py-3"><input inputMode="decimal" value={scores[field]} onChange={(event) => updateScore(student.id, field, event.target.value)} placeholder="0" className="h-9 w-20 rounded-md border border-input bg-background/70 px-2 text-center text-sm outline-none focus:ring-2 focus:ring-ring" /></td>)}<td className="px-5 py-3 font-display text-base">{finalScore.toFixed(1)}</td><td className="px-5 py-3"><span className={cn("rounded-full px-2 py-1 text-xs font-medium", finalScore >= 50 ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/10 text-amber-700")}>{gradeFor(finalScore)}</span></td></tr> }) : register.map((student) => { const profile = profiles[student.id] ?? emptyProfile; return <tr key={student.id} className="hover:bg-muted/30"><td className="px-5 py-3"><p className="font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></td>{(["conduct", "attitude", "interest"] as const).map((field) => <td key={field} className="px-3 py-3"><select value={profile[field]} onChange={(event) => updateProfile(student.id, field, event.target.value)} className="h-9 w-28 rounded-md border border-input bg-background/70 px-2 text-sm outline-none focus:ring-2 focus:ring-ring">{["Excellent", "Very good", "Good", "Fair", "Needs support"].map((value) => <option key={value}>{value}</option>)}</select></td>)}<td className="px-3 py-3"><input value={profile.remark} onChange={(event) => updateProfile(student.id, "remark", event.target.value)} placeholder="Add a short remark" className="h-9 w-full min-w-64 rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></td></tr> }) : register.map((student) => { const coupon = dailyFeeCoupons.find((item) => item.studentId === student.id); const status = coupon?.status ?? "unpaid"; return <tr key={student.id} className="hover:bg-muted/30"><td className="px-5 py-3"><p className="font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></td><td className="px-5 py-3 font-mono text-xs text-secondary-foreground">{coupon?.code ?? "—"}</td><td className="px-5 py-3 text-xs text-muted-foreground">{coupon?.paidAt ?? "—"}</td><td className="px-5 py-3"><span className={cn("inline-flex rounded-full px-2 py-1 text-xs font-medium", status === "paid" ? "bg-emerald-500/10 text-emerald-700" : status === "pending" ? "bg-amber-500/10 text-amber-700" : "bg-rose-500/10 text-rose-700")}>{status === "paid" ? "Paid" : status === "pending" ? "Awaiting confirmation" : "Not paid"}</span></td></tr>; })}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground"><span>{tab === "register" ? `${presentCount} present · ${lateCount} late · ${absentCount} absent` : tab === "grades" ? gradeView === "scores" ? `${subject}: coursework /50 + exam ÷ 2 = final /100` : "Teacher assessments used in the terminal report" : `${paidDailyFees} paid · ${dailyFeeCoupons.filter((coupon) => coupon.status === "unpaid").length} not paid · ${dailyFeeCoupons.filter((coupon) => coupon.status === "pending").length} awaiting confirmation`}</span><span>Showing 8 of 42 students</span></div>
-        </section>
-      </main>
+type MarkStudent = {
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+  class_test_score: number | null;
+  project_score: number | null;
+  homework_score: number | null;
+  group_work_score: number | null;
+  exam_score: number | null;
+  total_score: number | null;
+  performance_level: string | null;
+};
+
+const markFields = [
+  ["class_test_score", "Test /10", 10],
+  ["project_score", "Project /20", 20],
+  ["homework_score", "Homework /10", 10],
+  ["group_work_score", "Group /10", 10],
+  ["exam_score", "Exam /100", 100],
+] as const;
+
+async function teacherApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getNeonAccessToken();
+  const url = new URL(path, window.location.origin);
+  const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
+  const headers = new Headers(init?.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+      ? payload.error
+      : "The school request failed";
+    throw new Error(message);
+  }
+  return payload as T;
+}
+
+function TeacherMarkEntry() {
+  const [assignments, setAssignments] = useState<MarkAssignment[]>([]);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [students, setStudents] = useState<MarkStudent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const selected = assignments.find((item) => `${item.class_subject_id}:${item.term_id}` === selectedKey);
+
+  useEffect(() => {
+    let cancelled = false;
+    void teacherApi<{ assignments: MarkAssignment[] }>("/api/school/marks")
+      .then((result) => {
+        if (cancelled) return;
+        setAssignments(result.assignments);
+        const first = result.assignments[0];
+        if (first) setSelectedKey(`${first.class_subject_id}:${first.term_id}`);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load teacher assignments");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selected) {
+      setStudents([]);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    void teacherApi<{ students: MarkStudent[] }>(
+      `/api/school/marks?class_subject_id=${encodeURIComponent(selected.class_subject_id)}&term_id=${encodeURIComponent(selected.term_id)}`,
+    )
+      .then((result) => { if (!cancelled) setStudents(result.students); })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load marks");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [selected]);
+
+  function updateMark(studentId: string, field: typeof markFields[number][0], input: string) {
+    const limit = markFields.find(([key]) => key === field)?.[2] ?? 0;
+    if (input !== "" && (!/^\d{0,3}(?:\.\d{0,2})?$/.test(input) || Number(input) > limit)) return;
+    setStudents((current) => current.map((student) => student.student_id === studentId
+      ? { ...student, [field]: input === "" ? null : Number(input), total_score: null, performance_level: null }
+      : student));
+    setNotice("");
+  }
+
+  async function saveMarks() {
+    if (!selected || students.length === 0) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await teacherApi("/api/school/marks", {
+        method: "PUT",
+        body: JSON.stringify({
+          class_subject_id: selected.class_subject_id,
+          term_id: selected.term_id,
+          marks: students.map((student) => ({
+            student_id: student.student_id,
+            class_test_score: student.class_test_score,
+            project_score: student.project_score,
+            homework_score: student.homework_score,
+            group_work_score: student.group_work_score,
+            exam_score: student.exam_score,
+          })),
+        }),
+      });
+      const refreshed = await teacherApi<{ students: MarkStudent[] }>(
+        `/api/school/marks?class_subject_id=${encodeURIComponent(selected.class_subject_id)}&term_id=${encodeURIComponent(selected.term_id)}`,
+      );
+      setStudents(refreshed.students);
+      setNotice("Marks saved. Final score and NaCCA performance level are calculated automatically.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save marks");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <section className="glass-panel mt-5 overflow-hidden rounded-lg">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+      <div><h2 className="font-display text-lg font-bold">Subject mark sheet</h2><p className="text-xs text-muted-foreground">Coursework totals 50 marks; half of the exam score adds the remaining 50.</p></div>
+      <select aria-label="Class, subject and term" value={selectedKey} onChange={(event) => setSelectedKey(event.target.value)} className="h-9 max-w-full rounded-md border border-input bg-background px-3 text-sm">
+        {assignments.length === 0 && <option value="">No subject assignments available</option>}
+        {assignments.map((item) => <option key={`${item.class_subject_id}:${item.term_id}`} value={`${item.class_subject_id}:${item.term_id}`}>{item.class_name} · {item.subject_name} · {item.term_name}</option>)}
+      </select>
     </div>
-  );
+    {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+    {notice && <p role="status" className="mx-5 mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
+    {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading marks...</p> : students.length === 0 ? (
+      <p className="py-10 text-center text-sm text-muted-foreground">{assignments.length ? "No active students are enrolled in this class." : "Ask your School Admin to assign you to a class subject before entering marks."}</p>
+    ) : <>
+      <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm">
+        <thead className="bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-3 font-medium">Student</th>{markFields.map(([, label]) => <th key={label} className="px-3 py-3 font-medium">{label}</th>)}<th className="px-4 py-3 font-medium">Final /100</th><th className="px-4 py-3 font-medium">Level</th></tr></thead>
+        <tbody className="divide-y divide-border/70">{students.map((student) => <tr key={student.student_id}>
+          <td className="px-4 py-3"><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></td>
+          {markFields.map(([field, label, limit]) => <td key={field} className="px-3 py-3"><input aria-label={`${student.first_name} ${label}`} type="number" min="0" max={limit} step="0.01" value={student[field] ?? ""} onChange={(event) => updateMark(student.student_id, field, event.target.value)} className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center" /></td>)}
+          <td className="px-4 py-3 font-display">{student.total_score == null ? "Incomplete" : Number(student.total_score).toFixed(2)}</td>
+          <td className="px-4 py-3">{student.performance_level ?? "—"}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <div className="flex justify-end border-t border-border px-5 py-4"><Button disabled={saving} onClick={() => void saveMarks()}>{saving ? "Saving..." : "Save marks"}</Button></div>
+    </>}
+  </section>;
 }

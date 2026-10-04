@@ -41,19 +41,22 @@ export function database(env: RuntimeEnv) {
 export function withDatabaseContext(
   sql: NeonQueryFunction<false, false>,
   context: { schoolId?: string; userEmail?: string; platformAdmin?: boolean },
-  query: (tx: NeonQueryFunctionInTransaction<false, false>) => NeonQueryInTransaction,
+  query: (tx: NeonQueryFunctionInTransaction<false, false>) => NeonQueryInTransaction | NeonQueryInTransaction[],
 ) {
-  return sql.transaction((tx) => [
-    tx`set local role klasora_runtime`,
-    tx`
-      select
-        set_config('app.school_id', ${context.schoolId ?? ""}, true),
-        set_config('app.user_email', ${context.userEmail ?? ""}, true),
-        set_config('app.platform_admin', ${context.platformAdmin ? "true" : "false"}, true)
-    `,
-    query(tx),
-  ]).then((results) => {
-    const rows = results[2];
+  return sql.transaction((tx) => {
+    const queries = query(tx);
+    return [
+      tx`set local role klasora_runtime`,
+      tx`
+        select
+          set_config('app.school_id', ${context.schoolId ?? ""}, true),
+          set_config('app.user_email', ${context.userEmail ?? ""}, true),
+          set_config('app.platform_admin', ${context.platformAdmin ? "true" : "false"}, true)
+      `,
+      ...(Array.isArray(queries) ? queries : [queries]),
+    ];
+  }).then((results) => {
+    const rows = results[results.length - 1];
     if (!rows) throw new Error("Database context transaction returned no query result");
     return rows;
   });

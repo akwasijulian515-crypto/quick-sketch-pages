@@ -131,9 +131,10 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
   );
 }
 
-export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
+export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, schoolAdminOrTeacher = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; schoolAdminOrTeacher?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [authorized, setAuthorized] = useState(false);
+  const [adminView, setAdminView] = useState(schoolAdmin);
   const navigate = useNavigate();
   const { schoolName, crestUrl } = useTenantBranding();
 
@@ -151,13 +152,17 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
         const role = payload?.membership?.role;
         const allowed = response.ok && (
           schoolAdmin ? role === "school_admin" :
+          schoolAdminOrTeacher ? role === "school_admin" || role === "teacher" :
           parentPortal ? role === "parent" :
           studentPortal ? role === "student" :
           finance ? role === "finance" :
           role === "teacher" || role === "school_admin"
         );
         if (!allowed) throw new Error(payload?.error ?? "This account does not have access to this page");
-        if (!cancelled) setAuthorized(true);
+        if (!cancelled) {
+          setAdminView(schoolAdmin || (schoolAdminOrTeacher && role === "school_admin"));
+          setAuthorized(true);
+        }
       } catch {
         if (!cancelled) window.location.assign(`/login${window.location.search}`);
       }
@@ -167,7 +172,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
     return () => {
       cancelled = true;
     };
-  }, [platform, schoolAdmin, parentPortal, studentPortal, finance]);
+  }, [platform, schoolAdmin, schoolAdminOrTeacher, parentPortal, studentPortal, finance]);
 
   if (!platform && !authorized) return <div className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">Verifying school access...</div>;
 
@@ -175,11 +180,11 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
       <div className="sticky top-0 hidden h-screen lg:block">
-        <Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={schoolAdmin} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} />
+        <Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} />
       </div>
       {menuOpen ? (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative z-10 h-full"><Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={schoolAdmin} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
+          <div className="relative z-10 h-full"><Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
           <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25" onClick={() => setMenuOpen(false)} />
         </div>
       ) : null}
@@ -209,7 +214,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
             >
               <LogOut />Sign out
             </Button>
-            <Button size="sm">{platform ? "Add school" : schoolAdmin ? "Add user" : parentPortal ? "Pay fees" : studentPortal ? "View results" : "New entry"}</Button>
+            <Button size="sm">{platform ? "Add school" : adminView ? "Add user" : parentPortal ? "Pay fees" : studentPortal ? "View results" : "New entry"}</Button>
           </div>
         </header>
         <main className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</main>

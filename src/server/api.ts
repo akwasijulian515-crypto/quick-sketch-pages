@@ -129,9 +129,13 @@ async function sendSchoolAdminInvitation(
   }
 }
 
-type SchoolAdminContext = { schoolId: string; subdomain: string };
+type SchoolAdminContext = { schoolId: string; subdomain: string; role: string; userId: string; email: string };
 
-async function requireSchoolAdminContext(request: Request, env: RuntimeEnv): Promise<SchoolAdminContext | Response> {
+async function requireSchoolContext(
+  request: Request,
+  env: RuntimeEnv,
+  allowedRoles: readonly string[],
+): Promise<SchoolAdminContext | Response> {
   if (!env.DATABASE_URL || !env.NEON_AUTH_URL) return json({ error: "Neon Auth is not configured" }, 503);
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (!bearer) return json({ error: "Authentication is required" }, 401);
@@ -161,25 +165,35 @@ async function requireSchoolAdminContext(request: Request, env: RuntimeEnv): Pro
 
   const memberships = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
     tx`
-      select m.school_id, m.role, s.subdomain, s.status as school_status
+      select u.id as user_id, m.school_id, m.role, s.subdomain, s.status as school_status
       from users u
       join memberships m on m.user_id = u.id
       join schools s on s.id = m.school_id
       where lower(u.email) = ${email}
-        and m.role = 'school_admin'
     `,
   );
   const querySubdomain = new URL(request.url).searchParams.get("tenant")?.trim().toLowerCase() ?? null;
   if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
   const requestedSubdomain = resolveTenant(request, env.ROOT_DOMAIN).subdomain ?? querySubdomain;
   const schoolMemberships = memberships.filter((row) => row["school_id"] != null);
+  const authorizedMemberships = schoolMemberships.filter((row) => allowedRoles.includes(String(row["role"])));
   const membership = requestedSubdomain
-    ? schoolMemberships.find((row) => row["subdomain"] === requestedSubdomain)
-    : schoolMemberships.length === 1 ? schoolMemberships[0] : undefined;
+    ? authorizedMemberships.find((row) => row["subdomain"] === requestedSubdomain)
+    : authorizedMemberships.length === 1 ? authorizedMemberships[0] : undefined;
   if (!membership) return json({ error: "This account does not have access to this school" }, 403);
   if (membership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
 
-  return { schoolId: String(membership["school_id"]), subdomain: String(membership["subdomain"]) };
+  return {
+    schoolId: String(membership["school_id"]),
+    subdomain: String(membership["subdomain"]),
+    role: String(membership["role"]),
+    userId: String(membership["user_id"]),
+    email,
+  };
+}
+
+async function requireSchoolAdminContext(request: Request, env: RuntimeEnv): Promise<SchoolAdminContext | Response> {
+  return requireSchoolContext(request, env, ["school_admin"]);
 }
 
 function uuidOrNull(value: unknown): value is string | null {
@@ -236,59 +250,879 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
 
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
+  const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
+  const workflowRoles: Record<string, Record<string, readonly string[]>> = {
+    "/api/school/classes": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
+    "/api/school/students": { GET: ["school_admin", "teacher"] },
+    "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
+    "/api/school/marks": { GET: ["school_admin", "teacher"], PUT: ["school_admin", "teacher"] },
+    "/api/school/terminal-reports": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
+    "/api/school/promotions": { GET: ["school_admin", "teacher"], POST: ["teacher"], PATCH: ["school_admin"] },
+    "/api/school/academic-periods": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
+    "/api/school/terms": { POST: ["school_admin"] },
+    "/api/school/team": { GET: ["school_admin"], POST: ["school_admin"] },
+    "/api/school/teaching-setup": { GET: ["school_admin"], POST: ["school_admin"] },
+  };
+  const workflowMethodRoles = workflowRoles[url.pathname]?.[request.method]
+    ?? (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
   const schoolDataRoute = url.pathname === "/api/school/classes"
     || url.pathname === "/api/school/students"
     || url.pathname === "/api/school/academic-periods"
-    || classRosterMatch !== null;
+    || url.pathname === "/api/school/terms"
+    || url.pathname === "/api/school/team"
+    || url.pathname === "/api/school/teaching-setup"
+    || classRosterMatch !== null
+    || termCloseMatch !== null
+    || workflowMethodRoles !== undefined;
   if (schoolDataRoute) {
     const isGet = request.method === "GET";
     const isCreate = request.method === "POST" && (url.pathname === "/api/school/classes" || url.pathname === "/api/school/students");
-    if (!isGet && !isCreate) return json({ error: "Method not allowed" }, 405);
+    const isWorkflowMethod = workflowMethodRoles !== undefined;
+    if (!isGet && !isCreate && !isWorkflowMethod) return json({ error: "Method not allowed" }, 405);
 
-    const school = await requireSchoolAdminContext(request, env);
+    const school = isWorkflowMethod
+      ? await requireSchoolContext(request, env, workflowMethodRoles)
+      : await requireSchoolAdminContext(request, env);
     if (school instanceof Response) return school;
     const sql = database(env);
 
+    if (termCloseMatch) {
+      if (!uuidOrNull(termCloseMatch[1])) return badRequest("Invalid term ID");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          update terms
+          set is_closed = true, closed_at = now(), closed_by_user_id = ${school.userId}::uuid
+          where id = ${termCloseMatch[1]}::uuid and school_id = ${school.schoolId}::uuid
+            and lower(name) like '%term 3%' and not is_closed
+          returning id, name, is_closed, closed_at
+        `,
+      );
+      if (!rows[0]) return json({ error: "Term not found, already closed, or it is not Term 3" }, 409);
+      return json({ term: rows[0] });
+    }
+
+    if (url.pathname === "/api/school/fees") {
+      if (request.method === "GET") {
+        const classId = url.searchParams.get("class_id")?.trim() || null;
+        const yearId = url.searchParams.get("academic_year_id")?.trim() || null;
+        if ((classId && !uuidOrNull(classId)) || (yearId && !uuidOrNull(yearId))) return badRequest("Invalid class or academic year ID");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select f.id, f.class_id, c.name as class_name, f.academic_year_id,
+                   ay.name as academic_year_name, f.term_id, t.name as term_name,
+                   f.fee_type, f.description, f.amount, f.currency, f.is_active
+            from class_fees f
+            join classes c on c.id = f.class_id and c.school_id = f.school_id
+            join academic_years ay on ay.id = f.academic_year_id and ay.school_id = f.school_id
+            left join terms t on t.id = f.term_id and t.school_id = f.school_id
+            where f.school_id = ${school.schoolId}::uuid
+              and (${classId}::uuid is null or f.class_id = ${classId}::uuid)
+              and (${yearId}::uuid is null or f.academic_year_id = ${yearId}::uuid)
+            order by ay.starts_on desc, c.name, f.fee_type
+          `,
+        );
+        return json({ fees: rows });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const yearId = body["academic_year_id"];
+      const termId = body["term_id"] ?? null;
+      const feeType = body["fee_type"];
+      const description = typeof body["description"] === "string" ? body["description"].trim() : "";
+      const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
+      const currency = typeof body["currency"] === "string" ? body["currency"].trim().toUpperCase() : "GHS";
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(yearId) || !yearId || !uuidOrNull(termId)) return badRequest("Choose a valid class, academic year, and term");
+      if (!["daily", "tuition", "pta", "exam", "other"].includes(String(feeType))) return badRequest("Choose a valid fee type");
+      if (feeType === "daily" && termId) return badRequest("Daily fees apply to the whole academic year and cannot be term-specific");
+      if (description.length < 2 || description.length > 160) return badRequest("Fee description must be 2–160 characters");
+      if (!Number.isFinite(amount) || amount < 0 || amount > 99_999_999.99) return badRequest("Enter a valid non-negative fee amount");
+      if (!/^[A-Z]{3}$/.test(currency)) return badRequest("Currency must be a three-letter code");
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          insert into class_fees
+            (school_id, class_id, academic_year_id, term_id, fee_type, description, amount, currency)
+          values
+            (${school.schoolId}::uuid, ${classId}::uuid, ${yearId}::uuid, ${termId}::uuid,
+             ${feeType}, ${description}, ${amount}, ${currency})
+          on conflict (school_id, class_id, academic_year_id, term_id, fee_type)
+          do update set description = excluded.description, amount = excluded.amount,
+                        currency = excluded.currency, is_active = true
+          returning id, class_id, academic_year_id, term_id, fee_type, description, amount, currency, is_active
+        `,
+      );
+      return json({ fee: rows[0] }, 201);
+    }
+
+    if (url.pathname === "/api/school/marks") {
+      if (request.method === "GET") {
+        const classId = url.searchParams.get("class_id")?.trim() || null;
+        const termId = url.searchParams.get("term_id")?.trim() || null;
+        const classSubjectId = url.searchParams.get("class_subject_id")?.trim() || null;
+        if ([classId, termId, classSubjectId].some((id) => id && !uuidOrNull(id))) return badRequest("Invalid class, term, or subject assignment ID");
+
+        const assignments = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select cs.id as class_subject_id, c.id as class_id, c.name as class_name,
+                   cs.subject_id, s.name as subject_name, c.academic_year_id,
+                   ay.name as academic_year_name, t.id as term_id, t.name as term_name
+            from class_subjects cs
+            join classes c on c.id = cs.class_id and c.school_id = cs.school_id
+            join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+            join terms t on t.academic_year_id = ay.id and t.school_id = ay.school_id
+            where cs.school_id = ${school.schoolId}::uuid
+              and (${classId}::uuid is null or c.id = ${classId}::uuid)
+              and (${termId}::uuid is null or t.id = ${termId}::uuid)
+              and (
+                ${school.role === "school_admin"}
+                or exists (
+                  select 1 from teaching_assignments ta
+                  join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                  where ta.school_id = cs.school_id and ta.class_subject_id = cs.id
+                    and ta.academic_year_id = c.academic_year_id and sp.user_id = ${school.userId}::uuid
+                )
+              )
+            order by ay.starts_on desc, c.name, s.name, t.starts_on
+          `,
+        );
+        if (!classSubjectId || !termId) return json({ assignments });
+
+        const selected = assignments.find((row) => String(row["class_subject_id"]) === classSubjectId && String(row["term_id"]) === termId);
+        if (!selected) return json({ error: "That subject is not assigned to this class and term" }, 404);
+        const students = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   m.class_test_score, m.project_score, m.homework_score, m.group_work_score,
+                   m.exam_score, m.total_score, m.performance_level
+            from class_enrollments e
+            join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+            left join subject_term_marks m
+              on m.school_id = st.school_id and m.student_id = st.id
+             and m.class_subject_id = ${classSubjectId}::uuid and m.term_id = ${termId}::uuid
+            where e.school_id = ${school.schoolId}::uuid
+              and e.class_id = ${selected["class_id"]}::uuid and e.ends_on is null
+            order by st.last_name, st.first_name, st.admission_number
+          `,
+        );
+        return json({ assignments, students });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classSubjectId = body["class_subject_id"];
+      const termId = body["term_id"];
+      const marks = body["marks"];
+      if (!uuidOrNull(classSubjectId) || !classSubjectId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid subject assignment and term");
+      if (!Array.isArray(marks) || marks.length < 1 || marks.length > 200) return badRequest("Submit between 1 and 200 student mark rows");
+      const seenStudents = new Set<string>();
+      for (const row of marks) {
+        if (!row || typeof row !== "object") return badRequest("Every mark row must be an object");
+        const mark = row as Record<string, unknown>;
+        if (!uuidOrNull(mark["student_id"]) || !mark["student_id"] || seenStudents.has(mark["student_id"])) return badRequest("Each student must have a valid, unique ID");
+        seenStudents.add(mark["student_id"]);
+        for (const [field, limit] of [["class_test_score", 10], ["project_score", 20], ["homework_score", 10], ["group_work_score", 10], ["exam_score", 100]] as const) {
+          const value = mark[field];
+          if (value !== null && value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > limit)) {
+            return badRequest(`Invalid ${field.replaceAll("_", " ")}; it must be between 0 and ${limit}`);
+          }
+        }
+      }
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with input_marks as (
+            select * from jsonb_to_recordset(${JSON.stringify(marks)}::jsonb) as x(
+              student_id uuid, class_test_score numeric, project_score numeric,
+              homework_score numeric, group_work_score numeric, exam_score numeric
+            )
+          ),
+          saved as (
+            insert into subject_term_marks
+              (school_id, student_id, class_subject_id, term_id, class_test_score,
+               project_score, homework_score, group_work_score, exam_score, updated_by_user_id)
+            select ${school.schoolId}::uuid, input.student_id, cs.id, term.id,
+                   input.class_test_score, input.project_score, input.homework_score,
+                   input.group_work_score, input.exam_score, ${school.userId}::uuid
+            from input_marks input
+            join class_subjects cs on cs.id = ${classSubjectId}::uuid and cs.school_id = ${school.schoolId}::uuid
+            join classes c on c.id = cs.class_id and c.school_id = cs.school_id
+            join terms term on term.id = ${termId}::uuid and term.school_id = c.school_id
+              and term.academic_year_id = c.academic_year_id
+            join class_enrollments e on e.student_id = input.student_id
+              and e.class_id = c.id and e.school_id = c.school_id and e.ends_on is null
+            where (
+              ${school.role === "school_admin"}
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = cs.school_id and ta.class_subject_id = cs.id
+                  and ta.academic_year_id = c.academic_year_id and sp.user_id = ${school.userId}::uuid
+              )
+            )
+            on conflict (student_id, class_subject_id, term_id) do update
+              set class_test_score = excluded.class_test_score,
+                  project_score = excluded.project_score,
+                  homework_score = excluded.homework_score,
+                  group_work_score = excluded.group_work_score,
+                  exam_score = excluded.exam_score,
+                  updated_by_user_id = excluded.updated_by_user_id
+            returning student_id
+          )
+          select student_id from saved
+        `,
+      );
+      if (rows.length !== marks.length) return json({ error: "Some students are not currently enrolled in that class, or the subject is not assigned to your account" }, 400);
+      return json({ saved: rows.length });
+    }
+
+    if (url.pathname === "/api/school/terminal-reports") {
+      if (request.method === "GET") {
+        const classId = url.searchParams.get("class_id")?.trim() || null;
+        const termId = url.searchParams.get("term_id")?.trim() || null;
+        if (!uuidOrNull(classId) || !uuidOrNull(termId) || !classId || !termId) return badRequest("Choose a valid class and term");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   (select name from schools where id = st.school_id) as school_name,
+                   r.id as report_id, r.conduct, r.attitude, r.interest,
+                   r.attendance_present, r.attendance_total, r.teacher_remark,
+                   r.headteacher_remark, r.promotion_status, r.published_at,
+                   coalesce((
+                     select jsonb_agg(jsonb_build_object(
+                       'subject_id', i.subject_id, 'subject_name', s.name,
+                       'class_test_score', i.class_test_score, 'project_score', i.project_score,
+                       'homework_score', i.homework_score, 'group_work_score', i.group_work_score,
+                       'exam_score', i.exam_score, 'total_score', i.total_score,
+                       'performance_level', i.performance_level, 'remark', i.remark
+                     ) order by s.name)
+                     from terminal_report_items i join subjects s on s.id = i.subject_id and s.school_id = i.school_id
+                     where i.report_id = r.id and i.school_id = st.school_id
+                   ), '[]'::jsonb) as items
+            from class_enrollments e
+            join students st on st.id = e.student_id and st.school_id = e.school_id
+            join classes c on c.id = e.class_id and c.school_id = e.school_id
+            left join terminal_reports r on r.student_id = st.id and r.term_id = ${termId}::uuid and r.school_id = st.school_id
+            where e.school_id = ${school.schoolId}::uuid and c.id = ${classId}::uuid
+              and e.ends_on is null
+              and exists (select 1 from terms t where t.id = ${termId}::uuid
+                and t.school_id = c.school_id and t.academic_year_id = c.academic_year_id)
+              and (
+                ${school.role === "school_admin"}
+                or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+                or exists (
+                  select 1 from teaching_assignments ta
+                  join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                  where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                    and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                    and sp.user_id = ${school.userId}::uuid
+                )
+              )
+            order by st.last_name, st.first_name, st.admission_number
+          `,
+        );
+        return json({ reports: rows });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const termId = body["term_id"];
+      const profiles = body["profiles"] ?? [];
+      const publish = body["publish"] === true;
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid class and term");
+      if (publish && school.role !== "school_admin") return json({ error: "Only a School Admin can publish terminal reports" }, 403);
+      if (!Array.isArray(profiles) || profiles.length > 200) return badRequest("Invalid report profile list");
+      const seenStudents = new Set<string>();
+      for (const row of profiles) {
+        if (!row || typeof row !== "object") return badRequest("Every learner report must be an object");
+        const profile = row as Record<string, unknown>;
+        if (!uuidOrNull(profile["student_id"]) || !profile["student_id"] || seenStudents.has(profile["student_id"])) return badRequest("Each report must have a valid, unique student ID");
+        seenStudents.add(profile["student_id"]);
+        for (const field of ["conduct", "attitude", "interest", "teacher_remark", "headteacher_remark"] as const) {
+          const value = profile[field];
+          if (value !== undefined && value !== null && (typeof value !== "string" || value.length > (field.endsWith("remark") ? 2000 : 80))) {
+            return badRequest(`${field.replaceAll("_", " ")} is too long`);
+          }
+        }
+        const promotion = profile["promotion_status"];
+        if (promotion !== undefined && promotion !== null && promotion !== "" && !["promote", "repeat", "transfer", "graduate"].includes(String(promotion))) {
+          return badRequest("Invalid promotion decision");
+        }
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`
+          with report_students as (
+            select e.student_id, e.school_id, c.id as class_id
+            from class_enrollments e
+            join classes c on c.id = e.class_id and c.school_id = e.school_id
+            join terms t on t.id = ${termId}::uuid and t.school_id = c.school_id
+              and t.academic_year_id = c.academic_year_id
+            where e.school_id = ${school.schoolId}::uuid and c.id = ${classId}::uuid and e.ends_on is null
+              and (
+                ${school.role === "school_admin"}
+                or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+                or exists (
+                  select 1 from teaching_assignments ta
+                  join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                  where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                    and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                    and sp.user_id = ${school.userId}::uuid
+                )
+              )
+          ),
+          input_profiles as (
+            select * from jsonb_to_recordset(${JSON.stringify(profiles)}::jsonb) as x(
+              student_id uuid, conduct text, attitude text, interest text,
+              teacher_remark text, headteacher_remark text, promotion_status text
+            )
+          )
+          insert into terminal_reports
+            (school_id, student_id, term_id, generated_by_staff_id, conduct, attitude, interest,
+             attendance_present, attendance_total, teacher_remark, headteacher_remark, promotion_status, published_at)
+          select rs.school_id, rs.student_id, ${termId}::uuid,
+                 (select id from staff_profiles where school_id = rs.school_id and user_id = ${school.userId}::uuid limit 1),
+                 ip.conduct, ip.attitude, ip.interest,
+                 (select count(*)::int from attendance_records ar
+                  join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+                  where ar.school_id = rs.school_id and ar.student_id = rs.student_id
+                    and ase.class_id = rs.class_id and ase.attendance_date between t.starts_on and t.ends_on
+                    and ar.status in ('present', 'late')),
+                 (select count(*)::int from attendance_sessions ase
+                  where ase.school_id = rs.school_id and ase.class_id = rs.class_id
+                    and ase.attendance_date between t.starts_on and t.ends_on),
+                 ip.teacher_remark,
+                 case when ${school.role === "school_admin"} then ip.headteacher_remark else null end,
+                 nullif(ip.promotion_status, ''),
+                 case when ${publish} then now() else null end
+          from report_students rs
+          join terms t on t.id = ${termId}::uuid and t.school_id = rs.school_id
+          left join input_profiles ip on ip.student_id = rs.student_id
+          on conflict (student_id, term_id) do update
+            set conduct = coalesce(excluded.conduct, terminal_reports.conduct),
+                attitude = coalesce(excluded.attitude, terminal_reports.attitude),
+                interest = coalesce(excluded.interest, terminal_reports.interest),
+                attendance_present = excluded.attendance_present,
+                attendance_total = excluded.attendance_total,
+                teacher_remark = coalesce(excluded.teacher_remark, terminal_reports.teacher_remark),
+                headteacher_remark = coalesce(excluded.headteacher_remark, terminal_reports.headteacher_remark),
+                promotion_status = coalesce(excluded.promotion_status, terminal_reports.promotion_status),
+                published_at = case when ${publish} then coalesce(terminal_reports.published_at, now()) else terminal_reports.published_at end
+            where terminal_reports.published_at is null
+               or (${school.role === "school_admin"} and ${publish})
+        `,
+        tx`
+          delete from terminal_report_items i
+          using terminal_reports r, class_enrollments e, classes c
+          where i.report_id = r.id and i.school_id = ${school.schoolId}::uuid
+            and r.school_id = i.school_id and r.student_id = e.student_id
+            and r.term_id = ${termId}::uuid and e.school_id = r.school_id
+            and e.ends_on is null and e.class_id = c.id and c.school_id = e.school_id
+            and c.id = ${classId}::uuid
+            and (r.published_at is null or (${school.role === "school_admin"} and ${publish}))
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                join class_subjects cs on cs.id = ta.class_subject_id and cs.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and cs.class_id = c.id and cs.subject_id = i.subject_id
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
+        `,
+        tx`
+          insert into terminal_report_items
+            (school_id, report_id, subject_id, class_test_score, project_score, homework_score,
+             group_work_score, exam_score, total_score, performance_level)
+          select r.school_id, r.id, cs.subject_id, m.class_test_score, m.project_score,
+                 m.homework_score, m.group_work_score, m.exam_score, m.total_score, m.performance_level
+          from terminal_reports r
+          join class_enrollments e on e.student_id = r.student_id and e.school_id = r.school_id
+            and e.ends_on is null
+          join classes c on c.id = e.class_id and c.school_id = e.school_id and c.id = ${classId}::uuid
+          join subject_term_marks m on m.student_id = r.student_id and m.school_id = r.school_id
+            and m.term_id = ${termId}::uuid and m.total_score is not null
+          join class_subjects cs on cs.id = m.class_subject_id and cs.school_id = m.school_id and cs.class_id = c.id
+          where r.school_id = ${school.schoolId}::uuid and r.term_id = ${termId}::uuid
+            and (r.published_at is null or (${school.role === "school_admin"} and ${publish}))
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id = cs.id and sp.user_id = ${school.userId}::uuid
+              )
+            )
+          on conflict (report_id, subject_id) do update
+            set class_test_score = excluded.class_test_score,
+                project_score = excluded.project_score,
+                homework_score = excluded.homework_score,
+                group_work_score = excluded.group_work_score,
+                exam_score = excluded.exam_score,
+                total_score = excluded.total_score,
+                performance_level = excluded.performance_level
+        `,
+        tx`
+          select count(*)::int as saved_count
+          from terminal_reports r
+          join class_enrollments e on e.student_id = r.student_id and e.school_id = r.school_id and e.ends_on is null
+          join classes c on c.id = e.class_id and c.school_id = e.school_id and c.id = ${classId}::uuid
+          where r.school_id = ${school.schoolId}::uuid and r.term_id = ${termId}::uuid
+            and (r.published_at is null or (${school.role === "school_admin"} and ${publish}))
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
+        `,
+      ]);
+      if (!Number(rows[0]?.["saved_count"] ?? 0)) return json({ error: "No authorized active students were found for that class and term" }, 400);
+      return json({ saved_count: Number(rows[0]?.["saved_count"] ?? 0), published: publish });
+    }
+
+    if (url.pathname === "/api/school/promotions") {
+      if (request.method === "GET") {
+        const classId = url.searchParams.get("class_id")?.trim() || null;
+        const termId = url.searchParams.get("term_id")?.trim() || null;
+        if ([classId, termId].some((id) => id && !uuidOrNull(id))) return badRequest("Invalid class or term ID");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select d.id, d.student_id, st.first_name, st.last_name, st.admission_number,
+                   d.from_class_id, c.name as from_class_name, d.term_id, t.name as term_name,
+                   d.decision, d.target_class_id, target.name as target_class_name,
+                   d.teacher_remark, d.status, d.submitted_at, d.reviewed_at, d.review_remark
+            from promotion_decisions d
+            join students st on st.id = d.student_id and st.school_id = d.school_id
+            join classes c on c.id = d.from_class_id and c.school_id = d.school_id
+            join terms t on t.id = d.term_id and t.school_id = d.school_id
+            left join classes target on target.id = d.target_class_id and target.school_id = d.school_id
+            where d.school_id = ${school.schoolId}::uuid
+              and (${classId}::uuid is null or d.from_class_id = ${classId}::uuid)
+              and (${termId}::uuid is null or d.term_id = ${termId}::uuid)
+              and (
+                ${school.role === "school_admin"}
+                or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+                or exists (
+                  select 1 from teaching_assignments ta
+                  join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                  where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                    and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                    and sp.user_id = ${school.userId}::uuid
+                )
+              )
+            order by d.status, c.name, st.last_name, st.first_name
+          `,
+        );
+        return json({ decisions: rows });
+      }
+
+      if (request.method === "PATCH") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const id = body["id"];
+        const action = body["action"];
+        const reviewRemark = typeof body["review_remark"] === "string" ? body["review_remark"].trim() : "";
+        if (!uuidOrNull(id) || !id) return badRequest("Invalid promotion decision ID");
+        if (action !== "approve" && action !== "reject") return badRequest("Action must be approve or reject");
+        if (reviewRemark.length > 2000) return badRequest("Review remark must be at most 2000 characters");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with selected as materialized (
+              select d.id, d.school_id, d.student_id, d.from_class_id, d.target_class_id,
+                     d.decision, d.term_id, t.ends_on as term_ends_on
+              from promotion_decisions d
+              join terms t on t.id = d.term_id and t.school_id = d.school_id
+              where d.id = ${id}::uuid and d.school_id = ${school.schoolId}::uuid and d.status = 'pending'
+              for update of d
+            ),
+            closed_enrollment as (
+              update class_enrollments e
+              set ends_on = greatest(current_date, s.term_ends_on)
+              from selected s
+              where ${action === "approve"} and e.school_id = s.school_id
+                and e.student_id = s.student_id and e.class_id = s.from_class_id and e.ends_on is null
+                and (
+                  s.decision not in ('promote', 'repeat')
+                  or exists (
+                    select 1 from classes target
+                    join academic_years target_year on target_year.id = target.academic_year_id
+                      and target_year.school_id = target.school_id
+                    join terms source_term on source_term.id = s.term_id and source_term.school_id = s.school_id
+                    where target.school_id = s.school_id and target.id = s.target_class_id
+                      and target_year.starts_on > source_term.ends_on
+                  )
+                )
+              returning e.school_id, e.student_id, s.target_class_id, s.decision, s.term_ends_on
+            ),
+            created_enrollment as (
+              insert into class_enrollments (school_id, class_id, student_id, starts_on)
+              select ce.school_id, ce.target_class_id, ce.student_id, greatest(current_date, target_year.starts_on)
+              from closed_enrollment ce
+              join classes target on target.id = ce.target_class_id and target.school_id = ce.school_id
+              join academic_years target_year on target_year.id = target.academic_year_id and target_year.school_id = target.school_id
+              where ce.target_class_id is not null and ce.decision in ('promote', 'repeat')
+                and target_year.starts_on > ce.term_ends_on
+              returning id
+            ),
+            reviewed as (
+              update promotion_decisions d
+              set status = ${action === "approve" ? "approved" : "rejected"},
+                  reviewed_by_user_id = ${school.userId}::uuid,
+                  reviewed_at = now(),
+                  review_remark = nullif(${reviewRemark}, '')
+              from selected s
+              where d.id = s.id
+                and (${action === "reject"} or exists (select 1 from closed_enrollment))
+                and (s.decision not in ('promote', 'repeat') or ${action === "reject"} or exists (select 1 from created_enrollment))
+              returning d.id, d.status
+            )
+            select id, status from reviewed
+          `,
+        );
+        if (!rows[0]) return json({ error: "Decision not found, already reviewed, or its active enrollment/target class is invalid" }, 409);
+        return json({ decision: rows[0] });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const termId = body["term_id"];
+      const decisions = body["decisions"];
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid class and term");
+      if (!Array.isArray(decisions) || decisions.length < 1 || decisions.length > 200) return badRequest("Submit between 1 and 200 promotion decisions");
+      const students = new Set<string>();
+      for (const value of decisions) {
+        if (!value || typeof value !== "object") return badRequest("Each decision must be an object");
+        const decision = value as Record<string, unknown>;
+        if (!uuidOrNull(decision["student_id"]) || !decision["student_id"] || students.has(decision["student_id"])) return badRequest("Each student must have a valid, unique ID");
+        students.add(decision["student_id"]);
+        if (!["promote", "repeat", "transfer", "graduate"].includes(String(decision["decision"]))) return badRequest("Invalid promotion decision");
+        if (!uuidOrNull(decision["target_class_id"])) return badRequest("Invalid target class ID");
+        if (["promote", "repeat"].includes(String(decision["decision"])) !== Boolean(decision["target_class_id"])) return badRequest("Promote and repeat decisions need a next-year target class");
+        if (typeof decision["teacher_remark"] === "string" && decision["teacher_remark"].length > 2000) return badRequest("Teacher remark must be at most 2000 characters");
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with input_decisions as (
+            select * from jsonb_to_recordset(${JSON.stringify(decisions)}::jsonb) as x(
+              student_id uuid, decision text, target_class_id uuid, teacher_remark text
+            )
+          ),
+          inserted as (
+            insert into promotion_decisions
+              (school_id, student_id, from_class_id, term_id, decision, target_class_id, teacher_remark, submitted_by_user_id)
+            select c.school_id, e.student_id, c.id, t.id, i.decision, i.target_class_id, i.teacher_remark, ${school.userId}::uuid
+            from input_decisions i
+            join classes c on c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
+            join terms t on t.id = ${termId}::uuid and t.school_id = c.school_id
+              and t.academic_year_id = c.academic_year_id and t.is_closed and lower(t.name) like '%term 3%'
+            join class_enrollments e on e.student_id = i.student_id and e.class_id = c.id
+              and e.school_id = c.school_id and e.ends_on is null
+            left join classes target on target.id = i.target_class_id and target.school_id = c.school_id
+              and target.academic_year_id <> c.academic_year_id
+            left join academic_years target_year on target_year.id = target.academic_year_id
+              and target_year.school_id = target.school_id
+            where (
+              c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
+              and (
+                (i.decision in ('promote', 'repeat') and target.id is not null and target_year.starts_on > t.ends_on)
+                or (i.decision in ('transfer', 'graduate') and i.target_class_id is null)
+              )
+            on conflict (student_id, term_id) do nothing
+            returning id
+          )
+          select (select count(*)::int from inserted) as saved_count
+        `,
+      );
+      if (Number(rows[0]?.["saved_count"] ?? 0) !== decisions.length) return json({ error: "Could not submit all decisions. Confirm each learner is enrolled, the target class belongs to an academic year after Term 3, and you are assigned to this class." }, 400);
+      return json({ saved_count: Number(rows[0]?.["saved_count"] ?? 0), status: "pending" }, 201);
+    }
+
     if (url.pathname === "/api/school/academic-periods") {
+      if (request.method === "POST") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+        const startsOn = typeof body["starts_on"] === "string" ? body["starts_on"] : "";
+        const endsOn = typeof body["ends_on"] === "string" ? body["ends_on"] : "";
+        const isCurrent = body["is_current"] === true;
+        if (name.length < 2 || name.length > 80) return badRequest("Academic year name must be 2–80 characters");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn) || !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) || startsOn >= endsOn) {
+          return badRequest("Enter valid academic year start and end dates");
+        }
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with cleared_current as (
+              update academic_years set is_current = false
+              where school_id = ${school.schoolId}::uuid and is_current and ${isCurrent}
+              returning id
+            ),
+            inserted as (
+              insert into academic_years (school_id, name, starts_on, ends_on, is_current)
+              select ${school.schoolId}::uuid, ${name}, ${startsOn}::date, ${endsOn}::date, ${isCurrent}
+              where not ${isCurrent} or (select count(*) >= 0 from cleared_current)
+              returning id, name, starts_on, ends_on, is_current
+            )
+            select * from inserted
+          `,
+        );
+        if (!rows[0]) return json({ error: "Academic year already exists or could not be created" }, 409);
+        return json({ academic_year: rows[0] }, 201);
+      }
+
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           select
             ay.id as academic_year_id,
             ay.name as academic_year_name,
+            ay.starts_on as academic_year_starts_on,
             ay.is_current,
             t.id as term_id,
             t.name as term_name,
-            (current_date between t.starts_on and t.ends_on) as term_is_current
+            t.ends_on as term_ends_on,
+            (current_date between t.starts_on and t.ends_on) as term_is_current,
+            t.is_closed as term_is_closed
           from academic_years ay
           left join terms t on t.academic_year_id = ay.id and t.school_id = ay.school_id
           where ay.school_id = ${school.schoolId}::uuid
           order by ay.is_current desc, ay.starts_on desc, t.starts_on asc
         `,
       );
-      const years = new Map<string, { id: string; name: string; is_current: boolean; terms: { id: string; name: string; is_current: boolean }[] }>();
+      const years = new Map<string, { id: string; name: string; starts_on: string; is_current: boolean; terms: { id: string; name: string; ends_on: string; is_current: boolean; is_closed: boolean }[] }>();
       for (const row of rows) {
         const yearId = String(row["academic_year_id"]);
         let year = years.get(yearId);
         if (!year) {
-          year = { id: yearId, name: String(row["academic_year_name"]), is_current: row["is_current"] === true, terms: [] };
+          year = { id: yearId, name: String(row["academic_year_name"]), starts_on: String(row["academic_year_starts_on"]), is_current: row["is_current"] === true, terms: [] };
           years.set(yearId, year);
         }
         if (row["term_id"] != null) {
           year.terms.push({
             id: String(row["term_id"]),
             name: String(row["term_name"]),
+            ends_on: String(row["term_ends_on"]),
             is_current: row["term_is_current"] === true,
+            is_closed: row["term_is_closed"] === true,
           });
         }
       }
       return json({ academic_years: [...years.values()] });
     }
 
+    if (url.pathname === "/api/school/terms" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const academicYearId = body["academic_year_id"];
+      const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+      const startsOn = typeof body["starts_on"] === "string" ? body["starts_on"] : "";
+      const endsOn = typeof body["ends_on"] === "string" ? body["ends_on"] : "";
+      if (!uuidOrNull(academicYearId) || !academicYearId) return badRequest("Choose a valid academic year");
+      if (name.length < 2 || name.length > 80) return badRequest("Term name must be 2–80 characters");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn) || !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) || startsOn >= endsOn) {
+        return badRequest("Enter valid term start and end dates");
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          insert into terms (school_id, academic_year_id, name, starts_on, ends_on)
+          select ${school.schoolId}::uuid, ay.id, ${name}, ${startsOn}::date, ${endsOn}::date
+          from academic_years ay
+          where ay.id = ${academicYearId}::uuid and ay.school_id = ${school.schoolId}::uuid
+            and ${startsOn}::date >= ay.starts_on and ${endsOn}::date <= ay.ends_on
+            and not exists (
+              select 1 from terms existing
+              where existing.school_id = ay.school_id and existing.academic_year_id = ay.id
+                and existing.starts_on < ${endsOn}::date and existing.ends_on > ${startsOn}::date
+            )
+          returning id, academic_year_id, name, starts_on, ends_on
+        `,
+      );
+      if (!rows[0]) return json({ error: "Academic year not found, term name already exists, or dates are outside the year/overlap another term" }, 409);
+      return json({ term: rows[0] }, 201);
+    }
+
+    if (url.pathname === "/api/school/team") {
+      if (request.method === "GET") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select u.id as user_id, u.email, u.display_name, m.role, sp.id as staff_profile_id
+            from memberships m join users u on u.id = m.user_id
+            left join staff_profiles sp on sp.user_id = u.id and sp.school_id = m.school_id
+            where m.school_id = ${school.schoolId}::uuid and m.role in ('school_admin', 'teacher', 'finance')
+            order by m.role, u.display_name
+          `,
+        );
+        return json({ team: rows });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+      const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
+      const role = body["role"];
+      if (name.length < 2 || name.length > 160) return badRequest("Name must be 2–160 characters");
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid email address");
+      if (role !== "teacher" && role !== "finance") return badRequest("Choose teacher or finance");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with app_user as (
+            insert into users (email, display_name) values (${email}, ${name})
+            on conflict (email) do update set display_name = excluded.display_name
+            returning id, email, display_name
+          ),
+          member as (
+            insert into memberships (user_id, school_id, role)
+            select id, ${school.schoolId}::uuid, ${role}::membership_role from app_user
+            on conflict (user_id, school_id, role) do nothing
+            returning user_id
+          ),
+          staff as (
+            insert into staff_profiles (school_id, user_id, job_title)
+            select ${school.schoolId}::uuid, id, 'Teacher' from app_user where ${role} = 'teacher'
+            on conflict (school_id, user_id) do update set job_title = coalesce(staff_profiles.job_title, excluded.job_title)
+            returning id
+          )
+          select app_user.id as user_id, app_user.email, app_user.display_name, ${role} as role
+          from app_user
+        `,
+      );
+      if (!rows[0]) return json({ error: "Could not add this school member" }, 409);
+      const activationUrl = new URL("/login", request.url);
+      activationUrl.searchParams.set("tenant", school.subdomain);
+      activationUrl.searchParams.set("mode", "activate");
+      return json({ member: rows[0], activation_url: activationUrl.toString() }, 201);
+    }
+
+    if (url.pathname === "/api/school/teaching-setup") {
+      if (request.method === "GET") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select c.id as class_id, c.name as class_name, c.academic_year_id, ay.name as academic_year_name,
+                   class_teacher_user.display_name as class_teacher_name,
+                   cs.id as class_subject_id, s.id as subject_id, s.code as subject_code, s.name as subject_name,
+                   sp.user_id as teacher_user_id, u.display_name as teacher_name, u.email as teacher_email
+            from classes c
+            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+            left join class_subjects cs on cs.class_id = c.id and cs.school_id = c.school_id
+            left join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+            left join teaching_assignments ta on ta.class_subject_id = cs.id
+              and ta.school_id = cs.school_id and ta.academic_year_id = c.academic_year_id
+            left join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+            left join users u on u.id = sp.user_id
+            left join staff_profiles class_teacher on class_teacher.id = c.class_teacher_id and class_teacher.school_id = c.school_id
+            left join users class_teacher_user on class_teacher_user.id = class_teacher.user_id
+            where c.school_id = ${school.schoolId}::uuid
+            order by ay.starts_on desc, c.name, s.name
+          `,
+        );
+        const team = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select u.id as user_id, u.email, u.display_name, sp.id as staff_profile_id
+            from memberships m join users u on u.id = m.user_id
+            join staff_profiles sp on sp.user_id = u.id and sp.school_id = m.school_id
+            where m.school_id = ${school.schoolId}::uuid and m.role = 'teacher'
+            order by u.display_name
+          `,
+        );
+        return json({ assignments: rows, teachers: team });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const teacherId = body["teacher_user_id"];
+      const code = typeof body["subject_code"] === "string" ? body["subject_code"].trim().toUpperCase() : "";
+      const subjectName = typeof body["subject_name"] === "string" ? body["subject_name"].trim() : "";
+      const isClassTeacher = body["is_class_teacher"] === true;
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(teacherId) || !teacherId) return badRequest("Choose a valid class and teacher");
+      if (code.length < 1 || code.length > 24 || !/^[A-Z0-9-]+$/.test(code)) return badRequest("Subject code must use letters, numbers, or hyphens");
+      if (subjectName.length < 2 || subjectName.length > 120) return badRequest("Subject name must be 2–120 characters");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with selected_class as (
+            select id, school_id, academic_year_id from classes
+            where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
+          ),
+          selected_teacher as (
+            select u.id, u.email from users u join memberships m on m.user_id = u.id
+            where u.id = ${teacherId}::uuid and m.school_id = ${school.schoolId}::uuid and m.role = 'teacher'
+          ),
+          saved_subject as (
+            insert into subjects (school_id, code, name)
+            select ${school.schoolId}::uuid, ${code}, ${subjectName}
+            on conflict (school_id, code) do update set name = excluded.name
+            returning id, code, name
+          ),
+          saved_class_subject as (
+            insert into class_subjects (school_id, class_id, subject_id)
+            select c.school_id, c.id, s.id from selected_class c cross join saved_subject s
+            on conflict (class_id, subject_id) do update set class_id = excluded.class_id
+            returning id, school_id, class_id
+          ),
+          saved_staff as (
+            insert into staff_profiles (school_id, user_id, job_title)
+            select ${school.schoolId}::uuid, teacher.id, 'Teacher' from selected_teacher teacher
+            on conflict (school_id, user_id) do update set job_title = coalesce(staff_profiles.job_title, excluded.job_title)
+            returning id, school_id
+          ),
+          saved_assignment as (
+            insert into teaching_assignments (school_id, staff_profile_id, class_subject_id, academic_year_id)
+            select cs.school_id, sp.id, cs.id, c.academic_year_id
+            from saved_class_subject cs join selected_class c on c.id = cs.class_id and c.school_id = cs.school_id
+            cross join saved_staff sp
+            on conflict (staff_profile_id, class_subject_id, academic_year_id)
+              do update set is_primary_teacher = teaching_assignments.is_primary_teacher
+            returning id
+          ),
+          class_teacher as (
+            update classes c
+            set class_teacher_id = sp.id
+            from selected_class sc cross join saved_staff sp
+            where ${isClassTeacher} and c.id = sc.id and c.school_id = sc.school_id
+            returning c.id
+          )
+          select sa.id from saved_assignment sa
+          left join class_teacher ct on true
+        `,
+      );
+      if (!rows[0]) return json({ error: "Could not assign this subject and teacher to the class" }, 400);
+      return json({ assignment: rows[0] }, 201);
+    }
+
     if (url.pathname === "/api/school/classes" && request.method === "GET") {
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           select c.id, c.name, c.form_level as grade_level,
-                 ay.id as academic_year_id, ay.name as academic_year_name,
+                 ay.id as academic_year_id, ay.name as academic_year_name, ay.starts_on as academic_year_starts_on,
                  t.id as term_id, t.name as term_name,
                  (select count(*)::int
                   from class_enrollments e
@@ -301,6 +1135,17 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
           left join terms t on t.id = c.term_id and t.school_id = c.school_id
           where c.school_id = ${school.schoolId}::uuid
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
           order by ay.is_current desc, ay.starts_on desc, c.name
         `,
       );
@@ -446,6 +1291,23 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             where st.school_id = ${school.schoolId}::uuid
               and (${search} = '' or position(lower(${search}) in lower(st.first_name || ' ' || st.last_name || ' ' || st.admission_number)) > 0)
               and (${classId}::uuid is null or e.class_id = ${classId}::uuid)
+              and (
+                ${school.role === "school_admin"}
+                or exists (
+                  select 1 from classes authorized_class
+                  where authorized_class.id = e.class_id and authorized_class.school_id = st.school_id
+                    and (
+                      authorized_class.class_teacher_id in (select id from staff_profiles where school_id = authorized_class.school_id and user_id = ${school.userId}::uuid)
+                      or exists (
+                        select 1 from teaching_assignments ta
+                        join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                        where ta.school_id = authorized_class.school_id and ta.academic_year_id = authorized_class.academic_year_id
+                          and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = authorized_class.school_id and cs.class_id = authorized_class.id)
+                          and sp.user_id = ${school.userId}::uuid
+                      )
+                    )
+                )
+              )
           ),
           page_rows as (
             select * from filtered_students
