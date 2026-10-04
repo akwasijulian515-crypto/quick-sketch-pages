@@ -40,7 +40,7 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
   useEffect(() => {
-    if (/Failed to fetch dynamically imported module|Importing a module script failed/i.test(error?.message ?? "")) {
+    if (/Failed to fetch dynamically imported module|Importing a module script failed/i.test(error instanceof Error ? error.message : String(error ?? ""))) {
       const last = Number(sessionStorage.getItem("chunk-reload-at") ?? 0);
       if (Date.now() - last > 10_000) {
         sessionStorage.setItem("chunk-reload-at", String(Date.now()));
