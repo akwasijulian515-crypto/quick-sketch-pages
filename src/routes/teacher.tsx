@@ -139,31 +139,31 @@ function TeacherPortal() {
       </header>
 
       <main className="relative mx-auto max-w-5xl px-4 py-6 sm:px-6">
-        <div className="rise flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="font-display text-3xl font-bold">Good morning, Mr. Okoye</h1>
+        <div className="rise flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="font-display text-2xl font-bold sm:text-3xl">Good morning, Mr. Okoye</h1>
             <p className="mt-1 text-sm text-muted-foreground">Form 2B · 42 students · Today&apos;s register is waiting.</p>
           </div>
-          <div className="flex gap-2">
+          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0 sm:pb-0">
             {tabs.map(({ id, label, icon: Icon }) => (
-              <Button key={id} variant={tab === id ? "default" : "outline"} size="sm" onClick={() => setTab(id)}>
+              <Button key={id} variant={tab === id ? "default" : "outline"} size="sm" className="shrink-0" onClick={() => setTab(id)}>
                 <Icon />{label}
               </Button>
             ))}
-            <Button asChild size="sm" variant="outline"><Link to="/teacher/promotion"><ArrowUpRight />Promotion</Link></Button>
+            <Button asChild size="sm" variant="outline" className="shrink-0"><Link to="/teacher/promotion"><ArrowUpRight />Promotion</Link></Button>
           </div>
         </div>
 
-        <section className="mt-6 grid gap-3 sm:grid-cols-3">
+        <section className="mt-6 grid grid-cols-3 gap-2 sm:gap-3">
           {[
             { label: "Present today", value: String(presentCount), note: `of ${register.length} students shown` },
             { label: "Grades pending", value: "2", note: "subjects to submit" },
             { label: "Daily fees paid", value: String(paidDailyFees), note: "in this class today" },
           ].map((stat) => (
-            <article key={stat.label} className="glass-panel rise rounded-lg p-5">
-              <p className="text-xs font-medium text-muted-foreground">{stat.label}</p>
-              <p className="mt-2 font-display text-3xl">{stat.value}</p>
-              <p className="mt-1 text-xs text-secondary-foreground">{stat.note}</p>
+            <article key={stat.label} className="glass-panel rise min-w-0 rounded-lg p-3 sm:p-5">
+              <p className="text-[11px] font-medium text-muted-foreground sm:text-xs">{stat.label}</p>
+              <p className="mt-1 font-display text-2xl sm:mt-2 sm:text-3xl">{stat.value}</p>
+              <p className="mt-1 hidden text-xs text-secondary-foreground sm:block">{stat.note}</p>
             </article>
           ))}
         </section>
@@ -178,7 +178,45 @@ function TeacherPortal() {
             </p>
           </div>
           {tab === "grades" && <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/20 px-5 py-3"><div className="flex rounded-md border border-input bg-background/70 p-1"><button type="button" onClick={() => setGradeView("scores")} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", gradeView === "scores" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>Academic scores</button><button type="button" onClick={() => setGradeView("profile")} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", gradeView === "profile" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>Conduct & remarks</button></div>{gradeView === "scores" ? <label className="flex items-center gap-2 text-sm"><span className="text-xs font-medium text-muted-foreground">Assigned subject</span><select value={subject} onChange={(event) => setSubject(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring">{subjects.map((item) => <option key={item}>{item}</option>)}</select></label> : <span className="text-xs text-muted-foreground">Term-wide learner profile</span>}<span className="text-xs text-muted-foreground">Form 2B · {register.length} students shown</span></div>}
-          <div className="overflow-x-auto">
+          <ul className="divide-y divide-border/70 md:hidden">
+            {register.map((student) => {
+              const head = <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></div></div>;
+              if (tab === "register") return (
+                <li key={student.id} className="px-4 py-3">
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber} · {student.timeIn}</p></div></div>
+                  <div className="mt-2 grid grid-cols-3 gap-2">{(["present", "late", "absent"] as const).map((status) => <button key={status} type="button" onClick={() => setAttendance(student.id, status)} className={cn("h-10 rounded-md text-sm font-medium transition-colors", student.status === status ? status === "present" ? "bg-emerald-500 text-white" : status === "late" ? "bg-amber-500 text-white" : "bg-rose-500 text-white" : "bg-muted text-muted-foreground")}>{statusLabel(status)}</button>)}</div>
+                  {student.note && <p className="mt-2 text-xs text-muted-foreground">{student.note}</p>}
+                </li>
+              );
+              if (tab === "grades" && gradeView === "scores") {
+                const scores = gradeBook[student.id] ?? emptyScores; const finalScore = calculateScore(scores);
+                return (
+                  <li key={student.id} className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admissionNumber}</p></div><div className="shrink-0 text-right"><p className="font-display text-lg leading-none">{finalScore.toFixed(1)}</p><span className={cn("mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium", finalScore >= 50 ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/10 text-amber-700")}>{gradeFor(finalScore)}</span></div></div>
+                    <div className="mt-3 grid grid-cols-3 gap-2">{([["classTest", "Test /10"], ["project", "Project /20"], ["homework", "Homework /10"], ["groupWork", "Group /10"], ["exam", "Exam /100"]] as const).map(([field, label]) => <label key={field} className="block"><span className="mb-1 block text-[11px] text-muted-foreground">{label}</span><input inputMode="decimal" value={scores[field]} onChange={(event) => updateScore(student.id, field, event.target.value)} placeholder="0" className="h-10 w-full rounded-md border border-input bg-background/70 px-2 text-center text-sm outline-none focus:ring-2 focus:ring-ring" /></label>)}</div>
+                  </li>
+                );
+              }
+              if (tab === "grades") {
+                const profile = profiles[student.id] ?? emptyProfile;
+                return (
+                  <li key={student.id} className="px-4 py-3">
+                    {head}
+                    <div className="mt-3 grid grid-cols-3 gap-2">{(["conduct", "attitude", "interest"] as const).map((field) => <label key={field} className="block min-w-0"><span className="mb-1 block text-[11px] capitalize text-muted-foreground">{field}</span><select value={profile[field]} onChange={(event) => updateProfile(student.id, field, event.target.value)} className="h-10 w-full rounded-md border border-input bg-background/70 px-1 text-xs outline-none focus:ring-2 focus:ring-ring">{["Excellent", "Very good", "Good", "Fair", "Needs support"].map((value) => <option key={value}>{value}</option>)}</select></label>)}</div>
+                    <input value={profile.remark} onChange={(event) => updateProfile(student.id, "remark", event.target.value)} placeholder="Add a short remark" className="mt-2 h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+                  </li>
+                );
+              }
+              const coupon = dailyFeeCoupons.find((item) => item.studentId === student.id); const status = coupon?.status ?? "unpaid";
+              return (
+                <li key={student.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0"><p className="truncate font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{coupon?.code ?? "No coupon"}{coupon?.paidAt ? ` · ${coupon.paidAt}` : ""}</p></div>
+                  <span className={cn("shrink-0 rounded-full px-2 py-1 text-xs font-medium", status === "paid" ? "bg-emerald-500/10 text-emerald-700" : status === "pending" ? "bg-amber-500/10 text-amber-700" : "bg-rose-500/10 text-rose-700")}>{status === "paid" ? "Paid" : status === "pending" ? "Awaiting" : "Not paid"}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
             <table className={cn("w-full text-left text-sm", tab === "grades" ? gradeView === "scores" ? "min-w-[1040px]" : "min-w-[920px]" : "min-w-[560px]")}>
               <thead className="bg-muted/60 text-xs text-muted-foreground">
                 <tr>
