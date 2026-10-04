@@ -1,4 +1,4 @@
-import { database, resolveRuntimeEnv, type RuntimeEnv } from "./database";
+import { database, resolveRuntimeEnv, withDatabaseContext, type RuntimeEnv } from "./database";
 import { resolveTenant } from "./tenant";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
@@ -35,11 +35,13 @@ async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
     const users = await sql`select email, "emailVerified" as email_verified from neon_auth.user where id = ${userId} limit 1`;
     const authUser = users[0];
     if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== email) return false;
-    const memberships = await sql`
-      select 1 from users u join memberships m on m.user_id = u.id
-      where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null
-      limit 1
-    `;
+    const memberships = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
+      tx`
+        select 1 from users u join memberships m on m.user_id = u.id
+        where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null
+        limit 1
+      `,
+    );
     return memberships.length > 0;
   } catch {
     return false;
@@ -186,13 +188,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid email address");
 
     const sql = database(env);
-    const rows = await sql`
-      select m.role, s.status as school_status
-      from users u
-      join memberships m on m.user_id = u.id
-      left join schools s on s.id = m.school_id
-      where lower(u.email) = ${email}
-    `;
+    const rows = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
+      tx`
+        select m.role, s.status as school_status
+        from users u
+        join memberships m on m.user_id = u.id
+        left join schools s on s.id = m.school_id
+        where lower(u.email) = ${email}
+      `,
+    );
     const eligible = rows.some((row) => row["role"] === "super_admin" || row["school_status"] === "trial" || row["school_status"] === "active");
     return json({ eligible });
   }
@@ -225,14 +229,16 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       return json({ error: "Verify your email address before using a school portal" }, 403);
     }
 
-    const memberships = await sql`
-      select m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
-             coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
-      from users u
-      join memberships m on m.user_id = u.id
-      left join schools s on s.id = m.school_id
-      where lower(u.email) = ${tokenEmail}
-    `;
+    const memberships = await withDatabaseContext(sql, { userEmail: tokenEmail }, (tx) =>
+      tx`
+        select m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
+               coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
+        from users u
+        join memberships m on m.user_id = u.id
+        left join schools s on s.id = m.school_id
+        where lower(u.email) = ${tokenEmail}
+      `,
+    );
     const platformAdmin = memberships.find((row) => row["role"] === "super_admin" && row["school_id"] == null);
     if (platformAdmin) return json({ user: { email: tokenEmail }, membership: { role: "super_admin", schoolId: null } });
 
@@ -246,17 +252,32 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       : schoolMemberships.length === 1 ? schoolMemberships[0] : undefined;
     if (!selectedMembership) return json({ error: "This account does not have access to this school" }, 403);
     if (selectedMembership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
+    const schoolId = String(selectedMembership["school_id"]);
+    const scopedMemberships = await withDatabaseContext(sql, { schoolId, userEmail: tokenEmail }, (tx) =>
+      tx`
+        select m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
+               coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
+        from users u
+        join memberships m on m.user_id = u.id
+        join schools s on s.id = m.school_id
+        where lower(u.email) = ${tokenEmail} and m.school_id = ${schoolId}::uuid
+        limit 1
+      `,
+    );
+    const tenantMembership = scopedMemberships[0];
+    if (!tenantMembership) return json({ error: "This account does not have access to this school" }, 403);
+    if (tenantMembership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
 
     return json({
       user: { email: tokenEmail },
       membership: {
-        role: String(selectedMembership["role"]),
-        schoolId: String(selectedMembership["school_id"]),
-        schoolName: String(selectedMembership["school_name"]),
-        subdomain: String(selectedMembership["subdomain"]),
-        status: selectedMembership["school_status"],
-        primaryColor: String(selectedMembership["primary_color"]),
-        crestUrl: selectedMembership["crest_url"] ? String(selectedMembership["crest_url"]) : null,
+        role: String(tenantMembership["role"]),
+        schoolId: String(tenantMembership["school_id"]),
+        schoolName: String(tenantMembership["school_name"]),
+        subdomain: String(tenantMembership["subdomain"]),
+        status: tenantMembership["school_status"],
+        primaryColor: String(tenantMembership["primary_color"]),
+        crestUrl: tenantMembership["crest_url"] ? String(tenantMembership["crest_url"]) : null,
       },
     });
   }
@@ -335,48 +356,51 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     try {
       const applicationId = approveMatch[1];
-      const rows = await sql`
-        with pending_application as materialized (
-          select id, school_name, requested_subdomain, contact_name, contact_email, contact_phone, primary_color, crest_url
-          from school_onboarding_applications
-          where id = ${applicationId}::uuid and status = 'pending'
-          for update
-        ),
-        inserted_school as (
-          insert into schools (name, subdomain, status, primary_color, crest_url, contact_email, contact_phone)
-          select school_name, requested_subdomain, 'trial', primary_color, crest_url, contact_email, contact_phone
-          from pending_application
-          returning id, name, subdomain, status, primary_color
-        ),
-        upserted_user as (
-          insert into users (email, display_name)
-          select contact_email, contact_name from pending_application
-          on conflict (email) do update set display_name = users.display_name
-          returning id
-        ),
-        inserted_membership as (
-          insert into memberships (user_id, school_id, role)
-          select upserted_user.id, inserted_school.id, 'school_admin'
-          from upserted_user cross join inserted_school
-          on conflict (user_id, school_id, role) do nothing
-          returning id
-        ),
-        approved_application as (
-          update school_onboarding_applications
-          set status = 'approved'
-          where id = ${applicationId}::uuid and status = 'pending'
-            and exists (select 1 from inserted_membership)
-          returning id
-        )
-        select inserted_school.id, inserted_school.name, inserted_school.subdomain,
-               inserted_school.status, inserted_school.primary_color, upserted_user.id as admin_user_id,
-               pending_application.contact_email as admin_email,
-               pending_application.contact_name
-        from inserted_school
-        cross join upserted_user
-        cross join approved_application
-        cross join pending_application
-      `;
+      const schoolId = crypto.randomUUID();
+      const rows = await withDatabaseContext(sql, { schoolId, platformAdmin: true }, (tx) =>
+        tx`
+          with pending_application as materialized (
+            select id, school_name, requested_subdomain, contact_name, contact_email, contact_phone, primary_color, crest_url
+            from school_onboarding_applications
+            where id = ${applicationId}::uuid and status = 'pending'
+            for update
+          ),
+          inserted_school as (
+            insert into schools (id, name, subdomain, status, primary_color, crest_url, contact_email, contact_phone)
+            select ${schoolId}::uuid, school_name, requested_subdomain, 'trial', primary_color, crest_url, contact_email, contact_phone
+            from pending_application
+            returning id, name, subdomain, status, primary_color
+          ),
+          upserted_user as (
+            insert into users (email, display_name)
+            select contact_email, contact_name from pending_application
+            on conflict (email) do update set display_name = users.display_name
+            returning id
+          ),
+          inserted_membership as (
+            insert into memberships (user_id, school_id, role)
+            select upserted_user.id, inserted_school.id, 'school_admin'
+            from upserted_user cross join inserted_school
+            on conflict (user_id, school_id, role) do nothing
+            returning id
+          ),
+          approved_application as (
+            update school_onboarding_applications
+            set status = 'approved'
+            where id = ${applicationId}::uuid and status = 'pending'
+              and exists (select 1 from inserted_membership)
+            returning id
+          )
+          select inserted_school.id, inserted_school.name, inserted_school.subdomain,
+                 inserted_school.status, inserted_school.primary_color, upserted_user.id as admin_user_id,
+                 pending_application.contact_email as admin_email,
+                 pending_application.contact_name
+          from inserted_school
+          cross join upserted_user
+          cross join approved_application
+          cross join pending_application
+        `,
+      );
       const school = rows[0];
       if (!school) return json({ error: "Application was not found or is no longer pending" }, 404);
       const subdomain = String(school["subdomain"]);

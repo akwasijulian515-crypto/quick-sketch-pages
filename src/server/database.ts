@@ -1,4 +1,9 @@
-import { neon } from "@neondatabase/serverless";
+import {
+  neon,
+  type NeonQueryFunction,
+  type NeonQueryFunctionInTransaction,
+  type NeonQueryInTransaction,
+} from "@neondatabase/serverless";
 
 export type RuntimeEnv = {
   DATABASE_URL?: string | undefined;
@@ -31,4 +36,24 @@ export function resolveRuntimeEnv(env: RuntimeEnv): RuntimeEnv {
 export function database(env: RuntimeEnv) {
   if (!env.DATABASE_URL) throw new Error("DATABASE_URL is not configured");
   return neon(env.DATABASE_URL);
+}
+
+export function withDatabaseContext(
+  sql: NeonQueryFunction<false, false>,
+  context: { schoolId?: string; userEmail?: string; platformAdmin?: boolean },
+  query: (tx: NeonQueryFunctionInTransaction<false, false>) => NeonQueryInTransaction,
+) {
+  return sql.transaction((tx) => [
+    tx`
+      select
+        set_config('app.school_id', ${context.schoolId ?? ""}, true),
+        set_config('app.user_email', ${context.userEmail ?? ""}, true),
+        set_config('app.platform_admin', ${context.platformAdmin ? "true" : "false"}, true)
+    `,
+    query(tx),
+  ]).then((results) => {
+    const rows = results[1];
+    if (!rows) throw new Error("Database context transaction returned no query result");
+    return rows;
+  });
 }

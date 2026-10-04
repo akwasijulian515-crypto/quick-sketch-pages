@@ -1,5 +1,6 @@
 -- Initial seed data for the Harrow Green platform.
 -- This is intentionally idempotent so it can be retried safely.
+select set_config('app.platform_admin', 'true', true);
 
 alter table schools
   add column if not exists primary_color text not null default '#1f5c3b' check (primary_color ~ '^#[0-9A-Fa-f]{6}$'),
