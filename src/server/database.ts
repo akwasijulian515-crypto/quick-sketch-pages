@@ -1,12 +1,12 @@
 import { neon } from "@neondatabase/serverless";
 
 export type RuntimeEnv = {
-  DATABASE_URL?: string;
-  PLATFORM_ADMIN_TOKEN?: string;
-  ROOT_DOMAIN?: string;
-  NEON_AUTH_URL?: string;
-  RESEND_API_KEY?: string;
-  RESEND_FROM_EMAIL?: string;
+  DATABASE_URL?: string | undefined;
+  PLATFORM_ADMIN_TOKEN?: string | undefined;
+  ROOT_DOMAIN?: string | undefined;
+  NEON_AUTH_URL?: string | undefined;
+  RESEND_API_KEY?: string | undefined;
+  RESEND_FROM_EMAIL?: string | undefined;
 };
 
 export function resolveRuntimeEnv(env: RuntimeEnv): RuntimeEnv {

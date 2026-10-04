@@ -1,6 +1,6 @@
 import { createAuthClient } from "@neondatabase/neon-js/auth";
 
-const authUrl = import.meta.env.VITE_NEON_AUTH_URL;
+const authUrl = import.meta.env["VITE_NEON_AUTH_URL"];
 
 export const neonAuthClient = authUrl ? createAuthClient(authUrl) : null;
 
