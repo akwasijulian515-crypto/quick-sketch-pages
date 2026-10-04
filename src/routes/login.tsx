@@ -135,7 +135,10 @@ function LoginPage() {
     setError("");
     setMessage("");
     try {
-      const result = await neonAuthClient.sendVerificationEmail({ email: email.trim().toLowerCase(), callbackURL: window.location.href });
+      const result = await neonAuthClient.emailOtp.sendVerificationOtp({
+        email: email.trim().toLowerCase(),
+        type: "email-verification",
+      });
       if (result.error) throw new Error(result.error.message);
       setMessage("A new verification code has been sent.");
     } catch (resendError) {

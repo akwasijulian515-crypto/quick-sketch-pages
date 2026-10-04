@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRight, BookOpenCheck, FileText, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
+import { ArrowUpRight, BookOpenCheck, CalendarDays, CheckCircle2, FileText, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { getNeonAccessToken, neonAuthClient } from "../auth/client";
@@ -62,10 +62,10 @@ function TeacherPortal() {
         </div>
       </div>
 
-      {tab === "grades" ? <TeacherMarkEntry /> : <section className="glass-panel mt-5 rounded-lg border border-dashed border-border p-10 text-center">
-        {tab === "register" ? <UserRoundCheck className="mx-auto size-7 text-primary/55" /> : <TicketCheck className="mx-auto size-7 text-primary/55" />}
-        <h2 className="mt-3 font-display text-lg font-bold">{tab === "register" ? "Attendance records are not connected" : "Daily payment records are not connected"}</h2>
-        <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">{tab === "register" ? "No attendance sessions or learner records are being shown here yet. Connect the attendance workflow before taking a register." : "Payment and coupon status is not available from this workspace yet. Check the Finance portal for supported payment workflows."}</p>
+      {tab === "grades" ? <TeacherMarkEntry /> : tab === "register" ? <AttendanceRegister /> : <section className="glass-panel mt-5 rounded-lg border border-dashed border-border p-10 text-center">
+        <TicketCheck className="mx-auto size-7 text-primary/55" />
+        <h2 className="mt-3 font-display text-lg font-bold">Daily payment records are not connected</h2>
+        <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">Payment and coupon status is not available from this workspace yet. Check the Finance portal for supported payment workflows.</p>
       </section>}
     </main>
   </div>;
@@ -122,6 +122,244 @@ async function teacherApi<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   return payload as T;
+}
+
+type AttendanceStatus = "present" | "late" | "absent" | "excused";
+type AttendanceClass = { id: string; name: string; academic_year_name: string; student_count: number };
+type AttendanceStudent = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+  status: AttendanceStatus | null;
+  note: string;
+};
+type AttendanceDay = {
+  attendance_date: string;
+  present_count: number;
+  late_count: number;
+  absent_count: number;
+  excused_count: number;
+  marked_count: number;
+};
+
+function localDateString(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function AttendanceRegister() {
+  const [classes, setClasses] = useState<AttendanceClass[]>([]);
+  const [classId, setClassId] = useState("");
+  const [date, setDate] = useState(() => localDateString(new Date()));
+  const [students, setStudents] = useState<AttendanceStudent[]>([]);
+  const [days, setDays] = useState<AttendanceDay[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const selectedClass = classes.find((item) => item.id === classId);
+  const month = date.slice(0, 7);
+  const [yearNumber, monthNumber] = month.split("-").map(Number);
+  const monthStart = new Date(yearNumber!, monthNumber! - 1, 1);
+  const calendarCells: (number | null)[] = [
+    ...Array.from({ length: monthStart.getDay() }, () => null),
+    ...Array.from({ length: new Date(yearNumber!, monthNumber!, 0).getDate() }, (_, index) => index + 1),
+  ];
+  const dayByDate = new Map(days.map((day) => [day.attendance_date, day]));
+  const totals = days.reduce((result, day) => ({
+    present: result.present + Number(day.present_count),
+    late: result.late + Number(day.late_count),
+    absent: result.absent + Number(day.absent_count),
+    excused: result.excused + Number(day.excused_count),
+    sessions: result.sessions + 1,
+  }), { present: 0, late: 0, absent: 0, excused: 0, sessions: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    void teacherApi<{ classes: AttendanceClass[] }>("/api/school/attendance")
+      .then((result) => {
+        if (cancelled) return;
+        setClasses(result.classes);
+        setClassId((current) => current || result.classes[0]?.id || "");
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load assigned classes");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!classId) {
+      setStudents([]);
+      setDays([]);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    void Promise.all([
+      teacherApi<{ session_id: string | null; students: AttendanceStudent[] }>(
+        `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
+      ),
+      teacherApi<{ days: AttendanceDay[] }>(
+        `/api/school/attendance?class_id=${encodeURIComponent(classId)}&month=${encodeURIComponent(month)}`,
+      ),
+    ])
+      .then(([register, monthly]) => {
+        if (cancelled) return;
+        setStudents(register.students);
+        setDays(monthly.days);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load attendance");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [classId, date, month]);
+
+  function setStudentStatus(studentId: string, status: AttendanceStatus) {
+    setStudents((current) => current.map((student) => student.id === studentId ? { ...student, status } : student));
+    setNotice("");
+  }
+
+  function setStudentNote(studentId: string, note: string) {
+    setStudents((current) => current.map((student) => student.id === studentId ? { ...student, note } : student));
+  }
+
+  async function saveRegister() {
+    if (!classId || students.length === 0 || students.some((student) => student.status === null)) {
+      setError("Mark an attendance status for every active learner before saving.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await teacherApi<{ saved_count: number }>("/api/school/attendance", {
+        method: "POST",
+        body: JSON.stringify({
+          class_id: classId,
+          date,
+          records: students.map((student) => ({
+            student_id: student.id,
+            status: student.status,
+            note: student.note,
+          })),
+        }),
+      });
+      setNotice(`Attendance saved for ${result.saved_count} learner${result.saved_count === 1 ? "" : "s"}.`);
+      const [register, monthly] = await Promise.all([
+        teacherApi<{ students: AttendanceStudent[] }>(
+          `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
+        ),
+        teacherApi<{ days: AttendanceDay[] }>(
+          `/api/school/attendance?class_id=${encodeURIComponent(classId)}&month=${encodeURIComponent(month)}`,
+        ),
+      ]);
+      setStudents(register.students);
+      setDays(monthly.days);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save attendance");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const statusOptions: { value: AttendanceStatus; label: string; selected: string }[] = [
+    { value: "present", label: "Present", selected: "bg-emerald-600 text-white" },
+    { value: "late", label: "Late", selected: "bg-amber-500 text-white" },
+    { value: "absent", label: "Absent", selected: "bg-rose-600 text-white" },
+    { value: "excused", label: "Excused", selected: "bg-sky-600 text-white" },
+  ];
+
+  return <div className="mt-5 space-y-4">
+    <section className="glass-panel rounded-lg p-4 sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">Class
+          <select value={classId} onChange={(event) => setClassId(event.target.value)} className="h-10 w-full min-w-64 rounded-md border border-input bg-background px-3 text-sm text-foreground">
+            <option value="">Select assigned class</option>
+            {classes.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.academic_year_name}</option>)}
+          </select>
+        </label>
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">Register date
+          <input type="date" value={date} onChange={(event) => { if (event.target.value) setDate(event.target.value); }} className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" />
+        </label>
+      </div>
+      {error && <p role="alert" className="mt-3 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+      {notice && <p role="status" className="mt-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
+    </section>
+
+    {!loading && classes.length === 0 ? (
+      <section className="glass-panel rounded-lg border border-dashed border-border p-10 text-center">
+        <UserRoundCheck className="mx-auto size-7 text-primary/55" />
+        <h2 className="mt-3 font-display text-lg font-bold">No class teacher assignments yet</h2>
+        <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">Ask your School Admin to assign you as class teacher before you take attendance.</p>
+      </section>
+    ) : !loading && classId && students.length === 0 ? (
+      <section className="glass-panel rounded-lg border border-dashed border-border p-10 text-center">
+        <h2 className="font-display text-lg font-bold">No active learners for this date</h2>
+        <p className="mt-1 text-sm text-muted-foreground">This class has no active enrollment records for the selected date.</p>
+      </section>
+    ) : (
+      <section className="glass-panel overflow-hidden rounded-lg">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
+          <div><h2 className="font-display text-lg font-bold">{selectedClass?.name ?? "Daily register"}</h2><p className="text-xs text-muted-foreground">{date} · {students.length} active learners</p></div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={loading || students.length === 0} onClick={() => setStudents((current) => current.map((student) => ({ ...student, status: "present" })))}><CheckCircle2 />Mark all present</Button>
+            <Button type="button" size="sm" disabled={saving || loading || students.length === 0 || students.some((student) => student.status === null)} onClick={() => void saveRegister()}>{saving ? "Saving..." : "Save register"}</Button>
+          </div>
+        </div>
+        {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading attendance register...</p> : (
+          <>
+            <div className="divide-y divide-border/70 md:hidden">
+              {students.map((student) => <article key={student.id} className="p-4">
+                <div className="flex items-start justify-between gap-2"><div><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></div><span className="text-xs text-muted-foreground">{student.status ? statusOptions.find((item) => item.value === student.status)?.label : "Not marked"}</span></div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {statusOptions.map((option) => <button key={option.value} type="button" aria-pressed={student.status === option.value} onClick={() => setStudentStatus(student.id, option.value)} className={`min-h-11 rounded-md px-3 text-sm font-medium ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground"}`}>{option.label}</button>)}
+                </div>
+                <input aria-label={`Note for ${student.first_name} ${student.last_name}`} value={student.note} maxLength={500} onChange={(event) => setStudentNote(student.id, event.target.value)} placeholder="Optional note" className="mt-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm" />
+              </article>)}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[800px] text-left text-sm">
+                <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Learner", "Attendance", "Note"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead>
+                <tbody className="divide-y divide-border/70">{students.map((student) => <tr key={student.id}>
+                  <td className="px-5 py-3"><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></td>
+                  <td className="px-5 py-3"><div className="flex flex-wrap gap-1.5">{statusOptions.map((option) => <button key={option.value} type="button" aria-pressed={student.status === option.value} onClick={() => setStudentStatus(student.id, option.value)} className={`min-h-9 rounded-full px-3 text-xs font-medium ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground hover:bg-muted-foreground/15"}`}>{option.label}</button>)}</div></td>
+                  <td className="px-5 py-3"><input aria-label={`Note for ${student.first_name} ${student.last_name}`} value={student.note} maxLength={500} onChange={(event) => setStudentNote(student.id, event.target.value)} placeholder="Optional note" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
+    )}
+
+    <section className="glass-panel rounded-lg p-4 sm:p-5">
+      <div className="flex items-center gap-2"><CalendarDays className="size-5 text-primary" /><div><h2 className="font-display text-lg font-bold">Monthly attendance</h2><p className="text-xs text-muted-foreground">{monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" })} · {totals.sessions} register day(s)</p></div></div>
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Loading monthly summary...</p> : !classId ? <p className="py-6 text-center text-sm text-muted-foreground">Select a class to view its monthly attendance.</p> : (
+        <>
+          <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+            {[["Present", totals.present], ["Late", totals.late], ["Absent", totals.absent], ["Excused", totals.excused]].map(([label, count]) => <div key={label} className="rounded-md bg-muted/60 px-2 py-2"><p className="text-[11px] text-muted-foreground">{label}</p><p className="font-display text-lg font-bold">{count}</p></div>)}
+          </div>
+          <div className="mt-4 grid grid-cols-7 gap-1 text-center">
+            {weekdays.map((weekday) => <p key={weekday} className="py-1 text-[11px] font-medium text-muted-foreground">{weekday}</p>)}
+            {calendarCells.map((day, index) => {
+              if (day === null) return <span key={`blank-${index}`} />;
+              const calendarDate = `${month}-${String(day).padStart(2, "0")}`;
+              const summary = dayByDate.get(calendarDate);
+              return <button key={calendarDate} type="button" onClick={() => setDate(calendarDate)} aria-label={`${calendarDate}${summary ? `, ${summary.marked_count} marked` : ", no register"}`} className={`min-h-12 rounded-md border px-1 py-1 text-xs ${date === calendarDate ? "border-primary bg-primary text-primary-foreground" : summary ? "border-emerald-600/25 bg-emerald-600/5 text-foreground hover:bg-emerald-600/10" : "border-transparent bg-muted/30 text-muted-foreground hover:bg-muted"}`}>
+                <span className="block font-medium">{day}</span>
+                {summary && <span className="block truncate text-[9px]">{summary.present_count}P · {summary.absent_count}A</span>}
+              </button>;
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  </div>;
 }
 
 function TeacherMarkEntry() {
