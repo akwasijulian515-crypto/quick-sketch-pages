@@ -146,8 +146,29 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
 
     async function verifySchoolAccess() {
       try {
+        const requestedTenant = new URLSearchParams(window.location.search).get("tenant");
+        const activeTenant = sessionStorage.getItem("hg-school");
+        const cachedRole = sessionStorage.getItem("hg-role");
+        const cachedTenantMatches = !requestedTenant || requestedTenant === activeTenant;
+        const cachedRoleAllowed =
+          schoolAdmin ? cachedRole === "school_admin" :
+          schoolAdminOrTeacher ? cachedRole === "school_admin" || cachedRole === "teacher" :
+          parentPortal ? cachedRole === "parent" :
+          studentPortal ? cachedRole === "student" :
+          finance ? cachedRole === "finance" :
+          cachedRole === "teacher" || cachedRole === "school_admin";
+
+        if (cachedTenantMatches && cachedRoleAllowed) {
+          if (!cancelled) {
+            setAdminView(schoolAdmin || (schoolAdminOrTeacher && cachedRole === "school_admin"));
+            setAccessError("");
+            setAuthorized(true);
+          }
+          return;
+        }
+
         const token = await getNeonAccessToken();
-        const previewTenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+        const previewTenant = requestedTenant ?? activeTenant;
         const contextUrl = previewTenant ? `/api/auth/context?tenant=${encodeURIComponent(previewTenant)}` : "/api/auth/context";
         const response = await fetch(contextUrl, { headers: { authorization: `Bearer ${token}` } });
         const payload = await response.json().catch(() => null) as { error?: string; membership?: { role?: string } } | null;
