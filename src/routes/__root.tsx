@@ -40,6 +40,14 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
   useEffect(() => {
+    if (/Failed to fetch dynamically imported module|Importing a module script failed/i.test(error instanceof Error ? error.message : String(error ?? ""))) {
+      const last = Number(sessionStorage.getItem("chunk-reload-at") ?? 0);
+      if (Date.now() - last > 10_000) {
+        sessionStorage.setItem("chunk-reload-at", String(Date.now()));
+        window.location.reload();
+        return;
+      }
+    }
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
   }, [error]);
 
@@ -120,6 +128,29 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  // After a new version is published, an open tab may still request old page files
+  // that no longer exist. Reload once to pick up the latest version.
+  useEffect(() => {
+    const key = "chunk-reload-at";
+    const reloadOnce = (event?: Event) => {
+      const last = Number(sessionStorage.getItem(key) ?? 0);
+      if (Date.now() - last < 10_000) return;
+      event?.preventDefault();
+      sessionStorage.setItem(key, String(Date.now()));
+      window.location.reload();
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const message = String((event.reason as Error | undefined)?.message ?? event.reason ?? "");
+      if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(message)) reloadOnce();
+    };
+    window.addEventListener("vite:preloadError", reloadOnce);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("vite:preloadError", reloadOnce);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>
