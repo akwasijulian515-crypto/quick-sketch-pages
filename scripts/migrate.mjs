@@ -21,6 +21,20 @@ try {
   await client.query("create table if not exists schema_migrations (name text primary key, applied_at timestamptz not null default now())");
   const { rows } = await client.query("select name from schema_migrations");
   const done = new Set(rows.map((r) => r.name));
+  const legacySchemaMigrations = [
+    "001_multi_tenant.sql",
+    "002_school_operations.sql",
+    "003_teaching_assignments.sql",
+    "004_gateway_payment_integrity.sql",
+    "005_reconciliation_exceptions.sql",
+    "006_school_onboarding.sql",
+    "007_daily_fee_coupons.sql",
+  ];
+  if (!done.has("0001_init.sql") && legacySchemaMigrations.every((name) => done.has(name))) {
+    await client.query("insert into schema_migrations(name) values ($1) on conflict do nothing", ["0001_init.sql"]);
+    done.add("0001_init.sql");
+    console.log("Recognized the existing legacy schema as 0001_init.sql.");
+  }
   const migrationFiles = fs
     .readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
