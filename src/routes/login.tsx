@@ -3,7 +3,7 @@ import { Building2 } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { useTenantBranding } from "../components/tenant-branding-provider";
-import { getNeonAccessToken, neonAuthClient } from "../auth/client";
+import { ensureNeonAuthClient, getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/login")({
@@ -40,6 +40,7 @@ function LoginPage() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    const neonAuthClient = await ensureNeonAuthClient();
     if (!neonAuthClient) {
       setError("Neon Auth is not configured for this environment");
       return;
@@ -108,6 +109,7 @@ function LoginPage() {
   }
 
   async function requestPasswordReset() {
+    const neonAuthClient = await ensureNeonAuthClient();
     if (!neonAuthClient || !email.trim()) {
       setError("Enter your approved account email first");
       return;
@@ -130,6 +132,7 @@ function LoginPage() {
   }
 
   async function resendVerificationCode() {
+    const neonAuthClient = await ensureNeonAuthClient();
     if (!neonAuthClient || !email.trim()) return;
     setBusy(true);
     setError("");
