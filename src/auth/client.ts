@@ -1,6 +1,7 @@
 import { createAuthClient } from "@neondatabase/neon-js/auth";
 
-type NeonAuthClient = ReturnType<typeof createAuthClient>;
+const createDefaultClient = (url: string) => createAuthClient(url);
+type NeonAuthClient = ReturnType<typeof createDefaultClient>;
 
 const buildTimeUrl = import.meta.env["VITE_NEON_AUTH_URL"] as string | undefined;
 
