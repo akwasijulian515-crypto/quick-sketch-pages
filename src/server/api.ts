@@ -210,6 +210,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   env = resolveRuntimeEnv(env);
   const url = new URL(request.url);
   if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
+  if (url.pathname === "/api/auth/config" && request.method === "GET") return json({ authUrl: env.NEON_AUTH_URL ?? null });
   if (url.pathname === "/api/platform/session") {
     if (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL) {
       // Not configured yet: treat as signed out so the page shows its sign-in form instead of crashing.
