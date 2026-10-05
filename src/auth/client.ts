@@ -1,12 +1,12 @@
 import { createAuthClient } from "@neondatabase/neon-js/auth";
 
-const createDefaultClient = (url: string) => createAuthClient(url);
+const createDefaultClient = (url: string) => createAuthClient(url) as Extract<ReturnType<typeof createAuthClient>, { signIn: unknown }>;
 type NeonAuthClient = ReturnType<typeof createDefaultClient>;
 
 const buildTimeUrl = import.meta.env["VITE_NEON_AUTH_URL"] as string | undefined;
 
 // Live binding: other modules see the client once it has been initialised.
-export let neonAuthClient: NeonAuthClient | null = buildTimeUrl ? createAuthClient(buildTimeUrl) : null;
+export let neonAuthClient: NeonAuthClient | null = buildTimeUrl ? createDefaultClient(buildTimeUrl) : null;
 
 let initPromise: Promise<NeonAuthClient | null> | null = null;
 
@@ -18,7 +18,7 @@ export function ensureNeonAuthClient(): Promise<NeonAuthClient | null> {
     initPromise = fetch("/api/auth/config")
       .then((response) => (response.ok ? response.json() : null))
       .then((payload: { authUrl?: string | null } | null) => {
-        if (payload?.authUrl) neonAuthClient = createAuthClient(payload.authUrl);
+        if (payload?.authUrl) neonAuthClient = createDefaultClient(payload.authUrl);
         else initPromise = null;
         return neonAuthClient;
       })
