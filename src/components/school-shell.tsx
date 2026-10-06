@@ -115,12 +115,13 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
         </div>
         <button
           type="button"
-          onClick={() => {
+          onClick={async () => {
             sessionStorage.removeItem("hg-role");
             sessionStorage.removeItem("hg-school");
-            void neonAuthClient?.signOut();
+            if (platform) await fetch("/api/platform/session", { method: "DELETE" });
+            await neonAuthClient?.signOut().catch(() => undefined);
             onNavigate?.();
-            navigate({ to: "/login" });
+            navigate({ to: platform ? "/" : "/login" });
           }}
           className="mt-3 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-primary-foreground/60 transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground"
         >
@@ -171,11 +172,12 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
+              onClick={async () => {
                 sessionStorage.removeItem("hg-role");
                 sessionStorage.removeItem("hg-school");
-                void neonAuthClient?.signOut();
-                navigate({ to: "/login" });
+                if (platform) await fetch("/api/platform/session", { method: "DELETE" });
+                await neonAuthClient?.signOut().catch(() => undefined);
+                navigate({ to: platform ? "/" : "/login" });
               }}
             >
               <LogOut />Sign out

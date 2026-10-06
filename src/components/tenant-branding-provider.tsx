@@ -8,8 +8,8 @@ export type TenantBranding = {
 };
 
 const defaultBranding: TenantBranding = {
-  schoolName: "Harrow Green Academy",
-  subdomain: "harrowgreen",
+  schoolName: "Klasora",
+  subdomain: "school",
   primaryColor: "#1f5c3b",
   crestUrl: null,
 };
