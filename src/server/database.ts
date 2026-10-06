@@ -10,12 +10,14 @@ export type RuntimeEnv = {
   PLATFORM_ADMIN_TOKEN?: string | undefined;
   ROOT_DOMAIN?: string | undefined;
   NEON_AUTH_URL?: string | undefined;
+  NEON_AUTH_BASE_URL?: string | undefined;
+  NEON_AUTH_JWKS_URL?: string | undefined;
   RESEND_API_KEY?: string | undefined;
   RESEND_FROM_EMAIL?: string | undefined;
 };
 
 export function resolveRuntimeEnv(env: RuntimeEnv): RuntimeEnv {
-  if (typeof process !== "undefined" && typeof process.loadEnvFile === "function" && !process.env["NEON_AUTH_URL"] && !process.env["VITE_NEON_AUTH_URL"]) {
+  if (typeof process !== "undefined" && typeof process.loadEnvFile === "function") {
     try {
       process.loadEnvFile(".env.local");
     } catch {
@@ -25,9 +27,11 @@ export function resolveRuntimeEnv(env: RuntimeEnv): RuntimeEnv {
   const nodeEnv = typeof process === "undefined" ? undefined : process.env;
   return {
     DATABASE_URL: env.DATABASE_URL ?? nodeEnv?.["DATABASE_URL"],
-    PLATFORM_ADMIN_TOKEN: env.PLATFORM_ADMIN_TOKEN ?? nodeEnv?.["PLATFORM_ADMIN_TOKEN"],
+    PLATFORM_ADMIN_TOKEN: env.PLATFORM_ADMIN_TOKEN || nodeEnv?.["PLATFORM_ADMIN_TOKEN"],
     ROOT_DOMAIN: env.ROOT_DOMAIN ?? nodeEnv?.["ROOT_DOMAIN"],
     NEON_AUTH_URL: env.NEON_AUTH_URL ?? nodeEnv?.["NEON_AUTH_URL"] ?? nodeEnv?.["VITE_NEON_AUTH_URL"],
+    NEON_AUTH_BASE_URL: env.NEON_AUTH_BASE_URL ?? nodeEnv?.["NEON_AUTH_BASE_URL"] ?? env.NEON_AUTH_URL ?? nodeEnv?.["NEON_AUTH_URL"] ?? nodeEnv?.["VITE_NEON_AUTH_URL"],
+    NEON_AUTH_JWKS_URL: env.NEON_AUTH_JWKS_URL ?? nodeEnv?.["NEON_AUTH_JWKS_URL"],
     RESEND_API_KEY: env.RESEND_API_KEY ?? nodeEnv?.["RESEND_API_KEY"],
     RESEND_FROM_EMAIL: env.RESEND_FROM_EMAIL ?? nodeEnv?.["RESEND_FROM_EMAIL"],
   };

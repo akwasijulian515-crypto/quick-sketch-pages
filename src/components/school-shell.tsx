@@ -19,7 +19,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import headTeacher from "@/assets/head-teacher.jpg";
-import { getNeonAccessToken, neonAuthClient } from "../auth/client";
+import { neonAuthClient } from "../auth/client";
 import { useTenantBranding } from "./tenant-branding-provider";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -133,75 +133,14 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
 
 export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, schoolAdminOrTeacher = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; schoolAdminOrTeacher?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [authorized, setAuthorized] = useState(false);
-  const [accessError, setAccessError] = useState("");
-  const [retryAccess, setRetryAccess] = useState(0);
   const [adminView, setAdminView] = useState(schoolAdmin);
   const navigate = useNavigate();
   const { schoolName, crestUrl } = useTenantBranding();
 
   useEffect(() => {
-    if (platform) return;
-    let cancelled = false;
-
-    async function verifySchoolAccess() {
-      try {
-        const requestedTenant = new URLSearchParams(window.location.search).get("tenant");
-        const activeTenant = sessionStorage.getItem("hg-school");
-        const cachedRole = sessionStorage.getItem("hg-role");
-        const cachedTenantMatches = !requestedTenant || requestedTenant === activeTenant;
-        const cachedRoleAllowed =
-          schoolAdmin ? cachedRole === "school_admin" :
-          schoolAdminOrTeacher ? cachedRole === "school_admin" || cachedRole === "teacher" :
-          parentPortal ? cachedRole === "parent" :
-          studentPortal ? cachedRole === "student" :
-          finance ? cachedRole === "finance" :
-          cachedRole === "teacher" || cachedRole === "school_admin";
-
-        if (cachedTenantMatches && cachedRoleAllowed) {
-          if (!cancelled) {
-            setAdminView(schoolAdmin || (schoolAdminOrTeacher && cachedRole === "school_admin"));
-            setAccessError("");
-            setAuthorized(true);
-          }
-          return;
-        }
-
-        const token = await getNeonAccessToken();
-        const previewTenant = requestedTenant ?? activeTenant;
-        const contextUrl = previewTenant ? `/api/auth/context?tenant=${encodeURIComponent(previewTenant)}` : "/api/auth/context";
-        const response = await fetch(contextUrl, { headers: { authorization: `Bearer ${token}` } });
-        const payload = await response.json().catch(() => null) as { error?: string; membership?: { role?: string } } | null;
-        const role = payload?.membership?.role;
-        const allowed = response.ok && (
-          schoolAdmin ? role === "school_admin" :
-          schoolAdminOrTeacher ? role === "school_admin" || role === "teacher" :
-          parentPortal ? role === "parent" :
-          studentPortal ? role === "student" :
-          finance ? role === "finance" :
-          role === "teacher" || role === "school_admin"
-        );
-        if (!allowed) throw new Error(payload?.error ?? "This account does not have access to this page");
-        if (!cancelled) {
-          setAdminView(schoolAdmin || (schoolAdminOrTeacher && role === "school_admin"));
-          setAccessError("");
-          setAuthorized(true);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setAccessError(error instanceof Error ? error.message : "Could not verify school access");
-          setAuthorized(false);
-        }
-      }
-    }
-
-    void verifySchoolAccess();
-    return () => {
-      cancelled = true;
-    };
-  }, [platform, schoolAdmin, schoolAdminOrTeacher, parentPortal, studentPortal, finance, retryAccess]);
-
-  if (!platform && !authorized) return <div className="grid min-h-screen place-items-center bg-background p-4 text-center"><div className="max-w-md"><p className="text-sm font-medium">{accessError ? "School access could not be verified" : "Verifying school access..."}</p>{accessError && <><p role="alert" className="mt-2 text-sm text-muted-foreground">{accessError}</p><div className="mt-4 flex justify-center gap-2"><Button variant="outline" onClick={() => setRetryAccess((current) => current + 1)}>Try again</Button><Button onClick={() => navigate({ to: "/login" })}>Sign in</Button></div></>}</div></div>;
+    if (!schoolAdminOrTeacher) return;
+    setAdminView(sessionStorage.getItem("hg-role") === "school_admin");
+  }, [schoolAdminOrTeacher]);
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">

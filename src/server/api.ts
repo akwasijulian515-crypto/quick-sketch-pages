@@ -23,13 +23,12 @@ async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
   const token = platformTokenFromRequest(request);
   if (!token) return false;
   if (env.PLATFORM_ADMIN_TOKEN && token === env.PLATFORM_ADMIN_TOKEN) return true;
-  if (!env.DATABASE_URL || !env.NEON_AUTH_URL) return false;
+  if (!env.DATABASE_URL || !hasAuthConfig(env)) return false;
 
   try {
-    const { payload } = await jwtVerify(token, authJwks(env.NEON_AUTH_URL));
-    const userId = typeof payload.sub === "string" ? payload.sub : "";
-    const email = typeof payload["email"] === "string" ? payload["email"].trim().toLowerCase() : "";
-    if (!userId || !email) return false;
+    const identity = await authenticateNeonToken(token, env);
+    if (!identity) return false;
+    const { userId, email } = identity;
 
     const sql = database(env);
     const users = await sql`select email, "emailVerified" as email_verified from neon_auth.user where id = ${userId} limit 1`;
@@ -43,7 +42,8 @@ async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
       `,
     );
     return memberships.length > 0;
-  } catch {
+  } catch (error) {
+    logTokenVerificationFailure(error, token);
     return false;
   }
 }
@@ -60,12 +60,63 @@ const maxCrestUrlLength = 700_000;
 let cachedAuthJwksUrl = "";
 let cachedAuthJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
-function authJwks(authUrl: string) {
-  const normalizedUrl = authUrl.replace(/\/+$/, "");
+function authBaseUrl(env: RuntimeEnv) {
+  const baseUrl = env.NEON_AUTH_BASE_URL ?? env.NEON_AUTH_URL;
+  if (!baseUrl) throw new Error("Neon Auth base URL is not configured");
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function hasAuthConfig(env: RuntimeEnv) {
+  return Boolean(env.NEON_AUTH_BASE_URL || env.NEON_AUTH_URL);
+}
+
+function authJwks(env: RuntimeEnv) {
+  const normalizedUrl = env.NEON_AUTH_JWKS_URL ?? `${authBaseUrl(env)}/.well-known/jwks.json`;
   if (cachedAuthJwks && cachedAuthJwksUrl === normalizedUrl) return cachedAuthJwks;
   cachedAuthJwksUrl = normalizedUrl;
-  cachedAuthJwks = createRemoteJWKSet(new URL(`${normalizedUrl}/.well-known/jwks.json`));
+  cachedAuthJwks = createRemoteJWKSet(new URL(normalizedUrl));
   return cachedAuthJwks;
+}
+
+async function verifyNeonToken(token: string, env: RuntimeEnv) {
+  const issuer = new URL(authBaseUrl(env)).origin;
+  return jwtVerify(token, authJwks(env), { issuer, audience: issuer });
+}
+
+async function authenticateNeonToken(token: string, env: RuntimeEnv) {
+  try {
+    const verified = await verifyNeonToken(token, env);
+    const userId = typeof verified.payload.sub === "string" ? verified.payload.sub : "";
+    const email = typeof verified.payload["email"] === "string" ? verified.payload["email"].trim().toLowerCase() : "";
+    if (userId && email) return { userId, email };
+  } catch (jwtError) {
+    if (!env.DATABASE_URL) throw jwtError;
+    const sql = database(env);
+    const sessions = await sql`
+      select u.id as user_id, lower(u.email) as email
+      from neon_auth.session s
+      join neon_auth.user u on u.id = s."userId"
+      where s.token = ${token}
+        and s."expiresAt" > now()
+      limit 1
+    `;
+    const session = sessions[0];
+    if (session && typeof session["user_id"] === "string" && typeof session["email"] === "string") {
+      return { userId: session["user_id"], email: session["email"] };
+    }
+    logTokenVerificationFailure(jwtError, token);
+    return null;
+  }
+  return null;
+}
+
+function logTokenVerificationFailure(error: unknown, token: string) {
+  const segments = token.split(".");
+  console.error("Neon Auth token verification failed", {
+    reason: error instanceof Error ? error.message : "Unknown verification error",
+    segmentCount: segments.length,
+    segmentLengths: segments.map((segment) => segment.length),
+  });
 }
 
 function validCrestUrl(value: unknown): value is string | null {
@@ -136,18 +187,18 @@ async function requireSchoolContext(
   env: RuntimeEnv,
   allowedRoles: readonly string[],
 ): Promise<SchoolAdminContext | Response> {
-  if (!env.DATABASE_URL || !env.NEON_AUTH_URL) return json({ error: "Neon Auth is not configured" }, 503);
+  if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (!bearer) return json({ error: "Authentication is required" }, 401);
 
   let userId: string;
   let email: string;
   try {
-    const verified = await jwtVerify(bearer, authJwks(env.NEON_AUTH_URL));
-    userId = typeof verified.payload.sub === "string" ? verified.payload.sub : "";
-    email = typeof verified.payload["email"] === "string" ? verified.payload["email"].trim().toLowerCase() : "";
-    if (!userId || !email) return json({ error: "The sign-in token is missing user identity" }, 401);
-  } catch {
+    const identity = await authenticateNeonToken(bearer, env);
+    if (!identity) return json({ error: "Your sign-in session is invalid or expired. Please sign in again." }, 401);
+    ({ userId, email } = identity);
+  } catch (error) {
+    logTokenVerificationFailure(error, bearer);
     return json({ error: "The sign-in token is invalid or expired" }, 401);
   }
 
@@ -210,9 +261,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   env = resolveRuntimeEnv(env);
   const url = new URL(request.url);
   if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
-  if (url.pathname === "/api/auth/config" && request.method === "GET") return json({ authUrl: env.NEON_AUTH_URL ?? null });
+  if (url.pathname === "/api/auth/config" && request.method === "GET") {
+    return json({ authUrl: env.NEON_AUTH_URL ?? null, rootDomain: env.ROOT_DOMAIN ?? null });
+  }
   if (url.pathname === "/api/platform/session") {
-    if (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL) {
+    if (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env)) {
       // Not configured yet: treat as signed out so the page shows its sign-in form instead of crashing.
       if (request.method === "GET" || request.method === "DELETE") return json({ authenticated: false, error: "Platform sign-in is not set up yet" }, 401);
       return json({ error: "Platform sign-in is not set up yet. Add the PLATFORM_ADMIN_TOKEN secret." }, 503);
@@ -1680,18 +1733,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
 
   if (url.pathname === "/api/auth/context") {
-    if (!env.DATABASE_URL || !env.NEON_AUTH_URL) return json({ error: "Neon Auth is not configured" }, 503);
+    if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
     const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
     if (!bearer) return json({ error: "Authentication is required" }, 401);
 
     let authUserId: string;
     let tokenEmail: string;
     try {
-      const verified = await jwtVerify(bearer, authJwks(env.NEON_AUTH_URL));
-      authUserId = typeof verified.payload.sub === "string" ? verified.payload.sub : "";
-      tokenEmail = typeof verified.payload["email"] === "string" ? verified.payload["email"].trim().toLowerCase() : "";
-      if (!authUserId || !tokenEmail) return json({ error: "The sign-in token is missing user identity" }, 401);
-    } catch {
+      const identity = await authenticateNeonToken(bearer, env);
+      if (!identity) return json({ error: "Your sign-in session is invalid or expired. Please sign in again." }, 401);
+      ({ userId: authUserId, email: tokenEmail } = identity);
+    } catch (error) {
+      logTokenVerificationFailure(error, bearer);
       return json({ error: "The sign-in token is invalid or expired" }, 401);
     }
 
@@ -1802,7 +1855,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
 
   if (url.pathname === "/api/platform/applications" || url.pathname.startsWith("/api/platform/applications/")) {
-    if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL)) return json({ error: "Platform API is not configured" }, 503);
+    if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env))) return json({ error: "Platform API is not configured" }, 503);
     if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
 
     const sql = database(env);
@@ -1914,7 +1967,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
   const schoolStatusMatch = url.pathname.match(/^\/api\/platform\/schools\/([0-9a-f-]+)\/status$/i);
   if (url.pathname !== "/api/platform/schools" && !schoolStatusMatch) return json({ error: "Not found" }, 404);
-  if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !env.NEON_AUTH_URL)) return json({ error: "Platform API is not configured" }, 503);
+  if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env))) return json({ error: "Platform API is not configured" }, 503);
   if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
 
   const sql = database(env);
