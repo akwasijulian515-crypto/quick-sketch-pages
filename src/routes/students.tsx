@@ -1,34 +1,521 @@
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Activity, CircleAlert, CreditCard, GraduationCap, HeartPulse, Plus, Search, UserRoundCheck, UsersRound, X } from "lucide-react";
-import { type FormEvent, type ReactNode, useMemo, useState } from "react";
-
-import { Button } from "@/components/ui/button";
+import { getNeonAccessToken } from "@/auth/client";
 import { SchoolShell } from "@/components/school-shell";
-import { cn } from "@/lib/utils";
+import {
+  Users, UserPlus, Search, Filter, MoreHorizontal, X,
+  GraduationCap, CalendarDays, Phone, MapPin, Heart, FileText, ChevronDown,
+} from "lucide-react";
 
-export const Route = createFileRoute("/students")({ head: () => ({ meta: [{ title: "Students — Klasora" }, { name: "description", content: "Admit students, manage profiles, and monitor attendance." }] }), component: StudentsPage });
+type StudentStatus = "Active" | "Inactive";
 
-type StudentStatus = "Active" | "Transferred" | "Graduated" | "Withdrawn";
-type Student = { id: string; name: string; admission: string; className: string; gender: string; dob: string; payment: string; attendance: string; status: StudentStatus; guardian: string; phone: string; address: string; emergency: string; medical: string };
-const initialStudents: Student[] = [];
-const attendance: readonly (readonly string[])[] = [];
+type Student = {
+  id: string;
+  name: string;
+  studentId: string;
+  className: string;
+  status: StudentStatus;
+  dob: string;
+  gender: string;
+  guardian: string;
+  phone: string;
+  address: string;
+  emergencyContact: string;
+  medicalNote: string;
+  guardianRelationship: string;
+};
 
-function StudentsPage() {
-  const [view, setView] = useState<"directory" | "attendance">("directory"); const [query, setQuery] = useState(""); const [students, setStudents] = useState(initialStudents); const [admitting, setAdmitting] = useState(false); const [selected, setSelected] = useState<Student | null>(null);
-  const visibleStudents = useMemo(() => students.filter((student) => `${student.name} ${student.admission}`.toLowerCase().includes(query.toLowerCase())), [students, query]);
-  function admit(data: Omit<Student, "id" | "admission" | "payment" | "attendance" | "status">) { const classCode = data.className.replace("Form ", "").replace(" ", ""); const admission = `HGA-${classCode}-${String(students.length + 1).padStart(3, "0")}`; setStudents((current) => [{ ...data, id: crypto.randomUUID(), admission, payment: "No payment recorded", attendance: "—", status: "Active" }, ...current]); setAdmitting(false); }
-  return <SchoolShell title="Students" schoolAdmin><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><GraduationCap className="size-5" /></div><h1 className="font-display text-3xl font-bold">Students</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Admit learners, keep their records complete, and monitor school-wide attendance.</p></div>{view === "directory" && <Button onClick={() => setAdmitting(true)}><Plus />Admit student</Button>}</div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label={view === "directory" ? "Enrolled" : "Present today"} value="—" note="Live school data not connected" /><Metric label={view === "directory" ? "New this term" : "Absent today"} value="—" note="Live school data not connected" /><Metric label={view === "directory" ? "Records complete" : "Registers complete"} value="—" note="Live school data not connected" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={view === "directory"} onClick={() => setView("directory")}>Student directory</Tab><Tab active={view === "attendance"} onClick={() => setView("attendance")}>Attendance overview</Tab></div>{view === "directory" ? <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or admission number" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div> : <div className="flex items-center gap-2 text-xs text-secondary-foreground"><CircleAlert className="size-4 text-amber-600" />View-only: teachers mark registers.</div>}</div><div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{(view === "directory" ? ["Student", "Class", "Payment", "Attendance", "Status", ""] : ["Class", "Present", "Absent", "Register status"]).map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{view === "directory" ? visibleStudents.map((student) => <tr key={student.id} className="hover:bg-muted/30"><td className="px-5 py-3"><p className="font-medium">{student.name}</p><p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{student.admission}</p></td><td className="px-5 py-3">{student.className}</td><td className="px-5 py-3"><span className={cn("text-xs font-medium", student.payment === "Paid" ? "text-emerald-700" : "text-amber-700")}>{student.payment}</span></td><td className="px-5 py-3">{student.attendance}</td><td className="px-5 py-3"><Status value={student.status} /></td><td className="px-5 py-3"><Button size="sm" variant="outline" onClick={() => setSelected(student)}>View profile</Button></td></tr>) : attendance.map(([className, present, absent, status]) => <tr key={className}><td className="px-5 py-4 font-medium">{className}</td><td className="px-5 py-4">{present}</td><td className="px-5 py-4">{absent}</td><td className="px-5 py-4"><span className="inline-flex items-center gap-1.5 text-xs text-secondary-foreground"><UserRoundCheck className="size-3.5 text-primary" />{status}</span></td></tr>)}</tbody></table>{(view === "directory" ? visibleStudents.length === 0 : attendance.length === 0) && <p className="border-t border-border px-5 py-10 text-center text-sm text-muted-foreground">Live student records are not connected yet.</p>}</div></section></div>{admitting && <AdmissionForm onClose={() => setAdmitting(false)} onSubmit={admit} />}{selected && <StudentProfile student={selected} onClose={() => setSelected(null)} />}</SchoolShell>;
+type StudentRecord = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  student_id_number: string;
+  status: string;
+  class_name: string | null;
+  date_of_birth?: string | null;
+  gender?: string | null;
+  address?: string | null;
+  emergency_contact?: string | null;
+  medical_notes?: string | null;
+  guardian_name?: string | null;
+  guardian_phone?: string | null;
+  guardian_relationship?: string | null;
+};
+
+type ClassOption = {
+  id: string;
+  name: string;
+  academic_year_name?: string | null;
+};
+
+type AdmissionInput = {
+  full_name: string;
+  class_id: string;
+  date_of_birth: string;
+  gender: string;
+  address: string;
+  emergency_contact: string;
+  medical_notes: string;
+  guardian: { full_name: string; phone: string };
+};
+
+async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getNeonAccessToken();
+  const url = new URL(path, window.location.origin);
+  const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
+  const headers = new Headers(init?.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  if (init?.body) headers.set("Content-Type", "application/json");
+  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "error" in payload
+      && typeof payload.error === "string"
+      ? payload.error
+      : `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return payload as T;
 }
 
-function AdmissionForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: (data: Omit<Student, "id" | "admission" | "payment" | "attendance" | "status">) => void }) { const [name, setName] = useState(""); const [className, setClassName] = useState(""); const [gender, setGender] = useState("Female"); const [dob, setDob] = useState(""); const [guardian, setGuardian] = useState(""); const [phone, setPhone] = useState(""); const [address, setAddress] = useState(""); const [emergency, setEmergency] = useState(""); const [medical, setMedical] = useState(""); function submit(event: FormEvent) { event.preventDefault(); if (!name.trim() || !className.trim() || !dob || !guardian.trim() || !phone.trim()) return; onSubmit({ name: name.trim(), className: className.trim(), gender, dob, guardian: guardian.trim(), phone: phone.trim(), address: address.trim() || "Not recorded", emergency: emergency.trim() || phone.trim(), medical: medical.trim() || "No known condition" }); } return <Modal title="Admit student" subtitle="Create the learner record and initial guardian details." onClose={onClose}><form onSubmit={submit}><div className="grid gap-4 sm:grid-cols-2"><Field label="Full name"><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Student's full name" /></Field><Field label="Class"><input required value={className} onChange={(event) => setClassName(event.target.value)} placeholder="Class name" /></Field><Field label="Date of birth"><input required type="date" value={dob} onChange={(event) => setDob(event.target.value)} /></Field><Field label="Gender"><select value={gender} onChange={(event) => setGender(event.target.value)}><option>Female</option><option>Male</option><option>Prefer not to say</option></select></Field></div><p className="mt-6 text-xs font-medium uppercase tracking-wide text-muted-foreground">Guardian & safety</p><div className="mt-3 grid gap-4 sm:grid-cols-2"><Field label="Primary guardian"><input required value={guardian} onChange={(event) => setGuardian(event.target.value)} placeholder="Parent or guardian name" /></Field><Field label="Phone number"><input required value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="0XX XXX XXXX" /></Field><Field label="Address"><input value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Home address" /></Field><Field label="Emergency contact"><input value={emergency} onChange={(event) => setEmergency(event.target.value)} placeholder="Phone number" /></Field></div><Field label="Medical or allergy note"><input value={medical} onChange={(event) => setMedical(event.target.value)} placeholder="Optional" /></Field><p className="mt-4 rounded-md border border-primary/15 bg-primary/5 p-3 text-xs text-secondary-foreground">An admission number will be generated automatically when this learner is admitted.</p><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit"><Plus />Admit student</Button></div></form></Modal>; }
+function mapStudent(record: StudentRecord): Student {
+  const dob = record.date_of_birth?.slice(0, 10) ?? "";
+  return {
+    id: record.id,
+    name: `${record.first_name} ${record.last_name}`.trim(),
+    studentId: record.student_id_number,
+    className: record.class_name ?? "Unassigned",
+    status: record.status.toLowerCase() === "active" ? "Active" : "Inactive",
+    dob,
+    gender: record.gender ?? "",
+    guardian: record.guardian_name ?? "",
+    phone: record.guardian_phone ?? "",
+    address: record.address ?? "",
+    emergencyContact: record.emergency_contact ?? "",
+    medicalNote: record.medical_notes ?? "",
+    guardianRelationship: record.guardian_relationship ?? "",
+  };
+}
 
-function StudentProfile({ student, onClose }: { student: Student; onClose: () => void }) { const [tab, setTab] = useState<"overview" | "attendance" | "fees" | "grades" | "guardian">("overview"); return <div className="fixed inset-0 z-50 overflow-y-auto bg-foreground/30 p-3 backdrop-blur-sm sm:p-6"><div className="glass-panel mx-auto min-h-[calc(100vh-1.5rem)] w-full max-w-5xl overflow-hidden rounded-lg shadow-2xl sm:min-h-0"><div className="flex items-start justify-between bg-primary px-5 py-5 text-primary-foreground sm:px-6"><div className="flex gap-3"><div className="grid size-11 place-items-center rounded-md bg-highlight font-display text-lg font-bold text-highlight-foreground">{student.name.charAt(0)}</div><div><h2 className="font-display text-xl font-bold">{student.name}</h2><p className="mt-1 text-xs text-primary-foreground/65">{student.admission} · {student.className} · {student.status}</p></div></div><Button variant="ghost" size="icon" className="text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground" onClick={onClose} aria-label="Close"><X /></Button></div><div className="flex overflow-x-auto border-b border-border px-4"><ProfileTab active={tab === "overview"} onClick={() => setTab("overview")}>Overview</ProfileTab><ProfileTab active={tab === "attendance"} onClick={() => setTab("attendance")}>Attendance</ProfileTab><ProfileTab active={tab === "fees"} onClick={() => setTab("fees")}>Fees</ProfileTab><ProfileTab active={tab === "grades"} onClick={() => setTab("grades")}>Grades</ProfileTab><ProfileTab active={tab === "guardian"} onClick={() => setTab("guardian")}>Guardian</ProfileTab></div><div className="p-5 sm:p-6">{tab === "overview" ? <div className="grid gap-4 md:grid-cols-2"><InfoPanel icon={<GraduationCap />} title="Learner details" rows={[["Class", student.className], ["Date of birth", student.dob], ["Gender", student.gender], ["Status", student.status]]} /><InfoPanel icon={<HeartPulse />} title="Health & emergency" rows={[["Medical note", student.medical], ["Emergency contact", student.emergency], ["Address", student.address]]} /></div> : tab === "attendance" ? <ProfileMetric icon={<Activity />} title="Attendance record" value={student.attendance} note="Present 82 of 90 school days · Teachers update the daily register." /> : tab === "fees" ? <ProfileMetric icon={<CreditCard />} title="Fee status" value={student.payment} note="Daily collections are recorded by Finance; school-fee receipts are available after verification." /> : tab === "grades" ? <div className="grid gap-3 sm:grid-cols-3"><ProfileMetric icon={<GraduationCap />} title="Term average" value="76%" note="Current entered scores" /><ProfileMetric icon={<Activity />} title="Performance" value="P" note="Proficient" /><ProfileMetric icon={<UserRoundCheck />} title="Teacher remark" value="Good" note="Conduct and attitude" /></div> : <InfoPanel icon={<UsersRound />} title="Primary guardian" rows={[["Name", student.guardian], ["Phone", student.phone], ["Relationship", "Parent / guardian"], ["Portal access", "Not linked yet"]]} />}</div></div></div>; }
+const tabs = ["All Students", "By Class", "Attendance", "Admissions"] as const;
 
-function Modal({ title, subtitle, children, onClose }: { title: string; subtitle: string; children: ReactNode; onClose: () => void }) { return <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-foreground/30 p-4 backdrop-blur-sm"><div className="glass-panel my-4 w-full max-w-2xl rounded-lg p-6 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="font-display text-xl font-bold">{title}</h2><p className="mt-1 text-sm text-muted-foreground">{subtitle}</p></div><Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close"><X /></Button></div><div className="mt-5">{children}</div></div></div>; }
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block text-sm"><span className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</span><span className="block [&_input]:h-10 [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-input [&_input]:bg-background/70 [&_input]:px-3 [&_select]:h-10 [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-input [&_select]:bg-background/70 [&_select]:px-3">{children}</span></label>; }
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) { return <button type="button" onClick={onClick} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>{children}</button>; }
-function ProfileTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) { return <button type="button" onClick={onClick} className={cn("border-b-2 px-3 py-3 text-sm font-medium whitespace-nowrap", active ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground")}>{children}</button>; }
-function InfoPanel({ icon, title, rows }: { icon: ReactNode; title: string; rows: string[][] }) { return <section className="rounded-lg border border-border bg-background/60 p-5"><div className="flex items-center gap-2 text-primary">{icon}<h3 className="font-display text-lg font-bold text-foreground">{title}</h3></div><dl className="mt-4 divide-y divide-border text-sm">{rows.map(([label, value]) => <div key={label} className="flex justify-between gap-4 py-3"><dt className="text-muted-foreground">{label}</dt><dd className="max-w-[60%] text-right font-medium">{value}</dd></div>)}</dl></section>; }
-function ProfileMetric({ icon, title, value, note }: { icon: ReactNode; title: string; value: string; note: string }) { return <article className="rounded-lg border border-border bg-background/60 p-5"><div className="text-primary">{icon}</div><p className="mt-3 text-sm font-medium">{title}</p><p className="mt-1 font-display text-2xl">{value}</p><p className="mt-1 text-xs text-muted-foreground">{note}</p></article>; }
-function Status({ value }: { value: StudentStatus }) { return <span className={cn("rounded-full px-2 py-1 text-xs font-medium", value === "Active" ? "bg-emerald-500/10 text-emerald-700" : "bg-muted text-muted-foreground")}>{value}</span>; }
-function Metric({ label, value, note }: { label: string; value: string; note: string }) { return <article className="glass-panel rounded-lg p-5"><p className="text-xs font-medium text-muted-foreground">{label}</p><p className="mt-2 font-display text-3xl">{value}</p><p className="mt-1 text-xs text-secondary-foreground">{note}</p></article>; }
+export default function StudentsPage() {
+  const [students, setStudents] = useState<Student[]>([]);
+  const [classes, setClasses] = useState<ClassOption[]>([]);
+  const [query, setQuery] = useState("");
+  const [filterClassId, setFilterClassId] = useState("");
+  const [activeTab, setActiveTab] = useState<(typeof tabs)[number]>("All Students");
+  const [loading, setLoading] = useState(true);
+  const [loadingClasses, setLoadingClasses] = useState(true);
+  const [listError, setListError] = useState("");
+  const [classError, setClassError] = useState("");
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [reloadCount, setReloadCount] = useState(0);
+  const [showAdmission, setShowAdmission] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingClasses(true);
+    schoolApi<{ classes: ClassOption[] }>("/api/school/classes")
+      .then((result) => {
+        if (!cancelled) {
+          setClasses(result.classes);
+          setClassError("");
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setClassError(error instanceof Error ? error.message : "Could not load classes");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingClasses(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      const params = new URLSearchParams({ page: String(page), page_size: "50" });
+      if (query.trim()) params.set("search", query.trim());
+      if (filterClassId) params.set("class_id", filterClassId);
+      schoolApi<{ students: StudentRecord[]; total: number }>(`/api/school/students?${params.toString()}`)
+        .then((result) => {
+          if (cancelled) return;
+          const mapped = result.students.map(mapStudent);
+          setStudents((current) => page === 1 ? mapped : [...current, ...mapped]);
+          setTotal(result.total);
+          setListError("");
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setListError(error instanceof Error ? error.message : "Could not load students");
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [filterClassId, page, query, reloadCount]);
+
+  async function admitStudent(input: AdmissionInput) {
+    const result = await schoolApi<{ student: StudentRecord }>("/api/school/students", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    const created = mapStudent(result.student);
+    setStudents([created]);
+    setTotal(1);
+    setPage(1);
+    setQuery("");
+    setFilterClassId("");
+    setNotice(`${created.name} was admitted successfully.`);
+    setShowAdmission(false);
+  }
+
+  return (
+    <SchoolShell title="Students" schoolAdmin>
+      <div className="space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="font-display text-2xl font-bold text-foreground">Students</h1>
+            <p className="text-sm text-muted-foreground mt-1">Manage student records and admissions</p>
+          </div>
+          <button onClick={() => setShowAdmission(true)} className="admin-btn-primary flex items-center gap-2">
+            <UserPlus className="w-4 h-4" /> Admit Student
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <StatCard icon={Users} label="Student records" value={loading && total === 0 ? "—" : String(total)} note="Matching this search" />
+          <StatCard icon={GraduationCap} label="Classes" value={loadingClasses ? "—" : String(classes.length)} note="Available in this school" />
+          <StatCard icon={CalendarDays} label="New this term" value="—" note="Not tracked yet" />
+        </div>
+
+        {notice && (
+          <div role="status" className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
+            <div className="flex items-center justify-between gap-3">
+              <span>{notice}</span>
+              <button onClick={() => setNotice("")} aria-label="Dismiss confirmation"><X className="w-4 h-4" /></button>
+            </div>
+          </div>
+        )}
+        {classError && <p role="alert" className="text-sm text-destructive">{classError}</p>}
+
+        <div className="flex gap-1 border-b border-border overflow-x-auto">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                activeTab === tab ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => { setPage(1); setQuery(event.target.value); }}
+              placeholder="Search by name or student ID..."
+              className="admin-input pl-10"
+            />
+          </div>
+          <div className="relative">
+            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <select value={filterClassId} onChange={(event) => { setPage(1); setFilterClassId(event.target.value); }} className="admin-input pl-10 pr-8 appearance-none min-w-[160px]">
+              <option value="">All Classes</option>
+              {classes.map((classItem) => <option key={classItem.id} value={classItem.id}>{classItem.name}</option>)}
+            </select>
+            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          </div>
+        </div>
+
+        {activeTab === "All Students" || activeTab === "By Class" ? (
+          <div className="admin-card overflow-hidden">
+            {listError ? (
+              <div role="alert" className="p-8 text-center">
+                <p className="text-sm text-destructive">{listError}</p>
+                <button className="admin-btn-secondary mt-3" onClick={() => { setPage(1); setReloadCount((count) => count + 1); }}>
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student</th>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Student ID</th>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Class</th>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Attendance</th>
+                        <th className="text-left px-5 py-3 font-medium text-muted-foreground">Status</th>
+                        <th className="w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {students.map((student) => (
+                        <tr key={student.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => setSelectedStudent(student)}>
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
+                                {student.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}
+                              </div>
+                              <span className="font-medium text-foreground">{student.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{student.studentId}</td>
+                          <td className="px-5 py-3.5 text-foreground">{student.className}</td>
+                          <td className="px-5 py-3.5 text-muted-foreground">Not connected</td>
+                          <td className="px-5 py-3.5"><StatusBadge status={student.status} /></td>
+                          <td className="px-3 py-3.5"><MoreHorizontal className="w-4 h-4 text-muted-foreground" /></td>
+                        </tr>
+                      ))}
+                      {!loading && students.length === 0 && (
+                        <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">
+                          {query.trim() || filterClassId
+                            ? "No students match these filters."
+                            : "No student records yet. Admit a student to get started."}
+                        </td></tr>
+                      )}
+                      {loading && students.length === 0 && (
+                        <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">Loading student records…</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {students.length < total && !loading && (
+                  <div className="p-4 border-t border-border text-center">
+                    <button className="admin-btn-secondary" onClick={() => setPage((current) => current + 1)}>Load more students</button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        ) : activeTab === "Admissions" ? (
+          <div className="admin-card p-8 text-center">
+            <UserPlus className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+            <h2 className="font-semibold text-foreground">Admissions</h2>
+            <p className="text-sm text-muted-foreground mt-1">New admissions are saved to this school’s student records.</p>
+            <button onClick={() => setShowAdmission(true)} className="admin-btn-primary mt-4">Admit Student</button>
+          </div>
+        ) : (
+          <div className="admin-card p-8 text-center">
+            <CalendarDays className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+            <h2 className="font-semibold text-foreground">Attendance records</h2>
+            <p className="text-sm text-muted-foreground mt-1">Student attendance summaries are not connected to this view yet.</p>
+          </div>
+        )}
+
+        {showAdmission && (
+          <AdmissionModal
+            classes={classes}
+            loadingClasses={loadingClasses}
+            onClose={() => setShowAdmission(false)}
+            onSubmit={admitStudent}
+          />
+        )}
+        {selectedStudent && <StudentProfile student={selectedStudent} onClose={() => setSelectedStudent(null)} />}
+      </div>
+    </SchoolShell>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, note }: { icon: typeof Users; label: string; value: string; note: string }) {
+  return (
+    <div className="admin-card p-5 flex items-start gap-4">
+      <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+        <Icon className="w-5 h-5 text-primary" />
+      </div>
+      <div>
+        <p className="text-xs text-muted-foreground font-medium">{label}</p>
+        <p className="text-2xl font-bold font-display text-foreground mt-0.5">{value}</p>
+        <p className="text-[11px] text-muted-foreground mt-0.5">{note}</p>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: StudentStatus }) {
+  const colors = status === "Active" ? "bg-success/10 text-success" : "bg-muted text-muted-foreground";
+  return <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${colors}`}>{status}</span>;
+}
+
+function AdmissionModal({
+  classes,
+  loadingClasses,
+  onClose,
+  onSubmit,
+}: {
+  classes: ClassOption[];
+  loadingClasses: boolean;
+  onClose: () => void;
+  onSubmit: (input: AdmissionInput) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSaving(true);
+    const data = new FormData(event.currentTarget);
+    const guardianPhone = String(data.get("guardianPhone") ?? "").trim();
+    try {
+      await onSubmit({
+        full_name: String(data.get("name") ?? "").trim(),
+        class_id: String(data.get("classId") ?? ""),
+        date_of_birth: String(data.get("dob") ?? ""),
+        gender: String(data.get("gender") ?? ""),
+        address: String(data.get("address") ?? "").trim(),
+        emergency_contact: String(data.get("emergency") ?? "").trim(),
+        medical_notes: String(data.get("medical") ?? "").trim(),
+        guardian: { full_name: String(data.get("guardian") ?? "").trim(), phone: guardianPhone },
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this student");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-foreground/30 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(event) => event.stopPropagation()}>
+        <div className="p-6 border-b border-border flex items-center justify-between">
+          <div><h2 className="font-display text-lg font-bold text-foreground">Admit New Student</h2><p className="text-xs text-muted-foreground mt-0.5">Student and guardian details are saved to this school</p></div>
+          <button onClick={onClose} aria-label="Close admission form"><X className="w-5 h-5 text-muted-foreground" /></button>
+        </div>
+        <form className="p-6 space-y-4" onSubmit={submit}>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2"><label className="admin-label">Full Name</label><input name="name" required className="admin-input" placeholder="e.g. Ama Mensah" /></div>
+            <div>
+              <label className="admin-label">Class</label>
+              <select name="classId" required disabled={loadingClasses || classes.length === 0} className="admin-input">
+                <option value="">{loadingClasses ? "Loading classes…" : classes.length ? "Select a class" : "No classes available"}</option>
+                {classes.map((item) => <option key={item.id} value={item.id}>{item.name}{item.academic_year_name ? ` · ${item.academic_year_name}` : ""}</option>)}
+              </select>
+            </div>
+            <div><label className="admin-label">Date of Birth</label><input name="dob" type="date" className="admin-input" /></div>
+            <div><label className="admin-label">Gender</label><select name="gender" className="admin-input"><option value="">Select</option><option>Male</option><option>Female</option></select></div>
+            <div><label className="admin-label">Guardian Name</label><input name="guardian" className="admin-input" placeholder="Parent/guardian" /></div>
+            <div><label className="admin-label">Guardian Phone</label><input name="guardianPhone" className="admin-input" placeholder="024 000 0000" /></div>
+            <div className="col-span-2"><label className="admin-label">Address</label><input name="address" className="admin-input" placeholder="Residential address" /></div>
+            <div><label className="admin-label">Emergency Contact</label><input name="emergency" className="admin-input" placeholder="Phone number" /></div>
+            <div><label className="admin-label">Medical Notes</label><input name="medical" className="admin-input" placeholder="Allergies, conditions..." /></div>
+          </div>
+          {classes.length === 0 && !loadingClasses && <p className="text-xs text-muted-foreground">Create a class before admitting a student.</p>}
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="admin-btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving || loadingClasses || classes.length === 0} className="admin-btn-primary flex-1 disabled:opacity-50">
+              {saving ? "Saving…" : "Admit Student"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function StudentProfile({ student, onClose }: { student: Student; onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState("Overview");
+  const [details, setDetails] = useState<Student | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    schoolApi<{ student: StudentRecord }>(`/api/school/students/${encodeURIComponent(student.id)}`)
+      .then(({ student: record }) => {
+        if (!cancelled) {
+          setDetails(mapStudent(record));
+          setError("");
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not load this student profile");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [student.id]);
+
+  const profile = details ?? student;
+  const profileTabs = ["Overview", "Attendance", "Grades", "Fees"];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-foreground/30 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(event) => event.stopPropagation()}>
+        <div className="p-6 border-b border-border flex items-start justify-between">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-lg font-bold text-primary">
+              {profile.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}
+            </div>
+            <div>
+              <h2 className="font-display text-xl font-bold text-foreground">{profile.name}</h2>
+              <p className="text-sm text-muted-foreground">{profile.studentId} · {profile.className}</p>
+              <div className="mt-1.5"><StatusBadge status={profile.status} /></div>
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close student profile"><X className="w-5 h-5 text-muted-foreground" /></button>
+        </div>
+        <div className="flex gap-1 px-6 border-b border-border">
+          {profileTabs.map((tab) => (
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-3 py-2.5 text-xs font-medium border-b-2 ${activeTab === tab ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}>{tab}</button>
+          ))}
+        </div>
+        <div className="p-6">
+          {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}</p>}
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading saved profile details…</p>
+          ) : activeTab === "Overview" ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <InfoCard icon={CalendarDays} label="Date of Birth" value={profile.dob || "Not recorded"} />
+              <InfoCard icon={GraduationCap} label="Gender" value={profile.gender || "Not recorded"} />
+              <InfoCard icon={Users} label="Guardian" value={profile.guardian || "Not recorded"} sub={profile.guardianRelationship || undefined} />
+              <InfoCard icon={Phone} label="Guardian Phone" value={profile.phone || "Not recorded"} />
+              <InfoCard icon={MapPin} label="Address" value={profile.address || "Not recorded"} />
+              <InfoCard icon={Phone} label="Emergency Contact" value={profile.emergencyContact || "Not recorded"} />
+              <InfoCard icon={Heart} label="Medical Notes" value={profile.medicalNote || "None recorded"} />
+            </div>
+          ) : activeTab === "Attendance" ? (
+            <ProfileMetric label="Attendance summary" value="—" note="Student attendance is not connected to this profile yet." />
+          ) : activeTab === "Grades" ? (
+            <ProfileMetric label="Grade records" value="—" note="Student grade details are not connected to this profile yet." />
+          ) : (
+            <ProfileMetric label="Fee balance" value="—" note="Student fee balances are not connected to this profile yet." />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InfoCard({ icon: Icon, label, value, sub }: { icon: typeof Users; label: string; value: string; sub?: string }) {
+  return (
+    <div className="flex items-start gap-3 p-3 rounded-xl bg-muted/30">
+      <Icon className="w-4 h-4 text-muted-foreground mt-0.5" />
+      <div><p className="text-[11px] text-muted-foreground">{label}</p><p className="text-sm font-medium text-foreground">{value}</p>{sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}</div>
+    </div>
+  );
+}
+
+function ProfileMetric({ label, value, note }: { label: string; value: string; note: string }) {
+  return <div className="rounded-xl border border-border p-5"><p className="text-sm font-medium text-foreground">{label}</p><p className="mt-2 text-2xl font-bold text-foreground">{value}</p><p className="mt-1 text-xs text-muted-foreground">{note}</p><FileText className="w-4 h-4 mt-4 text-muted-foreground" /></div>;
+}
+
+export const Route = createFileRoute("/students")({ component: StudentsPage });

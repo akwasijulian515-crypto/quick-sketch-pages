@@ -311,6 +311,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
   const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
+  const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
   const workflowRoles: Record<string, Record<string, readonly string[]>> = {
     "/api/school/classes": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
     "/api/school/students": { GET: ["school_admin", "teacher"] },
@@ -325,6 +326,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/teaching-setup": { GET: ["school_admin"], POST: ["school_admin"] },
   };
   const workflowMethodRoles = workflowRoles[url.pathname]?.[request.method]
+    ?? (studentProfileMatch && request.method === "GET" ? ["school_admin"] : undefined)
     ?? (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
   const schoolDataRoute = url.pathname === "/api/school/classes"
     || url.pathname === "/api/school/students"
@@ -332,6 +334,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     || url.pathname === "/api/school/terms"
     || url.pathname === "/api/school/team"
     || url.pathname === "/api/school/teaching-setup"
+    || studentProfileMatch !== null
     || classRosterMatch !== null
     || termCloseMatch !== null
     || workflowMethodRoles !== undefined;
@@ -346,6 +349,38 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       : await requireSchoolAdminContext(request, env);
     if (school instanceof Response) return school;
     const sql = database(env);
+
+    if (studentProfileMatch) {
+      if (!uuidOrNull(studentProfileMatch[1])) return badRequest("Invalid student ID");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select st.id, st.first_name, st.last_name,
+                 st.admission_number as student_id_number,
+                 case when st.active then 'active' else 'inactive' end as status,
+                 st.date_of_birth, st.gender, st.address, st.emergency_contact,
+                 st.medical_notes, c.name as class_name,
+                 g.full_name as guardian_name, g.phone as guardian_phone,
+                 sg.relationship as guardian_relationship
+          from students st
+          left join lateral (
+            select e.class_id
+            from class_enrollments e
+            where e.school_id = st.school_id and e.student_id = st.id and e.ends_on is null
+            order by e.starts_on desc
+            limit 1
+          ) enrollment on true
+          left join classes c on c.id = enrollment.class_id and c.school_id = st.school_id
+          left join student_guardians sg
+            on sg.student_id = st.id and sg.school_id = st.school_id and sg.is_primary
+          left join guardians g on g.id = sg.guardian_id and g.school_id = sg.school_id
+          where st.id = ${studentProfileMatch[1]}::uuid
+            and st.school_id = ${school.schoolId}::uuid
+          limit 1
+        `,
+      );
+      if (!rows[0]) return json({ error: "Student not found" }, 404);
+      return json({ student: rows[0] });
+    }
 
     if (termCloseMatch) {
       if (!uuidOrNull(termCloseMatch[1])) return badRequest("Invalid term ID");
@@ -368,6 +403,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
       if (request.method === "GET") {
         if (!classId) {
+          const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+          if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid attendance date");
           const classes = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
             tx`
               select c.id, c.name, ay.name as academic_year_name,
@@ -375,9 +412,28 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                       from class_enrollments e
                       join students st on st.id = e.student_id and st.school_id = e.school_id
                       where e.school_id = c.school_id and e.class_id = c.id
-                        and e.ends_on is null and st.active) as student_count
+                        and e.starts_on <= ${attendanceDate}::date
+                        and (e.ends_on is null or e.ends_on >= ${attendanceDate}::date)
+                        and st.active) as student_count,
+                     coalesce(attendance.present_count, 0)::int as present_count,
+                     coalesce(attendance.late_count, 0)::int as late_count,
+                     coalesce(attendance.absent_count, 0)::int as absent_count,
+                     coalesce(attendance.excused_count, 0)::int as excused_count,
+                     coalesce(attendance.marked_count, 0)::int as marked_count
               from classes c
               join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              left join lateral (
+                select count(*) filter (where r.status = 'present') as present_count,
+                       count(*) filter (where r.status = 'late') as late_count,
+                       count(*) filter (where r.status = 'absent') as absent_count,
+                       count(*) filter (where r.status = 'excused') as excused_count,
+                       count(r.id) as marked_count
+                from attendance_sessions s
+                left join attendance_records r
+                  on r.attendance_session_id = s.id and r.school_id = s.school_id
+                where s.school_id = c.school_id and s.class_id = c.id
+                  and s.attendance_date = ${attendanceDate}::date
+              ) attendance on true
               where c.school_id = ${school.schoolId}::uuid
                 and (
                   ${school.role === "school_admin"}
@@ -1607,14 +1663,27 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const payload: unknown = await request.json().catch(() => null);
       if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
-      const firstName = typeof body["first_name"] === "string" ? body["first_name"].trim() : "";
-      const lastName = typeof body["last_name"] === "string" ? body["last_name"].trim() : "";
+      const fullName = typeof body["full_name"] === "string" ? body["full_name"].trim() : "";
+      const nameParts = fullName.split(/\s+/).filter(Boolean);
+      const firstName = typeof body["first_name"] === "string" ? body["first_name"].trim() : nameParts[0] ?? "";
+      const lastName = typeof body["last_name"] === "string" ? body["last_name"].trim() : nameParts.slice(1).join(" ");
       const studentIdNumber = typeof body["student_id_number"] === "string" ? body["student_id_number"].trim() : "";
       const classId = body["class_id"] == null ? null : body["class_id"];
       if (firstName.length < 1 || firstName.length > 100) return badRequest("First name must be 1–100 characters");
-      if (lastName.length < 1 || lastName.length > 100) return badRequest("Last name must be 1–100 characters");
-      if (studentIdNumber.length < 1 || studentIdNumber.length > 64) return badRequest("Student ID must be 1–64 characters");
+      if (lastName.length < 1 || lastName.length > 100) return badRequest("Enter both a first and last name");
+      if (studentIdNumber.length > 64) return badRequest("Student ID must be at most 64 characters");
       if (!uuidOrNull(classId)) return badRequest("Invalid class ID");
+
+      const dateOfBirth = typeof body["date_of_birth"] === "string" ? body["date_of_birth"].trim() : "";
+      const gender = typeof body["gender"] === "string" ? body["gender"].trim() : "";
+      const address = typeof body["address"] === "string" ? body["address"].trim() : "";
+      const emergencyContact = typeof body["emergency_contact"] === "string" ? body["emergency_contact"].trim() : "";
+      const medicalNotes = typeof body["medical_notes"] === "string" ? body["medical_notes"].trim() : "";
+      if (dateOfBirth && !validIsoDate(dateOfBirth)) return badRequest("Enter a valid date of birth");
+      if (gender.length > 40) return badRequest("Gender must be at most 40 characters");
+      if (address.length > 1000) return badRequest("Address must be at most 1000 characters");
+      if (emergencyContact.length > 40) return badRequest("Emergency contact must be at most 40 characters");
+      if (medicalNotes.length > 2000) return badRequest("Medical notes must be at most 2000 characters");
 
       const guardian = body["guardian"] && typeof body["guardian"] === "object"
         ? body["guardian"] as Record<string, unknown>
@@ -1637,8 +1706,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 and ${classId}::uuid is not null
             ),
             inserted_student as (
-              insert into students (school_id, admission_number, first_name, last_name)
-              select ${school.schoolId}::uuid, ${studentIdNumber}, ${firstName}, ${lastName}
+              insert into students (
+                school_id, admission_number, first_name, last_name,
+                date_of_birth, gender, address, emergency_contact, medical_notes
+              )
+              select ${school.schoolId}::uuid,
+                     coalesce(nullif(${studentIdNumber}, ''), 'KLS-' || upper(substr(gen_random_uuid()::text, 1, 12))),
+                     ${firstName}, ${lastName}, nullif(${dateOfBirth}, '')::date,
+                     nullif(${gender}, ''), nullif(${address}, ''),
+                     nullif(${emergencyContact}, ''), nullif(${medicalNotes}, '')
               where ${classId}::uuid is null or exists (select 1 from requested_class)
               returning id, school_id, admission_number, first_name, last_name, active
             ),
