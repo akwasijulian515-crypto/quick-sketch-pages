@@ -23,17 +23,21 @@ export const Route = createFileRoute("/login")({
 function LoginPage() {
   const navigate = useNavigate();
   const { schoolName, subdomain, primaryColor, crestUrl } = useTenantBranding();
-  const [mode, setMode] = useState<"sign-in" | "activate" | "verify">("sign-in");
+  const [mode, setMode] = useState<"sign-in" | "activate" | "verify" | "reset-request" | "reset">("sign-in");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("mode") === "activate") {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("token")) {
+      setMode("reset");
+    } else if (params.get("mode") === "activate") {
       setMode("activate");
     }
   }, []);
@@ -43,6 +47,10 @@ function LoginPage() {
     const neonAuthClient = await ensureNeonAuthClient();
     if (!neonAuthClient) {
       setError("Neon Auth is not configured for this environment");
+      return;
+    }
+    if (mode === "reset-request") {
+      await requestPasswordReset();
       return;
     }
 
@@ -56,6 +64,24 @@ function LoginPage() {
         setMode("sign-in");
         setVerificationCode("");
         setMessage("Email verified. Sign in with your password to continue.");
+        return;
+      }
+
+      if (mode === "reset") {
+        if (password !== confirmPassword) throw new Error("The passwords do not match");
+        const resetToken = new URLSearchParams(window.location.search).get("token");
+        if (!resetToken) throw new Error("This password reset link is invalid or expired. Request a new link.");
+        const result = await neonAuthClient.resetPassword({ newPassword: password, token: resetToken });
+        if (result.error) throw new Error(result.error.message);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("token");
+        url.searchParams.delete("mode");
+        url.searchParams.delete("error");
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+        setMode("sign-in");
+        setPassword("");
+        setConfirmPassword("");
+        setMessage("Your password has been reset. Sign in with your new password.");
         return;
       }
 
@@ -110,7 +136,11 @@ function LoginPage() {
 
   async function requestPasswordReset() {
     const neonAuthClient = await ensureNeonAuthClient();
-    if (!neonAuthClient || !email.trim()) {
+    if (!neonAuthClient) {
+      setError("Neon Auth is not configured for this environment");
+      return;
+    }
+    if (!email.trim()) {
       setError("Enter your approved account email first");
       return;
     }
@@ -118,9 +148,13 @@ function LoginPage() {
     setError("");
     setMessage("");
     try {
+      const resetUrl = new URL("/login", window.location.origin);
+      const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+      if (tenant) resetUrl.searchParams.set("tenant", tenant);
+      resetUrl.searchParams.set("mode", "reset");
       const result = await neonAuthClient.requestPasswordReset({
         email: email.trim().toLowerCase(),
-        redirectTo: `${window.location.origin}/login`,
+        redirectTo: resetUrl.toString(),
       });
       if (result.error) throw new Error(result.error.message);
       setMessage("If this account exists, a password reset link has been sent.");
@@ -185,26 +219,29 @@ function LoginPage() {
           </div>
         </div>
 
-        <h1 className="mt-6 font-display text-2xl font-bold">{mode === "sign-in" ? "Welcome back" : mode === "activate" ? "Activate your school account" : "Verify your email"}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{mode === "sign-in" ? "Sign in with the email approved for your school." : mode === "activate" ? "Use the email submitted with your school application." : `Enter the code sent to ${email}.`}</p>
+        <h1 className="mt-6 font-display text-2xl font-bold">{mode === "sign-in" ? "Welcome back" : mode === "activate" ? "Activate your school account" : mode === "verify" ? "Verify your email" : mode === "reset-request" ? "Reset your password" : "Choose a new password"}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{mode === "sign-in" ? "Sign in with the email approved for your school." : mode === "activate" ? "Use the email submitted with your school application." : mode === "verify" ? `Enter the code sent to ${email}.` : mode === "reset-request" ? "Enter your approved school account email and we’ll send a password reset link if the account exists." : `Set a new password for your ${schoolName} account.`}</p>
 
         <form onSubmit={handleSubmit} className="mt-5 space-y-3">
           {mode === "activate" && <label className="block text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Your name</span><input required value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></label>}
-          {mode !== "verify" && <label className="block text-sm">
+          {mode !== "verify" && mode !== "reset" && <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Email</span>
             <input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder={`you@${subdomain}.edu`} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
           </label>}
-          {mode === "verify" ? <label className="block text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Email verification code</span><input required inputMode="numeric" autoComplete="one-time-code" value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></label> : <label className="block text-sm">
+          {mode === "verify" ? <label className="block text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Email verification code</span><input required inputMode="numeric" autoComplete="one-time-code" value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></label> : !["reset-request", "reset"].includes(mode) ? <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Password</span>
             <input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "sign-in" ? "current-password" : "new-password"} minLength={8} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
-          </label>}
-          {mode === "sign-in" && <button type="button" disabled={busy} onClick={() => void requestPasswordReset()} className="text-xs font-medium text-secondary-foreground underline-offset-4 hover:underline">Forgot password?</button>}
+          </label> : mode === "reset" ? <>
+            <label className="block text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">New password</span><input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={8} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></label>
+            <label className="block text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Confirm new password</span><input required type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={8} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></label>
+          </> : null}
+          {mode === "sign-in" && <button type="button" disabled={busy} onClick={() => { setError(""); setMessage(""); setMode("reset-request"); }} className="text-xs font-medium text-secondary-foreground underline-offset-4 hover:underline">Forgot password?</button>}
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           {message && <p role="status" className="text-sm text-secondary-foreground">{message}</p>}
-          <Button type="submit" disabled={busy} className="w-full" style={{ backgroundColor: primaryColor, color: "#fff" }}>{busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : mode === "activate" ? "Create account" : "Verify email"}</Button>
+          <Button type="submit" disabled={busy} className="w-full" style={{ backgroundColor: primaryColor, color: "#fff" }}>{busy ? "Please wait..." : mode === "sign-in" ? "Sign in" : mode === "activate" ? "Create account" : mode === "verify" ? "Verify email" : mode === "reset-request" ? "Send reset link" : "Reset password"}</Button>
         </form>
-        {mode === "verify" ? <Button variant="outline" className="mt-3 w-full" disabled={busy} onClick={() => void resendVerificationCode()}>Resend verification code</Button> : <Button variant="outline" className="mt-3 w-full" onClick={() => { setError(""); setMessage(""); setMode((current) => current === "sign-in" ? "activate" : "sign-in"); }}>{mode === "sign-in" ? "First time? Activate your account" : "Already activated? Sign in"}</Button>}
-        <Button variant="ghost" className="mt-2 w-full" onClick={() => navigate({ to: "/signup" })}><Building2 />Register your school</Button>
+        {mode === "verify" ? <Button variant="outline" className="mt-3 w-full" disabled={busy} onClick={() => void resendVerificationCode()}>Resend verification code</Button> : <Button variant="outline" className="mt-3 w-full" disabled={busy} onClick={() => { setError(""); setMessage(""); setPassword(""); setConfirmPassword(""); setMode((current) => current === "sign-in" ? "activate" : "sign-in"); }}>{mode === "sign-in" ? "First time? Activate your account" : mode === "activate" ? "Already activated? Sign in" : "Back to sign in"}</Button>}
+        {mode !== "reset" && <Button variant="ghost" className="mt-2 w-full" onClick={() => navigate({ to: "/signup" })}><Building2 />Register your school</Button>}
         <p className="mt-4 text-center text-[11px] text-muted-foreground">Access is granted only to an approved school membership.</p>
       </div>
       </div>
