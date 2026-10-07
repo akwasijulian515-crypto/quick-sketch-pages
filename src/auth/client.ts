@@ -42,6 +42,12 @@ function asJwt(value: unknown) {
   return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) ? token : null;
 }
 
+function asSessionCredential(value: unknown) {
+  if (typeof value !== "string") return null;
+  const token = value.trim().replace(/^Bearer\s+/i, "").trim();
+  return /^[\x21-\x7e]{1,4096}$/.test(token) ? token : null;
+}
+
 async function loadNeonAccessToken() {
   const client = await ensureNeonAuthClient();
   if (!client) throw new Error("Neon Auth is not configured for this app");
@@ -60,11 +66,11 @@ async function loadNeonAccessToken() {
 
   const sessionResult = await client.getSession();
   if (sessionResult.error) throw new Error(sessionResult.error.message);
-  const sessionToken = asJwt(sessionResult.data?.session?.token);
+  const sessionToken = asSessionCredential(sessionResult.data?.session?.token);
   if (sessionToken) return sessionToken;
 
   if (tokenError instanceof Error) throw new Error(tokenError.message);
-  throw new Error("Neon Auth did not return a valid access token. Please sign out and sign in again.");
+  throw new Error("Neon Auth did not return a usable session credential. Please sign out and sign in again.");
 }
 
 export function getNeonAccessToken() {
