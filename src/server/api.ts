@@ -75,7 +75,9 @@ function bearerToken(request: Request) {
   if (!authorization) return null;
   const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
   const token = match?.[1];
-  return token && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) ? token : null;
+  // Managed Auth sessions may be opaque; authenticateNeonToken validates JWTs
+  // cryptographically and otherwise checks the unexpired session row.
+  return token && /^[\x21-\x7e]{1,4096}$/.test(token) ? token : null;
 }
 
 function authJwks(env: RuntimeEnv) {
