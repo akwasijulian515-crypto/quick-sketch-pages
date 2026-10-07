@@ -105,17 +105,41 @@ export function SchoolTeamSetup() {
       await schoolApi("/api/school/teaching-setup", {
         method: "POST",
         body: JSON.stringify({
+          assignment_type: "subject",
           class_id: form.get("class_id"),
           teacher_user_id: form.get("teacher_user_id"),
           subject_code: form.get("subject_code"),
           subject_name: form.get("subject_name"),
-          is_class_teacher: form.get("is_class_teacher") === "on",
         }),
       });
       formElement.reset();
       await load();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not assign teacher");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function assignClassTeacher(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setSaving(true);
+    setError("");
+    try {
+      await schoolApi("/api/school/teaching-setup", {
+        method: "POST",
+        body: JSON.stringify({
+          assignment_type: "class_teacher",
+          class_id: form.get("class_id"),
+          teacher_user_id: form.get("teacher_user_id"),
+        }),
+      });
+      formElement.reset();
+      await load();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not assign class teacher");
     } finally {
       setSaving(false);
     }
@@ -132,13 +156,18 @@ export function SchoolTeamSetup() {
         <label className="space-y-1 text-xs font-medium text-muted-foreground">Role<select name="role" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"><option value="teacher">Teacher</option><option value="finance">Finance</option></select></label>
         <div className="flex items-end"><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Add staff account"}</Button></div>
       </form>
+      <h3 className="mt-6 text-sm font-semibold">Assign a class teacher</h3>
+      <form onSubmit={(event) => void assignClassTeacher(event)} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">Class<select name="class_id" required className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"><option value="">Select class</option>{[...new Map(classes.map((item) => [item.class_id, item])).values()].map((item) => <option key={item.class_id} value={item.class_id}>{item.class_name} · {item.academic_year_name}</option>)}</select></label>
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">Teacher<select name="teacher_user_id" required className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"><option value="">Select teacher</option>{teachers.map((teacher) => <option key={teacher.user_id} value={teacher.user_id}>{teacher.display_name}</option>)}</select></label>
+        <div className="flex items-end"><Button type="submit" disabled={saving || !classes.length || !teachers.length}>{saving ? "Saving..." : "Assign class teacher"}</Button></div>
+      </form>
       <h3 className="mt-6 text-sm font-semibold">Assign a subject</h3>
       <form onSubmit={(event) => void assignTeacher(event)} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="space-y-1 text-xs font-medium text-muted-foreground">Class<select name="class_id" required className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"><option value="">Select class</option>{[...new Map(classes.map((item) => [item.class_id, item])).values()].map((item) => <option key={item.class_id} value={item.class_id}>{item.class_name} · {item.academic_year_name}</option>)}</select></label>
         <label className="space-y-1 text-xs font-medium text-muted-foreground">Teacher<select name="teacher_user_id" required className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"><option value="">Select teacher</option>{teachers.map((teacher) => <option key={teacher.user_id} value={teacher.user_id}>{teacher.display_name}</option>)}</select></label>
         <label className="space-y-1 text-xs font-medium text-muted-foreground">Subject code<Input name="subject_code" required maxLength={24} placeholder="MATH" /></label>
         <label className="space-y-1 text-xs font-medium text-muted-foreground">Subject name<Input name="subject_name" required maxLength={120} placeholder="Mathematics" /></label>
-        <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><input name="is_class_teacher" type="checkbox" />Set as class teacher</label>
         <div className="sm:col-span-2 lg:col-span-4"><Button type="submit" disabled={saving || !classes.length || !teachers.length}>{saving ? "Saving..." : "Assign subject"}</Button></div>
       </form>
       {loading ? <p className="py-5 text-sm text-muted-foreground">Loading school staff...</p> : (

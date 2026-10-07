@@ -116,6 +116,11 @@ export default function StudentsPage() {
   const [showAdmission, setShowAdmission] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [notice, setNotice] = useState("");
+  const [canManageStudents, setCanManageStudents] = useState(false);
+
+  useEffect(() => {
+    setCanManageStudents(sessionStorage.getItem("hg-role") === "school_admin");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -327,7 +332,17 @@ export default function StudentsPage() {
             onSubmit={admitStudent}
           />
         )}
-        {selectedStudent && <StudentProfile student={selectedStudent} onClose={() => setSelectedStudent(null)} />}
+        {selectedStudent && (
+          <StudentProfile
+            student={selectedStudent}
+            canManageStudents={canManageStudents}
+            onStatusChange={(studentId, status) => {
+              setStudents((current) => current.map((item) => item.id === studentId ? { ...item, status } : item));
+              setSelectedStudent((current) => current?.id === studentId ? { ...current, status } : current);
+            }}
+            onClose={() => setSelectedStudent(null)}
+          />
+        )}
       </div>
     </SchoolShell>
   );
@@ -430,11 +445,23 @@ function AdmissionModal({
   );
 }
 
-function StudentProfile({ student, onClose }: { student: Student; onClose: () => void }) {
+function StudentProfile({
+  student,
+  canManageStudents,
+  onStatusChange,
+  onClose,
+}: {
+  student: Student;
+  canManageStudents: boolean;
+  onStatusChange: (studentId: string, status: StudentStatus) => void;
+  onClose: () => void;
+}) {
   const [activeTab, setActiveTab] = useState("Overview");
   const [details, setDetails] = useState<Student | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [statusNotice, setStatusNotice] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -456,6 +483,28 @@ function StudentProfile({ student, onClose }: { student: Student; onClose: () =>
 
   const profile = details ?? student;
   const profileTabs = ["Overview", "Attendance", "Grades", "Fees"];
+
+  async function toggleStudentStatus() {
+    const active = profile.status !== "Active";
+    if (!active && !window.confirm(`Deactivate ${profile.name}? Their student record and history will be retained.`)) return;
+    setSavingStatus(true);
+    setError("");
+    setStatusNotice("");
+    try {
+      const result = await schoolApi<{ student: StudentRecord }>(`/api/school/students/${encodeURIComponent(student.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ active }),
+      });
+      const updated = mapStudent(result.student);
+      setDetails((current) => ({ ...(current ?? student), status: updated.status }));
+      onStatusChange(student.id, updated.status);
+      setStatusNotice(active ? "Student reactivated." : "Student deactivated. Their record and history are retained.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update student status");
+    } finally {
+      setSavingStatus(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-foreground/30 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
@@ -480,6 +529,7 @@ function StudentProfile({ student, onClose }: { student: Student; onClose: () =>
         </div>
         <div className="p-6">
           {error && <p role="alert" className="mb-4 text-sm text-destructive">{error}</p>}
+          {statusNotice && <p role="status" className="mb-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{statusNotice}</p>}
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading saved profile details…</p>
           ) : activeTab === "Overview" ? (
@@ -498,6 +548,23 @@ function StudentProfile({ student, onClose }: { student: Student; onClose: () =>
             <ProfileMetric label="Grade records" value="—" note="Student grade details are not connected to this profile yet." />
           ) : (
             <ProfileMetric label="Fee balance" value="—" note="Student fee balances are not connected to this profile yet." />
+          )}
+          {canManageStudents && (
+            <div className="mt-6 border-t border-border pt-4">
+              <button
+                type="button"
+                onClick={() => void toggleStudentStatus()}
+                disabled={savingStatus || loading}
+                className={profile.status === "Active" ? "admin-btn-secondary text-destructive" : "admin-btn-primary"}
+              >
+                {savingStatus ? "Saving…" : profile.status === "Active" ? "Deactivate student" : "Reactivate student"}
+              </button>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {profile.status === "Active"
+                  ? "Deactivation keeps this student’s record and history but removes them from active school workflows."
+                  : "Reactivation restores this student to active school workflows."}
+              </p>
+            </div>
           )}
         </div>
       </div>

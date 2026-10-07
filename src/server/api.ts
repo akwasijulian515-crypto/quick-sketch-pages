@@ -326,7 +326,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/teaching-setup": { GET: ["school_admin"], POST: ["school_admin"] },
   };
   const workflowMethodRoles = workflowRoles[url.pathname]?.[request.method]
-    ?? (studentProfileMatch && request.method === "GET" ? ["school_admin"] : undefined)
+    ?? (studentProfileMatch && ["GET", "PATCH"].includes(request.method) ? ["school_admin"] : undefined)
+    ?? (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined)
     ?? (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
   const schoolDataRoute = url.pathname === "/api/school/classes"
     || url.pathname === "/api/school/students"
@@ -352,6 +353,24 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (studentProfileMatch) {
       if (!uuidOrNull(studentProfileMatch[1])) return badRequest("Invalid student ID");
+      if (request.method === "PATCH") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object" || typeof payload["active"] !== "boolean") {
+          return badRequest("Choose whether the student should be active");
+        }
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            update students
+            set active = ${payload["active"]}
+            where id = ${studentProfileMatch[1]}::uuid
+              and school_id = ${school.schoolId}::uuid
+            returning id, first_name, last_name, admission_number as student_id_number,
+                      case when active then 'active' else 'inactive' end as status
+          `,
+        );
+        if (!rows[0]) return json({ error: "Student not found" }, 404);
+        return json({ student: rows[0] });
+      }
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           select st.id, st.first_name, st.last_name,
@@ -780,6 +799,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             from input_marks input
             join class_subjects cs on cs.id = ${classSubjectId}::uuid and cs.school_id = ${school.schoolId}::uuid
             join classes c on c.id = cs.class_id and c.school_id = cs.school_id
+            join students st on st.id = input.student_id and st.school_id = cs.school_id and st.active
             join terms term on term.id = ${termId}::uuid and term.school_id = c.school_id
               and term.academic_year_id = c.academic_year_id
             join class_enrollments e on e.student_id = input.student_id
@@ -1389,25 +1409,65 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const body = payload as Record<string, unknown>;
       const classId = body["class_id"];
       const teacherId = body["teacher_user_id"];
+      const assignmentType = body["assignment_type"] === "class_teacher" ? "class_teacher" : "subject";
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(teacherId) || !teacherId) return badRequest("Choose a valid class and teacher");
+      if (assignmentType === "class_teacher") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with selected_class as materialized (
+              select id, school_id
+              from classes
+              where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
+            ),
+            selected_teacher as materialized (
+              select u.id
+              from users u
+              join memberships m on m.user_id = u.id
+              where u.id = ${teacherId}::uuid
+                and m.school_id = ${school.schoolId}::uuid
+                and m.role = 'teacher'
+            ),
+            saved_staff as (
+              insert into staff_profiles (school_id, user_id, job_title)
+              select ${school.schoolId}::uuid, teacher.id, 'Teacher'
+              from selected_class cross join selected_teacher teacher
+              on conflict (school_id, user_id)
+                do update set job_title = coalesce(staff_profiles.job_title, excluded.job_title)
+              returning id, school_id
+            ),
+            assigned_class as (
+              update classes c
+              set class_teacher_id = staff.id
+              from selected_class sc
+              cross join saved_staff staff
+              where c.id = sc.id and c.school_id = sc.school_id
+              returning c.id, c.class_teacher_id
+            )
+            select id as class_id, class_teacher_id from assigned_class
+          `,
+        );
+        if (!rows[0]) return json({ error: "Could not assign this teacher to the class" }, 400);
+        return json({ class_teacher: rows[0] });
+      }
+
       const code = typeof body["subject_code"] === "string" ? body["subject_code"].trim().toUpperCase() : "";
       const subjectName = typeof body["subject_name"] === "string" ? body["subject_name"].trim() : "";
-      const isClassTeacher = body["is_class_teacher"] === true;
-      if (!uuidOrNull(classId) || !classId || !uuidOrNull(teacherId) || !teacherId) return badRequest("Choose a valid class and teacher");
       if (code.length < 1 || code.length > 24 || !/^[A-Z0-9-]+$/.test(code)) return badRequest("Subject code must use letters, numbers, or hyphens");
       if (subjectName.length < 2 || subjectName.length > 120) return badRequest("Subject name must be 2–120 characters");
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
-          with selected_class as (
+          with selected_class as materialized (
             select id, school_id, academic_year_id from classes
             where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
           ),
-          selected_teacher as (
+          selected_teacher as materialized (
             select u.id, u.email from users u join memberships m on m.user_id = u.id
             where u.id = ${teacherId}::uuid and m.school_id = ${school.schoolId}::uuid and m.role = 'teacher'
           ),
           saved_subject as (
             insert into subjects (school_id, code, name)
             select ${school.schoolId}::uuid, ${code}, ${subjectName}
+            from selected_class cross join selected_teacher
             on conflict (school_id, code) do update set name = excluded.name
             returning id, code, name
           ),
@@ -1419,7 +1479,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           ),
           saved_staff as (
             insert into staff_profiles (school_id, user_id, job_title)
-            select ${school.schoolId}::uuid, teacher.id, 'Teacher' from selected_teacher teacher
+            select ${school.schoolId}::uuid, teacher.id, 'Teacher'
+            from selected_class cross join selected_teacher teacher
             on conflict (school_id, user_id) do update set job_title = coalesce(staff_profiles.job_title, excluded.job_title)
             returning id, school_id
           ),
@@ -1431,16 +1492,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             on conflict (staff_profile_id, class_subject_id, academic_year_id)
               do update set is_primary_teacher = teaching_assignments.is_primary_teacher
             returning id
-          ),
-          class_teacher as (
-            update classes c
-            set class_teacher_id = sp.id
-            from selected_class sc cross join saved_staff sp
-            where ${isClassTeacher} and c.id = sc.id and c.school_id = sc.school_id
-            returning c.id
           )
-          select sa.id from saved_assignment sa
-          left join class_teacher ct on true
+          select id from saved_assignment
         `,
       );
       if (!rows[0]) return json({ error: "Could not assign this subject and teacher to the class" }, 400);
@@ -1777,10 +1830,27 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           left join students st
             on st.id = e.student_id and st.school_id = e.school_id and st.active
           where c.id = ${classRosterMatch[1]}::uuid and c.school_id = ${school.schoolId}::uuid
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (
+                select sp.id from staff_profiles sp
+                where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+              )
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id in (
+                    select cs.id from class_subjects cs
+                    where cs.school_id = c.school_id and cs.class_id = c.id
+                  )
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
           group by c.id
         `,
       );
-      if (!rows[0]) return json({ error: "Class not found" }, 404);
+      if (!rows[0]) return json({ error: "Class not found or you are not assigned to it" }, 404);
       return json({ class_id: String(rows[0]["class_id"]), students: rows[0]["students"] });
     }
   }
