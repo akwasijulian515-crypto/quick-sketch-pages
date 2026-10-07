@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Activity, Building2, Check, CheckCircle2, Clock3, Copy, ExternalLink, Eye, Mail, Plus, Search, ShieldCheck, UserPlus, X } from "lucide-react";
+import { Activity, Building2, Check, CheckCircle2, Clock3, Copy, ExternalLink, Eye, Mail, Plus, Search, ShieldCheck, Trash2, UserPlus, X } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -100,10 +100,14 @@ function SuperAdminPage() {
       return loadedSchool ? [...current, { ...loadedSchool, status }] : current;
     });
   }
-  return <SchoolShell title="Super Admin" platform><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><ShieldCheck className="size-5" /></div><h1 className="font-display text-3xl font-bold">Klasora Platform</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Control school tenants, approve onboarding, and oversee platform health without entering a school&apos;s operational workspace.</p></div><Button onClick={() => setCreating(true)}><Plus />Create school</Button></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Active schools" value={String(schools.filter((school) => school.status === "Active").length)} note={`${schools.length} total tenant workspaces`} /><Metric label="Pending onboarding" value={String(pending.length)} note="Requires Super Admin approval" /><Metric label="Platform students" value={schools.reduce((total, school) => total + (school.students ?? 0), 0).toLocaleString()} note="Across active and trial schools" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={tab === "schools"} set={() => setTab("schools")} label="School directory" /><Tab active={tab === "onboarding"} set={() => setTab("onboarding")} label={`Onboarding (${pending.length})`} /><Tab active={tab === "platform"} set={() => setTab("platform")} label="Platform health" /></div>{tab === "schools" && <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schools or subdomains" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>}</div>  {tab === "schools" && <Directory schools={filtered} setStatus={updateStatus} rootDomain={rootDomain} />}{tab === "onboarding" && <Onboarding applications={applications} approve={approve} openSignup={() => navigate({ to: "/signup" })} rootDomain={rootDomain} />}{tab === "platform" && <Health schools={schools} />}</section></div>{creating && <CreateDialog name={name} subdomain={subdomain} color={color} setName={(value) => { setName(value); setSubdomain(slugify(value)); }} setSubdomain={(value) => setSubdomain(slugify(value))} setColor={setColor} close={() => setCreating(false)} submit={createSchool} />}</SchoolShell>;
+  function removeSchool(school: School) {
+    setSchools((current) => current.filter((item) => item.id !== school.id));
+    setApplications((current) => current.filter((application) => application.subdomain !== school.subdomain));
+  }
+  return <SchoolShell title="Super Admin" platform><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><ShieldCheck className="size-5" /></div><h1 className="font-display text-3xl font-bold">Klasora Platform</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Control school tenants, approve onboarding, and oversee platform health without entering a school&apos;s operational workspace.</p></div><Button onClick={() => setCreating(true)}><Plus />Create school</Button></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Active schools" value={String(schools.filter((school) => school.status === "Active").length)} note={`${schools.length} total tenant workspaces`} /><Metric label="Pending onboarding" value={String(pending.length)} note="Requires Super Admin approval" /><Metric label="Platform students" value={schools.reduce((total, school) => total + (school.students ?? 0), 0).toLocaleString()} note="Across active and trial schools" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={tab === "schools"} set={() => setTab("schools")} label="School directory" /><Tab active={tab === "onboarding"} set={() => setTab("onboarding")} label={`Onboarding (${pending.length})`} /><Tab active={tab === "platform"} set={() => setTab("platform")} label="Platform health" /></div>{tab === "schools" && <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schools or subdomains" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>}</div>  {tab === "schools" && <Directory schools={filtered} setStatus={updateStatus} onDeleted={removeSchool} rootDomain={rootDomain} />}{tab === "onboarding" && <Onboarding applications={applications} approve={approve} openSignup={() => navigate({ to: "/signup" })} rootDomain={rootDomain} />}{tab === "platform" && <Health schools={schools} />}</section></div>{creating && <CreateDialog name={name} subdomain={subdomain} color={color} setName={(value) => { setName(value); setSubdomain(slugify(value)); }} setSubdomain={(value) => setSubdomain(slugify(value))} setColor={setColor} close={() => setCreating(false)} submit={createSchool} />}</SchoolShell>;
 }
 
-function Directory({ schools, setStatus, rootDomain }: { schools: School[]; setStatus: (id: string, status: SchoolStatus, loadedSchool?: School) => void; rootDomain: string | null }) {
+function Directory({ schools, setStatus, onDeleted, rootDomain }: { schools: School[]; setStatus: (id: string, status: SchoolStatus, loadedSchool?: School) => void; onDeleted: (school: School) => void; rootDomain: string | null }) {
   const navigate = useNavigate();
   const [directorySchools, setDirectorySchools] = useState(schools);
   const [platformToken, setPlatformToken] = useState("");
@@ -111,6 +115,9 @@ function Directory({ schools, setStatus, rootDomain }: { schools: School[]; setS
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [copiedSchoolId, setCopiedSchoolId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<School | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const session = usePlatformSession();
 
   const loadSchools = useCallback(async () => {
@@ -171,6 +178,28 @@ function Directory({ schools, setStatus, rootDomain }: { schools: School[]; setS
     }
   }
 
+  async function deleteSchool() {
+    if (!deleteTarget || deleteConfirmation !== deleteTarget.name) return;
+    setDeleting(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/platform/schools/${encodeURIComponent(deleteTarget.id)}`, {
+        method: "DELETE",
+        headers: await platformAuthHeaders(),
+      });
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? "Could not delete school");
+      setDirectorySchools((current) => current.filter((school) => school.id !== deleteTarget.id));
+      onDeleted(deleteTarget);
+      setDeleteTarget(null);
+      setDeleteConfirmation("");
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Could not delete school");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return <div>
     {session.checkingSession ? <p className="border-b border-border px-5 py-4 text-sm text-muted-foreground">Checking Super Admin session...</p> : session.authenticated ? (
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
@@ -190,16 +219,30 @@ function Directory({ schools, setStatus, rootDomain }: { schools: School[]; setS
       </div>
     )}
     {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
-    {session.authenticated && <DirectoryTable schools={directorySchools} setStatus={updateDirectoryStatus} rootDomain={rootDomain} copiedSchoolId={copiedSchoolId} copyTenantLink={copyTenantLink} />}
+    {session.authenticated && <DirectoryTable schools={directorySchools} setStatus={updateDirectoryStatus} rootDomain={rootDomain} copiedSchoolId={copiedSchoolId} copyTenantLink={copyTenantLink} onDelete={setDeleteTarget} />}
     {!session.authenticated && !session.checkingSession && <p className="px-5 py-10 text-center text-sm text-muted-foreground">Sign in to load schools saved in Neon.</p>}
+    {deleteTarget && <DeleteSchoolDialog school={deleteTarget} confirmation={deleteConfirmation} setConfirmation={setDeleteConfirmation} deleting={deleting} onClose={() => { if (!deleting) { setDeleteTarget(null); setDeleteConfirmation(""); } }} onConfirm={() => void deleteSchool()} />}
   </div>;
 }
 
-function DirectoryTable({ schools, setStatus, rootDomain, copiedSchoolId, copyTenantLink }: { schools: School[]; setStatus: (id: string, status: SchoolStatus) => void; rootDomain: string | null; copiedSchoolId: string; copyTenantLink: (school: School) => void }) {
+function DirectoryTable({ schools, setStatus, rootDomain, copiedSchoolId, copyTenantLink, onDelete }: { schools: School[]; setStatus: (id: string, status: SchoolStatus) => void; rootDomain: string | null; copiedSchoolId: string; copyTenantLink: (school: School) => void; onDelete: (school: School) => void }) {
   return <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["School", "Workspace", "Students", "Admins", "Status", "Control"].map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{schools.map((school) => {
     const loginUrl = tenantLoginUrl(school.subdomain, rootDomain);
-    return <tr key={school.id} className="hover:bg-muted/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><div className="grid size-8 place-items-center rounded-md text-white" style={{ backgroundColor: school.color }}><Building2 className="size-4" /></div><span className="font-medium">{school.name}</span></div></td><td className="px-5 py-4"><div className="flex items-center gap-2"><a href={loginUrl} target="_blank" rel="noreferrer" className="max-w-64 break-all font-mono text-xs text-secondary-foreground underline">{loginUrl}</a><Button size="icon" variant="ghost" aria-label={`Copy ${school.name} tenant login link`} title="Copy tenant login link" onClick={() => copyTenantLink(school)}>{copiedSchoolId === school.id ? <Check /> : <Copy />}</Button><a href={loginUrl} target="_blank" rel="noreferrer" aria-label={`Open ${school.name} tenant login`} title="Open tenant login" className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"><ExternalLink className="size-4" /></a></div></td><td className="px-5 py-4">{(school.students ?? 0).toLocaleString()}</td><td className="px-5 py-4">{school.admins}</td><td className="px-5 py-4"><Status status={school.status} /></td><td className="px-5 py-4"><select value={school.status} onChange={(event) => setStatus(school.id, event.target.value as SchoolStatus)} className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none"><option>Active</option><option>Trial</option><option>Suspended</option></select></td></tr>;
+    return <tr key={school.id} className="hover:bg-muted/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><div className="grid size-8 place-items-center rounded-md text-white" style={{ backgroundColor: school.color }}><Building2 className="size-4" /></div><span className="font-medium">{school.name}</span></div></td><td className="px-5 py-4"><div className="flex items-center gap-2"><a href={loginUrl} target="_blank" rel="noreferrer" className="max-w-64 break-all font-mono text-xs text-secondary-foreground underline">{loginUrl}</a><Button size="icon" variant="ghost" aria-label={`Copy ${school.name} tenant login link`} title="Copy tenant login link" onClick={() => copyTenantLink(school)}>{copiedSchoolId === school.id ? <Check /> : <Copy />}</Button><a href={loginUrl} target="_blank" rel="noreferrer" aria-label={`Open ${school.name} tenant login`} title="Open tenant login" className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"><ExternalLink className="size-4" /></a></div></td><td className="px-5 py-4">{(school.students ?? 0).toLocaleString()}</td><td className="px-5 py-4">{school.admins}</td><td className="px-5 py-4"><Status status={school.status} /></td><td className="px-5 py-4"><div className="flex items-center gap-2"><select value={school.status} onChange={(event) => setStatus(school.id, event.target.value as SchoolStatus)} className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none"><option>Active</option><option>Trial</option><option>Suspended</option></select><Button type="button" size="icon" variant="ghost" aria-label={`Permanently delete ${school.name}`} title={`Permanently delete ${school.name}`} onClick={() => onDelete(school)} className="text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="size-4" /></Button></div></td></tr>;
   })}</tbody></table>{schools.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No schools loaded. Enter the platform token above to load saved schools.</p>}</div>;
+}
+
+function DeleteSchoolDialog({ school, confirmation, setConfirmation, deleting, onClose, onConfirm }: { school: School; confirmation: string; setConfirmation: (value: string) => void; deleting: boolean; onClose: () => void; onConfirm: () => void }) {
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/40 p-4 backdrop-blur-sm">
+    <form role="dialog" aria-modal="true" aria-labelledby="delete-school-title" aria-describedby="delete-school-description" onSubmit={(event) => { event.preventDefault(); onConfirm(); }} className="glass-panel w-full max-w-lg rounded-lg border border-destructive/30 p-6 shadow-2xl">
+      <div className="flex items-start gap-3">
+        <div className="grid size-10 shrink-0 place-items-center rounded-md bg-destructive/10 text-destructive"><Trash2 className="size-5" /></div>
+        <div><h2 id="delete-school-title" className="font-display text-xl font-bold">Permanently delete {school.name}?</h2><p id="delete-school-description" className="mt-2 text-sm text-muted-foreground">This permanently deletes the school, its tenant data, memberships, audit history, and matching onboarding application. This cannot be undone.</p><p className="mt-2 text-sm text-muted-foreground">Platform user accounts are retained, but their access through this school is removed.</p></div>
+      </div>
+      <label className="mt-5 block text-sm"><span className="mb-1 block text-xs font-medium text-muted-foreground">Type <span className="font-semibold text-foreground">{school.name}</span> to confirm</span><input autoFocus required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring" /></label>
+      <div className="mt-6 flex justify-end gap-2"><Button type="button" variant="outline" disabled={deleting} onClick={onClose}>Cancel</Button><Button type="submit" variant="destructive" disabled={deleting || confirmation !== school.name}>{deleting ? "Deleting..." : "Delete school permanently"}</Button></div>
+    </form>
+  </div>;
 }
 function Onboarding({ applications, approve, openSignup, rootDomain }: { applications: Application[]; approve: (application: Application) => void; openSignup: () => void; rootDomain: string | null }) {
   const navigate = useNavigate();

@@ -2112,11 +2112,32 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
 
   const schoolStatusMatch = url.pathname.match(/^\/api\/platform\/schools\/([0-9a-f-]+)\/status$/i);
-  if (url.pathname !== "/api/platform/schools" && !schoolStatusMatch) return json({ error: "Not found" }, 404);
+  const schoolDeleteMatch = url.pathname.match(/^\/api\/platform\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (url.pathname !== "/api/platform/schools" && !schoolStatusMatch && !schoolDeleteMatch) return json({ error: "Not found" }, 404);
   if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env))) return json({ error: "Platform API is not configured" }, 503);
   if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
 
   const sql = database(env);
+  if (schoolDeleteMatch) {
+    if (request.method !== "DELETE") return json({ error: "Method not allowed" }, 405);
+    const rows = await sql`
+      with deleted_school as (
+        delete from schools
+        where id = ${schoolDeleteMatch[1]}::uuid
+        returning id, subdomain
+      ),
+      deleted_application as (
+        delete from school_onboarding_applications application
+        using deleted_school school
+        where application.requested_subdomain = school.subdomain
+        returning application.id
+      )
+      select id, subdomain from deleted_school
+    `;
+    const deletedSchool = rows[0];
+    if (!deletedSchool) return json({ error: "School not found" }, 404);
+    return json({ deleted: true, school: { id: String(deletedSchool["id"]), subdomain: String(deletedSchool["subdomain"]) } });
+  }
   if (schoolStatusMatch) {
     if (request.method !== "PATCH") return json({ error: "Method not allowed" }, 405);
     const payload: unknown = await request.json().catch(() => null);
