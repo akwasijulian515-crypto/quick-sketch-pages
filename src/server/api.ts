@@ -72,12 +72,24 @@ function hasAuthConfig(env: RuntimeEnv) {
 
 function bearerToken(request: Request) {
   const authorization = request.headers.get("authorization");
-  if (!authorization) return null;
-  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
-  const token = match?.[1];
-  // Managed Auth sessions may be opaque; authenticateNeonToken validates JWTs
-  // cryptographically and otherwise checks the unexpired session row.
-  return token && /^[\x21-\x7e]{1,4096}$/.test(token) ? token : null;
+  const match = authorization ? /^Bearer\s+(\S+)$/i.exec(authorization.trim()) : null;
+  const headerToken = match?.[1];
+  if (headerToken && /^[\x21-\x7e]{1,4096}$/.test(headerToken)) return headerToken;
+
+  const cookie = request.headers.get("cookie")?.split(";").map((part) => part.trim())
+    .find((part) => part.startsWith("klasora_auth_session="));
+  if (!cookie) return null;
+  try {
+    const sessionToken = decodeURIComponent(cookie.slice("klasora_auth_session=".length));
+    return /^[\x21-\x7e]{1,4096}$/.test(sessionToken) ? sessionToken : null;
+  } catch {
+    return null;
+  }
+}
+
+function authSessionCookie(token: string, request: Request, maxAge: number) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `klasora_auth_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=${maxAge}${secure}`;
 }
 
 function authJwks(env: RuntimeEnv) {
@@ -1903,6 +1915,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     return json({ eligible });
   }
 
+  if (url.pathname === "/api/auth/session") {
+    if (request.method !== "DELETE") return json({ error: "Method not allowed" }, 405);
+    return json({ authenticated: false }, 200, { "set-cookie": authSessionCookie("", request, 0) });
+  }
+
   if (url.pathname === "/api/auth/context") {
     if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
     const bearer = bearerToken(request);
@@ -1942,7 +1959,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       `,
     );
     const platformAdmin = memberships.find((row) => row["role"] === "super_admin" && row["school_id"] == null);
-    if (platformAdmin) return json({ user: { email: tokenEmail }, membership: { role: "super_admin", schoolId: null } });
+    if (platformAdmin) {
+      return json(
+        { user: { email: tokenEmail }, membership: { role: "super_admin", schoolId: null } },
+        200,
+        { "set-cookie": authSessionCookie("", request, 0) },
+      );
+    }
 
     const tenant = resolveTenant(request, env.ROOT_DOMAIN);
     const querySubdomain = url.searchParams.get("tenant")?.trim().toLowerCase() ?? null;
@@ -1981,7 +2004,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         primaryColor: String(tenantMembership["primary_color"]),
         crestUrl: tenantMembership["crest_url"] ? String(tenantMembership["crest_url"]) : null,
       },
-    });
+    }, 200, { "set-cookie": authSessionCookie(bearer, request, 900) });
   }
 
   if (url.pathname === "/api/onboarding/applications") {

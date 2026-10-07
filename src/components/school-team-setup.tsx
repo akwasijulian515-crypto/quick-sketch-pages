@@ -19,6 +19,24 @@ type TeachingRow = {
 };
 type Teacher = { user_id: string; email: string; display_name: string };
 
+async function refreshSchoolApiSession(token: string) {
+  const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  const endpoint = tenant
+    ? `/api/auth/context?tenant=${encodeURIComponent(tenant)}`
+    : "/api/auth/context";
+  const response = await fetch(endpoint, {
+    credentials: "same-origin",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+      ? payload.error
+      : "Could not refresh the school sign-in session";
+    throw new Error(message);
+  }
+}
+
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getNeonAccessToken();
   const url = new URL(path, window.location.origin);
@@ -51,6 +69,7 @@ export function SchoolTeamSetup() {
     setLoading(true);
     setError("");
     try {
+      await refreshSchoolApiSession(await getNeonAccessToken());
       const [teamResult, setupResult] = await Promise.all([
         schoolApi<{ team: TeamMember[] }>("/api/school/team"),
         schoolApi<{ assignments: TeachingRow[]; teachers: Teacher[] }>("/api/school/teaching-setup"),

@@ -119,6 +119,7 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
             sessionStorage.removeItem("hg-role");
             sessionStorage.removeItem("hg-school");
             if (platform) await fetch("/api/platform/session", { method: "DELETE" });
+            await fetch("/api/auth/session", { method: "DELETE" });
             await neonAuthClient?.signOut().catch(() => undefined);
             onNavigate?.();
             navigate({ to: platform ? "/" : "/login" });
