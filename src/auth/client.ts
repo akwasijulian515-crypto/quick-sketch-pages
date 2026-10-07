@@ -38,15 +38,9 @@ export async function getNeonAccessToken() {
   const client = await ensureNeonAuthClient();
   if (!client) throw new Error("Neon Auth is not configured for this app");
 
-  const sessionResult = await client.getSession();
-  if (sessionResult.error) throw new Error(sessionResult.error.message);
-
-  let token = sessionResult.data?.session?.token;
-  if (typeof token !== "string" || !token) {
-    const tokenResult = await client.token();
-    if (tokenResult.error) throw new Error(tokenResult.error.message);
-    token = tokenResult.data?.token;
-  }
+  const tokenResult = await client.token();
+  if (tokenResult.error) throw new Error(tokenResult.error.message);
+  const token = tokenResult.data?.token;
 
   if (typeof token !== "string" || !token) {
     throw new Error("Neon Auth did not return a valid session. Please sign in again.");
