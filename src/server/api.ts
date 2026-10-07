@@ -95,8 +95,23 @@ async function authenticateNeonToken(token: string, env: RuntimeEnv) {
   try {
     const verified = await verifyNeonToken(token, env);
     const userId = typeof verified.payload.sub === "string" ? verified.payload.sub : "";
-    const email = typeof verified.payload["email"] === "string" ? verified.payload["email"].trim().toLowerCase() : "";
-    if (userId && email) return { userId, email };
+    if (!userId) {
+      console.warn("Verified Neon Auth JWT is missing its subject claim");
+      return null;
+    }
+    const sql = database(env);
+    const authUsers = await sql`
+      select lower(email) as email
+      from neon_auth.user
+      where id = ${userId}
+      limit 1
+    `;
+    const email = typeof authUsers[0]?.["email"] === "string" ? authUsers[0]["email"] : "";
+    if (!email) {
+      console.warn("Verified Neon Auth JWT subject has no matching Auth user");
+      return null;
+    }
+    return { userId, email };
   } catch (jwtError) {
     if (!env.DATABASE_URL) throw jwtError;
     const sql = database(env);
