@@ -70,6 +70,14 @@ function hasAuthConfig(env: RuntimeEnv) {
   return Boolean(env.NEON_AUTH_BASE_URL || env.NEON_AUTH_URL);
 }
 
+function bearerToken(request: Request) {
+  const authorization = request.headers.get("authorization");
+  if (!authorization) return null;
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
+  const token = match?.[1];
+  return token && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) ? token : null;
+}
+
 function authJwks(env: RuntimeEnv) {
   const normalizedUrl = env.NEON_AUTH_JWKS_URL ?? `${authBaseUrl(env)}/.well-known/jwks.json`;
   if (cachedAuthJwks && cachedAuthJwksUrl === normalizedUrl) return cachedAuthJwks;
@@ -188,8 +196,8 @@ async function requireSchoolContext(
   allowedRoles: readonly string[],
 ): Promise<SchoolAdminContext | Response> {
   if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
-  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!bearer) return json({ error: "Authentication is required" }, 401);
+  const bearer = bearerToken(request);
+  if (!bearer) return json({ error: "A valid sign-in token is required. Please sign in again." }, 401);
 
   let userId: string;
   let email: string;
@@ -1880,8 +1888,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
   if (url.pathname === "/api/auth/context") {
     if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
-    const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-    if (!bearer) return json({ error: "Authentication is required" }, 401);
+    const bearer = bearerToken(request);
+    if (!bearer) return json({ error: "A valid sign-in token is required. Please sign in again." }, 401);
 
     let authUserId: string;
     let tokenEmail: string;

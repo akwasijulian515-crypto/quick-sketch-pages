@@ -34,17 +34,44 @@ export function ensureNeonAuthClient(): Promise<NeonAuthClient | null> {
 
 if (typeof window !== "undefined") void ensureNeonAuthClient();
 
-export async function getNeonAccessToken() {
+let accessTokenPromise: Promise<string> | null = null;
+
+function asJwt(value: unknown) {
+  if (typeof value !== "string") return null;
+  const token = value.trim().replace(/^Bearer\s+/i, "").trim();
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token) ? token : null;
+}
+
+async function loadNeonAccessToken() {
   const client = await ensureNeonAuthClient();
   if (!client) throw new Error("Neon Auth is not configured for this app");
 
-  const tokenResult = await client.token();
-  if (tokenResult.error) throw new Error(tokenResult.error.message);
-  const token = tokenResult.data?.token;
-
-  if (typeof token !== "string" || !token) {
-    throw new Error("Neon Auth did not return a valid session. Please sign in again.");
+  let tokenError: unknown;
+  try {
+    const tokenResult = await client.token();
+    if (tokenResult.error) tokenError = tokenResult.error;
+    else {
+      const token = asJwt(tokenResult.data?.token);
+      if (token) return token;
+    }
+  } catch (error) {
+    tokenError = error;
   }
 
-  return token;
+  const sessionResult = await client.getSession();
+  if (sessionResult.error) throw new Error(sessionResult.error.message);
+  const sessionToken = asJwt(sessionResult.data?.session?.token);
+  if (sessionToken) return sessionToken;
+
+  if (tokenError instanceof Error) throw new Error(tokenError.message);
+  throw new Error("Neon Auth did not return a valid access token. Please sign out and sign in again.");
+}
+
+export function getNeonAccessToken() {
+  if (!accessTokenPromise) {
+    accessTokenPromise = loadNeonAccessToken().finally(() => {
+      accessTokenPromise = null;
+    });
+  }
+  return accessTokenPromise;
 }

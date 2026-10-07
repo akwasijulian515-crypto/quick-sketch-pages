@@ -21,6 +21,9 @@ type Teacher = { user_id: string; email: string; display_name: string };
 
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getNeonAccessToken();
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
+    throw new Error("Your sign-in session is not ready. Please sign out and sign in again.");
+  }
   const url = new URL(path, window.location.origin);
   const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
   if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
