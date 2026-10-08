@@ -151,7 +151,7 @@ function LoginPage() {
         throw new Error(payload?.error ?? "This account has no school access");
 
       const membership = payload.membership;
-      sessionStorage.setItem("hg-role", membership.role);
+      sessionStorage.setItem("hg-role", String(membership.role));
       if (membership.role === "super_admin") {
         navigate({ to: "/admin" });
         return;

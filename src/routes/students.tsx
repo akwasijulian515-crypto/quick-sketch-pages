@@ -536,7 +536,7 @@ function StudentProfile({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <InfoCard icon={CalendarDays} label="Date of Birth" value={profile.dob || "Not recorded"} />
               <InfoCard icon={GraduationCap} label="Gender" value={profile.gender || "Not recorded"} />
-              <InfoCard icon={Users} label="Guardian" value={profile.guardian || "Not recorded"} sub={profile.guardianRelationship || undefined} />
+              <InfoCard icon={Users} label="Guardian" value={profile.guardian || "Not recorded"} {...(profile.guardianRelationship ? { sub: profile.guardianRelationship } : {})} />
               <InfoCard icon={Phone} label="Guardian Phone" value={profile.phone || "Not recorded"} />
               <InfoCard icon={MapPin} label="Address" value={profile.address || "Not recorded"} />
               <InfoCard icon={Phone} label="Emergency Contact" value={profile.emergencyContact || "Not recorded"} />
