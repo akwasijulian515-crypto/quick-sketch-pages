@@ -1,9 +1,10 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRight, BookOpenCheck, CalendarDays, CheckCircle2, FileText, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getNeonAccessToken, neonAuthClient } from "../auth/client";
 import { Button } from "@/components/ui/button";
+import { calculateMarkResult } from "@/lib/grade-calculations";
 
 export const Route = createFileRoute("/teacher")({
   head: () => ({
@@ -368,8 +369,10 @@ function TeacherMarkEntry() {
   const [students, setStudents] = useState<MarkStudent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [autoSaveState, setAutoSaveState] = useState<"saved" | "pending" | "saving" | "error">("saved");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const markRevision = useRef(0);
   const selected = assignments.find((item) => `${item.class_subject_id}:${item.term_id}` === selectedKey);
 
   useEffect(() => {
@@ -399,7 +402,12 @@ function TeacherMarkEntry() {
     void teacherApi<{ students: MarkStudent[] }>(
       `/api/school/marks?class_subject_id=${encodeURIComponent(selected.class_subject_id)}&term_id=${encodeURIComponent(selected.term_id)}`,
     )
-      .then((result) => { if (!cancelled) setStudents(result.students); })
+      .then((result) => {
+        if (!cancelled) {
+          setStudents(result.students);
+          setAutoSaveState("saved");
+        }
+      })
       .catch((loadError: unknown) => {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load marks");
       })
@@ -410,20 +418,27 @@ function TeacherMarkEntry() {
   function updateMark(studentId: string, field: typeof markFields[number][0], input: string) {
     const limit = markFields.find(([key]) => key === field)?.[2] ?? 0;
     if (input !== "" && (!/^\d{0,3}(?:\.\d{0,2})?$/.test(input) || Number(input) > limit)) return;
-    setStudents((current) => current.map((student) => student.student_id === studentId
-      ? { ...student, [field]: input === "" ? null : Number(input), total_score: null, performance_level: null }
-      : student));
+    markRevision.current += 1;
+    setStudents((current) => current.map((student) => {
+      if (student.student_id !== studentId) return student;
+      const updated = { ...student, [field]: input === "" ? null : Number(input) };
+      return { ...updated, ...calculateMarkResult(updated) };
+    }));
+    setAutoSaveState("pending");
+    setError("");
     setNotice("");
   }
 
-  async function saveMarks() {
-    if (!selected || students.length === 0) return;
+  const saveMarks = useCallback(async (): Promise<boolean> => {
+    if (!selected || students.length === 0) return false;
+    const savedRevision = markRevision.current;
     setSaving(true);
+    setAutoSaveState("saving");
     setError("");
     setNotice("");
     try {
       await teacherApi("/api/school/marks", {
-        method: "PUT",
+        method: "POST",
         body: JSON.stringify({
           class_subject_id: selected.class_subject_id,
           term_id: selected.term_id,
@@ -437,25 +452,45 @@ function TeacherMarkEntry() {
           })),
         }),
       });
-      const refreshed = await teacherApi<{ students: MarkStudent[] }>(
-        `/api/school/marks?class_subject_id=${encodeURIComponent(selected.class_subject_id)}&term_id=${encodeURIComponent(selected.term_id)}`,
-      );
-      setStudents(refreshed.students);
       setNotice("Marks saved. Final score and NaCCA performance level are calculated automatically.");
+      setAutoSaveState(markRevision.current === savedRevision ? "saved" : "pending");
+      return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save marks");
+      setAutoSaveState("error");
+      return false;
     } finally {
       setSaving(false);
     }
+  }, [selected, students]);
+
+  useEffect(() => {
+    if (autoSaveState !== "pending" || saving || !selected || students.length === 0) return;
+    const timer = window.setTimeout(() => { void saveMarks(); }, 900);
+    return () => window.clearTimeout(timer);
+  }, [autoSaveState, saveMarks, saving, selected, students.length]);
+
+  async function changeAssignment(nextKey: string) {
+    if ((autoSaveState === "pending" || autoSaveState === "error") && !(await saveMarks())) return;
+    setSelectedKey(nextKey);
   }
+
+  const autoSaveMessage = autoSaveState === "saving" ? "Saving changes…"
+    : autoSaveState === "pending" ? "Changes will save automatically…"
+      : autoSaveState === "error" ? "Auto-save failed. Use Save now to retry."
+        : "All changes saved";
 
   return <section className="glass-panel mt-5 overflow-hidden rounded-lg">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
       <div><h2 className="font-display text-lg font-bold">Subject mark sheet</h2><p className="text-xs text-muted-foreground">Coursework totals 50 marks; half of the exam score adds the remaining 50.</p></div>
-      <select aria-label="Class, subject and term" value={selectedKey} onChange={(event) => setSelectedKey(event.target.value)} className="h-9 max-w-full rounded-md border border-input bg-background px-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+      <span role="status" className={`text-xs ${autoSaveState === "error" ? "text-destructive" : "text-muted-foreground"}`}>{autoSaveMessage}</span>
+      <Button size="sm" variant="outline" disabled={saving || loading || !selected || students.length === 0} onClick={() => void saveMarks()}>{saving ? "Saving..." : "Save now"}</Button>
+      <select aria-label="Class, subject and term" value={selectedKey} disabled={saving} onChange={(event) => void changeAssignment(event.target.value)} className="h-9 max-w-full rounded-md border border-input bg-background px-3 text-sm">
         {assignments.length === 0 && <option value="">No subject assignments available</option>}
         {assignments.map((item) => <option key={`${item.class_subject_id}:${item.term_id}`} value={`${item.class_subject_id}:${item.term_id}`}>{item.class_name} · {item.subject_name} · {item.term_name}</option>)}
       </select>
+      </div>
     </div>
     {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
     {notice && <p role="status" className="mx-5 mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
@@ -466,12 +501,11 @@ function TeacherMarkEntry() {
         <thead className="bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-3 font-medium">Student</th>{markFields.map(([, label]) => <th key={label} className="px-3 py-3 font-medium">{label}</th>)}<th className="px-4 py-3 font-medium">Final /100</th><th className="px-4 py-3 font-medium">Level</th></tr></thead>
         <tbody className="divide-y divide-border/70">{students.map((student) => <tr key={student.student_id}>
           <td className="px-4 py-3"><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></td>
-          {markFields.map(([field, label, limit]) => <td key={field} className="px-3 py-3"><input aria-label={`${student.first_name} ${label}`} type="number" min="0" max={limit} step="0.01" value={student[field] ?? ""} onChange={(event) => updateMark(student.student_id, field, event.target.value)} className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center" /></td>)}
+          {markFields.map(([field, label, limit]) => <td key={field} className="px-3 py-3"><input aria-label={`${student.first_name} ${label}`} type="number" min="0" max={limit} step="0.01" value={student[field] ?? ""} disabled={saving} onChange={(event) => updateMark(student.student_id, field, event.target.value)} className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center disabled:opacity-60" /></td>)}
           <td className="px-4 py-3 font-display">{student.total_score == null ? "Incomplete" : Number(student.total_score).toFixed(2)}</td>
           <td className="px-4 py-3">{student.performance_level ?? "—"}</td>
         </tr>)}</tbody>
       </table></div>
-      <div className="flex justify-end border-t border-border px-5 py-4"><Button disabled={saving} onClick={() => void saveMarks()}>{saving ? "Saving..." : "Save marks"}</Button></div>
     </>}
   </section>;
 }
