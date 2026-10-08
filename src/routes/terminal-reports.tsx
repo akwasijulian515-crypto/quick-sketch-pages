@@ -6,6 +6,7 @@ import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SchoolShell } from "@/components/school-shell";
+import { useTenantBranding } from "@/components/tenant-branding-provider";
 import { downloadTerminalReports, type TerminalReportPdfData } from "@/lib/terminal-report-pdf";
 
 export const Route = createFileRoute("/terminal-reports")({
@@ -73,6 +74,7 @@ async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function TerminalReportsPage() {
+  const { primaryColor } = useTenantBranding();
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [years, setYears] = useState<AcademicYear[]>([]);
   const [classId, setClassId] = useState("");
@@ -178,6 +180,7 @@ function TerminalReportsPage() {
   const selectedTerm = availableTerms.find((term) => term.id === termId);
   const exportReports: TerminalReportPdfData[] = reports.map((report) => ({
     schoolName: report.school_name ?? "School",
+    primaryColor,
     student: `${report.first_name} ${report.last_name}`,
     admission: report.admission_number,
     className: selectedClass?.name ?? "",
