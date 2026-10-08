@@ -56,7 +56,7 @@ async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-export function SchoolTeamSetup() {
+export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void }) {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [classes, setClasses] = useState<TeachingRow[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -107,6 +107,7 @@ export function SchoolTeamSetup() {
       setActivationUrl(result.activation_url);
       formElement.reset();
       await load();
+      onDataChanged?.();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not add school user");
     } finally {
@@ -133,6 +134,7 @@ export function SchoolTeamSetup() {
       });
       formElement.reset();
       await load();
+      onDataChanged?.();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not assign teacher");
     } finally {
@@ -157,6 +159,7 @@ export function SchoolTeamSetup() {
       });
       formElement.reset();
       await load();
+      onDataChanged?.();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not assign class teacher");
     } finally {

@@ -41,10 +41,14 @@ const platformNavigation = [
 const schoolAdminNavigation = [
   { label: "Overview", to: "/dashboard", icon: LayoutDashboard },
   { label: "Students", to: "/students", icon: GraduationCap },
+  { label: "Payments", to: "/payments", icon: ReceiptText },
   { label: "Attendance", to: "/attendance-overview", icon: UserRoundCheck },
+  { label: "Grades", to: "/grades", icon: ScrollText },
   { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText },
   { label: "Academic setup", to: "/academic-setup", icon: CalendarDays },
   { label: "Teachers", to: "/teachers", icon: UsersRound },
+  { label: "Classes", to: "/classes", icon: School },
+  { label: "Coupons", to: "/coupons", icon: TicketCheck },
   { label: "School administration", to: "/school-admin", icon: School },
 ] as const;
 

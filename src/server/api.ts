@@ -354,7 +354,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/students": { GET: ["school_admin", "teacher"] },
     "/api/school/attendance": { GET: ["school_admin", "teacher"], POST: ["teacher"] },
     "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
-    "/api/school/marks": { GET: ["school_admin", "teacher"], PUT: ["school_admin", "teacher"] },
+    "/api/school/payments": { GET: ["school_admin", "finance"] },
+    "/api/school/coupons": { GET: ["school_admin", "teacher", "finance"] },
+    "/api/school/marks": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
     "/api/school/terminal-reports": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
     "/api/school/promotions": { GET: ["school_admin", "teacher"], POST: ["teacher"], PATCH: ["school_admin"] },
     "/api/school/academic-periods": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
@@ -740,6 +742,38 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         `,
       );
       return json({ fee: rows[0] }, 201);
+    }
+
+    if (url.pathname === "/api/school/payments" && request.method === "GET") {
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                 p.status, p.paid_at, st.first_name, st.last_name, st.admission_number
+          from payments p
+          join students st on st.id = p.student_id and st.school_id = p.school_id
+          where p.school_id = ${school.schoolId}::uuid
+          order by p.paid_at desc
+          limit 200
+        `,
+      );
+      return json({ payments: rows });
+    }
+
+    if (url.pathname === "/api/school/coupons" && request.method === "GET") {
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select c.id, c.code, c.status, c.valid_on, c.expires_at, c.created_at,
+                 st.first_name, st.last_name, st.admission_number,
+                 p.amount, p.currency, p.daily_fee_date
+          from coupons c
+          left join students st on st.id = c.student_id and st.school_id = c.school_id
+          left join payments p on p.id = c.payment_id and p.school_id = c.school_id
+          where c.school_id = ${school.schoolId}::uuid
+          order by c.created_at desc
+          limit 200
+        `,
+      );
+      return json({ coupons: rows });
     }
 
     if (url.pathname === "/api/school/marks") {
@@ -1438,17 +1472,46 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             order by u.display_name
           `,
         );
-        return json({ assignments: rows, teachers: team });
+        const subjects = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select id, code, name
+            from subjects
+            where school_id = ${school.schoolId}::uuid
+            order by name
+          `,
+        );
+        return json({ assignments: rows, teachers: team, subjects });
       }
 
       const payload: unknown = await request.json().catch(() => null);
       if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const classId = body["class_id"];
-      const teacherId = body["teacher_user_id"];
-      const assignmentType = body["assignment_type"] === "class_teacher" ? "class_teacher" : "subject";
-      if (!uuidOrNull(classId) || !classId || !uuidOrNull(teacherId) || !teacherId) return badRequest("Choose a valid class and teacher");
+      const teacherId = body["teacher_user_id"] ?? null;
+      const subjectId = body["subject_id"] ?? null;
+      const subjectCode = typeof body["subject_code"] === "string" ? body["subject_code"].trim().toUpperCase() : "";
+      const subjectName = typeof body["subject_name"] === "string" ? body["subject_name"].trim() : "";
+      const assignmentType = body["assignment_type"] === "class_teacher"
+        ? "class_teacher"
+        : body["assignment_type"] === "create_subject" ? "create_subject" : "subject";
+      if (assignmentType === "create_subject") {
+        if (subjectCode.length < 1 || subjectCode.length > 24 || !/^[A-Z0-9-]+$/.test(subjectCode)) return badRequest("Subject code must use letters, numbers, or hyphens");
+        if (subjectName.length < 2 || subjectName.length > 120) return badRequest("Subject name must be 2–120 characters");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            insert into subjects (school_id, code, name)
+            values (${school.schoolId}::uuid, ${subjectCode}, ${subjectName})
+            on conflict (school_id, code) do nothing
+            returning id, code, name
+          `,
+        );
+        if (!rows[0]) return json({ error: "A subject with that code already exists in this school" }, 409);
+        return json({ subject: rows[0] }, 201);
+      }
+      if (!uuidOrNull(classId) || !classId) return badRequest("Choose a valid class");
+      if (!uuidOrNull(teacherId)) return badRequest("Choose a valid teacher");
       if (assignmentType === "class_teacher") {
+        if (!teacherId) return badRequest("Choose a valid teacher");
         const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
           tx`
             with selected_class as materialized (
@@ -1487,30 +1550,40 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         return json({ class_teacher: rows[0] });
       }
 
-      const code = typeof body["subject_code"] === "string" ? body["subject_code"].trim().toUpperCase() : "";
-      const subjectName = typeof body["subject_name"] === "string" ? body["subject_name"].trim() : "";
-      if (code.length < 1 || code.length > 24 || !/^[A-Z0-9-]+$/.test(code)) return badRequest("Subject code must use letters, numbers, or hyphens");
-      if (subjectName.length < 2 || subjectName.length > 120) return badRequest("Subject name must be 2–120 characters");
+      if (!uuidOrNull(subjectId)) return badRequest("Choose a valid subject");
+      if (!subjectId && (subjectCode.length < 1 || subjectCode.length > 24 || !/^[A-Z0-9-]+$/.test(subjectCode))) return badRequest("Subject code must use letters, numbers, or hyphens");
+      if (!subjectId && (subjectName.length < 2 || subjectName.length > 120)) return badRequest("Subject name must be 2–120 characters");
+      if (teacherId && !uuidOrNull(teacherId)) return badRequest("Choose a valid teacher");
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           with selected_class as materialized (
             select id, school_id, academic_year_id from classes
             where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
           ),
-          selected_teacher as materialized (
-            select u.id, u.email from users u join memberships m on m.user_id = u.id
-            where u.id = ${teacherId}::uuid and m.school_id = ${school.schoolId}::uuid and m.role = 'teacher'
-          ),
           saved_subject as (
             insert into subjects (school_id, code, name)
-            select ${school.schoolId}::uuid, ${code}, ${subjectName}
-            from selected_class cross join selected_teacher
+            select ${school.schoolId}::uuid, ${subjectCode}, ${subjectName}
+            from selected_class
+            where ${subjectId}::uuid is null and ${subjectCode} <> ''
             on conflict (school_id, code) do update set name = excluded.name
-            returning id, code, name
+            returning id, school_id
+          ),
+          selected_subject as materialized (
+            select id, school_id from subjects
+            where id = ${subjectId}::uuid and school_id = ${school.schoolId}::uuid
+              and ${subjectId}::uuid is not null
+            union all
+            select id, school_id from saved_subject
+            where ${subjectId}::uuid is null
+          ),
+          selected_teacher as materialized (
+            select u.id from users u join memberships m on m.user_id = u.id
+            where u.id = ${teacherId}::uuid and m.school_id = ${school.schoolId}::uuid and m.role = 'teacher'
           ),
           saved_class_subject as (
             insert into class_subjects (school_id, class_id, subject_id)
-            select c.school_id, c.id, s.id from selected_class c cross join saved_subject s
+            select c.school_id, c.id, s.id from selected_class c cross join selected_subject s
+            where ${teacherId}::uuid is null or exists (select 1 from selected_teacher)
             on conflict (class_id, subject_id) do update set class_id = excluded.class_id
             returning id, school_id, class_id
           ),
@@ -1526,15 +1599,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             select cs.school_id, sp.id, cs.id, c.academic_year_id
             from saved_class_subject cs join selected_class c on c.id = cs.class_id and c.school_id = cs.school_id
             cross join saved_staff sp
+            where ${teacherId}::uuid is not null
             on conflict (staff_profile_id, class_subject_id, academic_year_id)
               do update set is_primary_teacher = teaching_assignments.is_primary_teacher
             returning id
           )
-          select id from saved_assignment
+          select cs.id, assignment.id as assignment_id
+          from saved_class_subject cs left join saved_assignment assignment on true
         `,
       );
-      if (!rows[0]) return json({ error: "Could not assign this subject and teacher to the class" }, 400);
-      return json({ assignment: rows[0] }, 201);
+      if (!rows[0]) return json({ error: "Could not assign this subject to the class. Confirm the class, subject, and teacher belong to this school." }, 400);
+      if (teacherId && !rows[0]["assignment_id"]) return json({ error: "Could not assign the teacher. Confirm they belong to this school." }, 400);
+      return json({ class_subject: rows[0]["id"], assignment: rows[0]["assignment_id"] ?? null }, 201);
     }
 
     if (url.pathname === "/api/school/classes" && request.method === "GET") {

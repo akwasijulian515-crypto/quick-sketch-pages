@@ -1,31 +1,68 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
-import { CircleAlert, Plus, ReceiptText, Settings2, ShieldCheck } from "lucide-react";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { CreditCard, ReceiptText } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { getNeonAccessToken } from "../auth/client";
+import { SchoolFeeRules } from "@/components/school-fee-rules";
 import { SchoolShell } from "@/components/school-shell";
-import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/payments")({ head: () => ({ meta: [{ title: "Payments — Klasora" }, { name: "description", content: "Set school fees, review collections, and reconcile daily payments." }] }), component: PaymentsPage });
+export const Route = createFileRoute("/payments")({
+  head: () => ({ meta: [{ title: "Payments — Klasora" }, { name: "description", content: "Manage class fee rules and review recorded payments." }] }),
+  component: PaymentsPage,
+});
 
-type FeeRule = { id: string; className: string; fee: string; amount: number; frequency: "Daily" | "Termly"; startsOn: string; active: boolean };
-const initialFeeRules: FeeRule[] = [];
+type Payment = {
+  id: string;
+  receipt_number: string | null;
+  amount: number | string;
+  currency: string;
+  category: string;
+  method: string;
+  status: string;
+  paid_at: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+};
 
 function PaymentsPage() {
-  const [view, setView] = useState<"fees" | "payments" | "reconciliation">("fees");
-  const [feeRules, setFeeRules] = useState(initialFeeRules);
-  return <SchoolShell title="Payments" schoolAdmin><div className="mx-auto max-w-6xl rise"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">{view === "fees" ? <Settings2 className="size-5" /> : view === "payments" ? <ReceiptText className="size-5" /> : <ShieldCheck className="size-5" />}</div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Set class fee rules, review collections, and reconcile attendance against daily payments.</p></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Expected today" value="—" note="Live payment data not connected" /><Metric label="Received today" value="—" note="Live payment data not connected" /><Metric label="Variance" value="—" note="Live payment data not connected" tone="warning" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={view === "fees"} onClick={() => setView("fees")}>Fee setup</Tab><Tab active={view === "payments"} onClick={() => setView("payments")}>Collections</Tab><Tab active={view === "reconciliation"} onClick={() => setView("reconciliation")}>Daily reconciliation</Tab></div>{view === "reconciliation" && <Button size="sm" asChild><Link to="/reconciliation"><ShieldCheck />Open full controls</Link></Button>}</div>{view === "fees" ? <FeeSetup rules={feeRules} onAdd={(rule) => setFeeRules((current) => [rule, ...current])} onToggle={(id) => setFeeRules((current) => current.map((rule) => rule.id === id ? { ...rule, active: !rule.active } : rule))} /> : view === "payments" ? <Collections /> : <ReconciliationSummary />}</section></div></SchoolShell>;
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPayments() {
+      try {
+        const token = await getNeonAccessToken();
+        const url = new URL("/api/school/payments", window.location.origin);
+        const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+        if (tenant) url.searchParams.set("tenant", tenant);
+        const response = await fetch(`${url.pathname}${url.search}`, { headers: { authorization: `Bearer ${token}` } });
+        const payload: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : "Could not load recorded payments";
+          throw new Error(message);
+        }
+        if (!cancelled) setPayments((payload as { payments: Payment[] }).payments);
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load recorded payments");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void loadPayments();
+    return () => { cancelled = true; };
+  }, []);
+
+  return <SchoolShell title="Payments" schoolAdmin><div className="mx-auto max-w-6xl rise">
+    <div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CreditCard className="size-5" /></div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Configure class fees and review payment records saved for this school.</p></div>
+    <SchoolFeeRules />
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg"><div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Recorded payments</h2><p className="mt-1 text-xs text-muted-foreground">Latest recorded school payments.</p></div><ReceiptText className="size-5 text-primary" /></div>
+      {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+      {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading payments...</p> : payments.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">No payments have been recorded for this school yet.</p> : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Admission no.", "Category", "Amount", "Method", "Status", "Paid at"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{payments.map((payment) => <tr key={payment.id}><td className="px-5 py-3 font-medium">{payment.first_name} {payment.last_name}</td><td className="px-5 py-3 font-mono text-xs">{payment.admission_number}</td><td className="px-5 py-3 capitalize">{payment.category.replaceAll("_", " ")}</td><td className="px-5 py-3">{payment.currency} {Number(payment.amount).toFixed(2)}</td><td className="px-5 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td><td className="px-5 py-3 capitalize">{payment.status}</td><td className="px-5 py-3">{new Date(payment.paid_at).toLocaleString()}</td></tr>)}</tbody></table></div>}
+    </section>
+  </div></SchoolShell>;
 }
-
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) { return <button type="button" onClick={onClick} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>{children}</button>; }
-
-function FeeSetup({ rules, onAdd, onToggle }: { rules: FeeRule[]; onAdd: (rule: FeeRule) => void; onToggle: (id: string) => void }) {
-  const [showForm, setShowForm] = useState(false); const [className, setClassName] = useState(""); const [fee, setFee] = useState("Daily payment"); const [amount, setAmount] = useState("");
-  function saveRule(event: FormEvent) { event.preventDefault(); const value = Number(amount); if (!Number.isFinite(value) || value <= 0) return; onAdd({ id: crypto.randomUUID(), className, fee, amount: value, frequency: fee === "Daily payment" ? "Daily" : "Termly", startsOn: "Today", active: true }); setAmount(""); setShowForm(false); }
-  return <div className="p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-display text-lg font-bold">Fee setup</h2><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Set the amount Finance should collect for each class. Daily payments create clearance coupons; school-fee payments require an official receipt.</p></div><Button size="sm" onClick={() => setShowForm(true)}><Plus />Add fee rule</Button></div><div className="mt-5 overflow-x-auto rounded-lg border border-border"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Class", "Fee", "Amount", "Frequency", "Effective from", "Status", ""].map((column) => <th key={column} className="px-4 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{rules.map((rule) => <tr key={rule.id} className="hover:bg-muted/30"><td className="px-4 py-3 font-medium">{rule.className}</td><td className="px-4 py-3">{rule.fee}</td><td className="px-4 py-3">GH₵ {rule.amount.toFixed(2)}</td><td className="px-4 py-3">{rule.frequency}</td><td className="px-4 py-3 text-muted-foreground">{rule.startsOn}</td><td className="px-4 py-3"><span className={cn("rounded-full px-2 py-1 text-xs font-medium", rule.active ? "bg-emerald-500/10 text-emerald-700" : "bg-muted text-muted-foreground")}>{rule.active ? "Active" : "Paused"}</span></td><td className="px-4 py-3"><Button size="sm" variant="outline" onClick={() => onToggle(rule.id)}>{rule.active ? "Pause" : "Activate"}</Button></td></tr>)}{rules.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">No fee rules are available. Live fee data is not connected.</td></tr>}</tbody></table></div><p className="mt-3 text-xs text-muted-foreground">Fee rules are preview-only until the live database is connected.</p>{showForm && <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4 backdrop-blur-sm"><form onSubmit={saveRule} className="glass-panel w-full max-w-md rounded-lg p-6 shadow-2xl"><h2 className="font-display text-xl font-bold">Add fee rule</h2><p className="mt-1 text-sm text-muted-foreground">Set one amount for a class.</p><Field label="Class"><input required value={className} onChange={(event) => setClassName(event.target.value)} placeholder="Class name" /></Field><Field label="Fee type"><select value={fee} onChange={(event) => setFee(event.target.value)}><option>Daily payment</option><option>School fees</option></select></Field><Field label="Amount (GH₵)"><input required type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" /></Field><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button><Button type="submit">Save fee rule</Button></div></form></div>}</div>;
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="mt-4 block text-sm font-medium">{label}<span className="mt-1 block [&_input]:h-10 [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-input [&_input]:bg-background [&_input]:px-3 [&_select]:h-10 [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-input [&_select]:bg-background [&_select]:px-3">{children}</span></label>; }
-function Collections() { return <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Reference", "Student", "Amount", "Channel", "Status"].map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody><tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-muted-foreground">No collections are available. Live payment data is not connected.</td></tr></tbody></table></div>; }
-function ReconciliationSummary() { return <div className="p-5"><div className="rounded-lg border border-border bg-background/60 p-5"><CircleAlert className="size-5 text-amber-600" /><h2 className="mt-3 font-display text-lg font-bold">Reconciliation data unavailable</h2><p className="mt-1 text-sm text-muted-foreground">Connect live attendance and payment records before reviewing exceptions or closing a collection day.</p></div><p className="mt-5 text-xs text-muted-foreground">No reconciliation actions are available until live records are connected.</p></div>; }
-function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "warning" }) { return <article className={cn("glass-panel rounded-lg p-5", tone === "warning" && "ring-1 ring-amber-500/25")}><p className="text-xs font-medium text-muted-foreground">{label}</p><p className={cn("mt-2 font-display text-3xl", tone === "warning" && "text-amber-700")}>{value}</p><p className="mt-1 text-xs text-secondary-foreground">{note}</p></article>; }
