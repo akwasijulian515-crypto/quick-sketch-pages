@@ -72,7 +72,7 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
   const links = platform ? platformNavigation : schoolAdmin ? schoolAdminNavigation : parentPortal ? parentNavigation : studentPortal ? studentNavigation : finance ? financeNavigation : navigation;
 
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col overflow-y-auto overscroll-contain bg-primary px-3 py-5 text-primary-foreground shadow-2xl shadow-primary/15">
+    <aside className="sidebar-gloss flex h-full w-60 shrink-0 flex-col overflow-y-auto overscroll-contain px-3 py-5 text-primary-foreground">
       <div className="flex items-center gap-2.5 px-2 py-1.5">
         <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-highlight font-display text-base font-bold text-highlight-foreground shadow-sm">
           {platform ? <ShieldCheck className="size-4" /> : crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}

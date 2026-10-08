@@ -52,6 +52,8 @@ function themeStyle(color: string): TenantThemeStyle {
 
   return {
     "--primary": color,
+    // Always-dark version of the tenant colour so glossy surfaces stay legible for any choice.
+    "--brand-deep": `oklch(from ${color} min(l, 0.32) min(c, 0.16) h)`,
     "--primary-foreground": foreground,
     "--secondary": tint(12),
     "--secondary-foreground": color,
