@@ -41,13 +41,11 @@ const platformNavigation = [
 const schoolAdminNavigation = [
   { label: "Overview", to: "/dashboard", icon: LayoutDashboard },
   { label: "Students", to: "/students", icon: GraduationCap },
-  { label: "Payments", to: "/payments", icon: ReceiptText },
+  { label: "Attendance", to: "/attendance-overview", icon: UserRoundCheck },
   { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText },
   { label: "Academic setup", to: "/academic-setup", icon: CalendarDays },
-  { label: "Grades", to: "/grades", icon: ScrollText },
   { label: "Teachers", to: "/teachers", icon: UsersRound },
-  { label: "Classes", to: "/classes", icon: School },
-  { label: "Coupons", to: "/coupons", icon: TicketCheck },
+  { label: "School administration", to: "/school-admin", icon: School },
 ] as const;
 
 const parentNavigation = [
@@ -133,16 +131,16 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
   );
 }
 
-export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, schoolAdminOrTeacher = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; schoolAdminOrTeacher?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
+export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; schoolAdminOrTeacher?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminView, setAdminView] = useState(schoolAdmin);
   const navigate = useNavigate();
   const { schoolName, crestUrl } = useTenantBranding();
 
   useEffect(() => {
-    if (!schoolAdminOrTeacher) return;
-    setAdminView(sessionStorage.getItem("hg-role") === "school_admin");
-  }, [schoolAdminOrTeacher]);
+    const role = sessionStorage.getItem("hg-role");
+    setAdminView(role ? role === "school_admin" : schoolAdmin);
+  }, [schoolAdmin]);
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
