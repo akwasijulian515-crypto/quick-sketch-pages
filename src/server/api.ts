@@ -393,7 +393,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (studentProfileMatch) {
       if (!uuidOrNull(studentProfileMatch[1])) return badRequest("Invalid student ID");
       if (request.method === "PATCH") {
-        const payload: unknown = await request.json().catch(() => null);
+        const payload = ( await request.json().catch(() => null)) as Record<string, unknown> | null;
         if (!payload || typeof payload !== "object" || typeof payload["active"] !== "boolean") {
           return badRequest("Choose whether the student should be active");
         }

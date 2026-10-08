@@ -28,7 +28,7 @@ function Dashboard() {
   return (
     <SchoolShell title="Overview">
       <div className="mx-auto grid max-w-6xl grid-cols-12 gap-4">
-        <section className="rise col-span-12 rounded-lg bg-primary p-6 text-primary-foreground shadow-xl shadow-primary/15 lg:col-span-7">
+        <section className="hero-gloss rise col-span-12 rounded-lg p-6 lg:col-span-7">
           <p className="text-[11px] uppercase tracking-[0.18em] text-highlight">School overview</p>
           <h1 className="mt-2 max-w-lg font-display text-3xl leading-tight">Your school, at a glance.</h1>
           <p className="mt-3 max-w-xl text-sm leading-6 text-primary-foreground/70">Use the connected tools below to manage students, attendance, teachers, and academic setup. School-wide summary charts are not available yet.</p>

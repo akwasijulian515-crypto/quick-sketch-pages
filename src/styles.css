@@ -88,6 +88,7 @@
   --ring: oklch(0.5314 0.0946 161.86);
   --highlight: oklch(0.774 0.1394 77.84);
   --highlight-foreground: oklch(0.3204 0.0495 167.92);
+  --brand-deep: oklch(0.3 0.05 167.92);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -159,15 +160,36 @@
 @utility font-display { font-family: var(--font-display); }
 @utility font-body { font-family: var(--font-body); }
 @utility glass-panel {
-  background: color-mix(in oklab, var(--card) 82%, transparent);
-  border: 1px solid var(--border);
-  box-shadow: 0 16px 38px -30px color-mix(in oklab, var(--primary) 48%, transparent);
-  backdrop-filter: blur(16px);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--card) 96%, white) 0%, color-mix(in oklab, var(--card) 78%, transparent) 100%);
+  border: 1px solid color-mix(in oklab, var(--primary) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 70%, transparent),
+    0 1px 2px 0 color-mix(in oklab, var(--primary) 8%, transparent),
+    0 22px 44px -30px color-mix(in oklab, var(--primary) 55%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+@utility sidebar-gloss {
+  --primary: var(--brand-deep);
+  --primary-foreground: oklch(0.97 0.012 88);
+  background:
+    radial-gradient(120% 40% at 0% 0%, color-mix(in oklab, var(--highlight) 18%, transparent), transparent 60%),
+    linear-gradient(180deg, color-mix(in oklab, var(--brand-deep) 88%, white) 0%, var(--brand-deep) 45%, color-mix(in oklab, var(--brand-deep) 80%, black) 100%);
+  box-shadow: inset -1px 0 0 0 color-mix(in oklab, white 10%, transparent), 12px 0 40px -24px color-mix(in oklab, var(--brand-deep) 60%, transparent);
+}
+@utility hero-gloss {
+  --primary-foreground: oklch(0.97 0.012 88);
+  color: var(--primary-foreground);
+  background:
+    radial-gradient(70% 90% at 100% 0%, color-mix(in oklab, var(--highlight) 30%, transparent), transparent 60%),
+    linear-gradient(140deg, color-mix(in oklab, var(--brand-deep) 85%, white), var(--brand-deep) 55%, color-mix(in oklab, var(--brand-deep) 75%, black));
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, white 18%, transparent), 0 24px 50px -28px color-mix(in oklab, var(--brand-deep) 70%, transparent);
 }
 @utility ambient-wash {
   background:
-    radial-gradient(58% 46% at 18% -6%, color-mix(in oklab, var(--highlight) 16%, transparent), transparent 62%),
-    radial-gradient(52% 42% at 94% 4%, color-mix(in oklab, var(--secondary-foreground) 14%, transparent), transparent 60%);
+    radial-gradient(58% 46% at 18% -6%, color-mix(in oklab, var(--highlight) 18%, transparent), transparent 62%),
+    radial-gradient(52% 42% at 94% 4%, color-mix(in oklab, var(--primary) 16%, transparent), transparent 60%),
+    radial-gradient(60% 50% at 50% 110%, color-mix(in oklab, var(--primary) 8%, transparent), transparent 70%);
 }
 @utility rise { animation: rise-in 0.5s ease-out both; }
 
