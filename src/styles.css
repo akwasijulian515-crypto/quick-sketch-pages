@@ -142,6 +142,7 @@
 @layer base {
   * {
     border-color: var(--color-border);
+    scroll-behavior: smooth;
   }
 
   body {
@@ -220,5 +221,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; }
   .rise { animation: none; }
 }
