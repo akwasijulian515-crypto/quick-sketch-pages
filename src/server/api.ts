@@ -605,9 +605,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const payload: unknown = await request.json().catch(() => null);
       if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
+      const requestedClassId = body["class_id"];
       const attendanceDate = typeof body["date"] === "string" ? body["date"] : "";
       const records = body["records"];
-      if (!classId) return badRequest("Choose a valid class");
+      if (!uuidOrNull(requestedClassId) || !requestedClassId) return badRequest("Choose a valid class");
       if (!validIsoDate(attendanceDate)) {
         return badRequest("Enter a valid attendance date");
       }
@@ -629,7 +630,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           with authorized_class as materialized (
             select c.id, c.school_id, c.class_teacher_id
             from classes c
-            where c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
+            where c.id = ${requestedClassId}::uuid and c.school_id = ${school.schoolId}::uuid
               and c.class_teacher_id in (
                 select sp.id from staff_profiles sp
                 where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
