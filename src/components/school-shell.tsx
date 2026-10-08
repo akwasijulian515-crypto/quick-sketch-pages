@@ -151,7 +151,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
-      <div className="sticky top-0 hidden h-dvh lg:block">
+      <div className="fixed inset-y-0 left-0 z-40 hidden h-dvh lg:block">
         <Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} />
       </div>
       {menuOpen ? (
@@ -160,7 +160,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
           <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25" onClick={() => setMenuOpen(false)} />
         </div>
       ) : null}
-      <div className="relative min-w-0 flex-1">
+      <div className="relative min-w-0 flex-1 lg:ml-60">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenuOpen(true)} aria-label="Open navigation">
