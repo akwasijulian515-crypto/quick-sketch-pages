@@ -1,6 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { BookOpen } from "lucide-react";
-import { PageSkeleton } from "@/components/page-skeleton";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-export const Route = createFileRoute("/subjects")({ head: () => ({ meta: [{ title: "Subjects — Klasora" }, { name: "description", content: "Organize school subjects and teaching assignments." }, { property: "og:title", content: "Subjects — Klasora" }, { property: "og:description", content: "Organize school subjects and teaching assignments." }, { property: "og:type", content: "website" }, { name: "twitter:card", content: "summary_large_image" }] }), component: Page });
-function Page() { return <PageSkeleton title="Subjects" description="Create the subject catalogue and assign each subject to a class and responsible teacher." action="Add subject" icon={BookOpen} stats={[{label:"Subjects",value:"12",note:"Current curriculum"},{label:"Assigned",value:"11",note:"One needs a teacher"},{label:"Classes covered",value:"6",note:"Full class coverage"}]} columns={["Subject","Class","Teacher","Description","Status"]} />; }
+export const Route = createFileRoute("/subjects")({
+  beforeLoad: () => {
+    throw redirect({ to: "/teachers", search: { view: "subjects" } });
+  },
+});

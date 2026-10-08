@@ -47,6 +47,7 @@ const schoolAdminNavigation = [
   { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText },
   { label: "Academic setup", to: "/academic-setup", icon: CalendarDays },
   { label: "Teachers", to: "/teachers", icon: UsersRound },
+  { label: "Subjects", to: "/subjects", icon: BookOpen },
   { label: "Classes", to: "/classes", icon: School },
   { label: "Coupons", to: "/coupons", icon: TicketCheck },
   { label: "School administration", to: "/school-admin", icon: School },
@@ -67,7 +68,9 @@ const financeNavigation = [
 
 
 function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { onNavigate?: () => void; schoolName: string; crestUrl: string | null; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const location = useRouterState({ select: (state) => state.location });
+  const pathname = location.pathname;
+  const viewingSubjects = pathname === "/teachers" && "view" in location.search && location.search["view"] === "subjects";
   const navigate = useNavigate();
   const links = platform ? platformNavigation : schoolAdmin ? schoolAdminNavigation : parentPortal ? parentNavigation : studentPortal ? studentNavigation : finance ? financeNavigation : navigation;
 
@@ -88,7 +91,9 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
       <nav aria-label="Main navigation" tabIndex={0} className="sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1 outline-none focus-visible:ring-1 focus-visible:ring-highlight/50">
         <div className="flex flex-col gap-0.5">
         {links.map((item) => {
-          const active = pathname === item.to;
+          const active = item.to === "/subjects"
+            ? pathname === "/subjects" || viewingSubjects
+            : pathname === item.to && !(item.to === "/teachers" && viewingSubjects);
           const Icon = item.icon;
           return (
             <Link
