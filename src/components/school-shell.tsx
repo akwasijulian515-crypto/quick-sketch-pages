@@ -140,7 +140,7 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
   );
 }
 
-export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; schoolAdminOrTeacher?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
+export function SchoolShell({ children, title = "Overview", platform = false, schoolAdmin = false, schoolAdminOrTeacher = false, teacherPortal = false, parentPortal = false, studentPortal = false, finance = false }: { children: ReactNode; title?: string; platform?: boolean; schoolAdmin?: boolean; schoolAdminOrTeacher?: boolean; teacherPortal?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminView, setAdminView] = useState(schoolAdmin);
   const navigate = useNavigate();
@@ -148,8 +148,35 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
 
   useEffect(() => {
     const role = sessionStorage.getItem("hg-role");
-    setAdminView(role ? role === "school_admin" : schoolAdmin);
-  }, [schoolAdmin]);
+    setAdminView(schoolAdminOrTeacher ? schoolAdmin : role ? role === "school_admin" : schoolAdmin);
+  }, [schoolAdmin, schoolAdminOrTeacher]);
+
+  if (teacherPortal) {
+    return (
+      <div className="relative min-h-screen bg-background font-body text-foreground">
+        <div className="pointer-events-none fixed inset-0 ambient-wash" />
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
+          <div className="flex items-center gap-2.5">
+            <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-primary font-display text-base font-bold text-primary-foreground">
+              {crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
+            </div>
+            <div className="leading-tight"><p className="font-display text-[15px] font-bold">Teacher Portal</p><p className="text-[11px] text-muted-foreground">{title}</p></div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button asChild size="sm" variant="outline"><Link to="/teacher">Back to teacher workspace</Link></Button>
+            <Button variant="outline" size="sm" onClick={async () => {
+              sessionStorage.removeItem("hg-role");
+              sessionStorage.removeItem("hg-school");
+              await fetch("/api/auth/session", { method: "DELETE" });
+              await neonAuthClient?.signOut().catch(() => undefined);
+              navigate({ to: "/login" });
+            }}><LogOut />Sign out</Button>
+          </div>
+        </header>
+        <main className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">

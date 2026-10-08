@@ -83,7 +83,7 @@ function TerminalReportsPage() {
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [canPublish, setCanPublish] = useState(false);
+  const [canPublish, setCanPublish] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -106,6 +106,7 @@ function TerminalReportsPage() {
       setTermId((current) => current || currentTerm?.id || "");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load report setup");
+      setCanPublish(false);
     } finally {
       setLoading(false);
     }
@@ -199,8 +200,12 @@ function TerminalReportsPage() {
     })),
   }));
 
+  if (canPublish === null) {
+    return <div className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">Checking report access...</div>;
+  }
+
   return (
-    <SchoolShell title="Terminal reports" schoolAdminOrTeacher>
+    <SchoolShell title="Terminal reports" schoolAdmin={canPublish} schoolAdminOrTeacher teacherPortal={!canPublish}>
       <div className="mx-auto max-w-6xl rise">
         <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
