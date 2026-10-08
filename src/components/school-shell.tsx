@@ -72,8 +72,8 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
   const links = platform ? platformNavigation : schoolAdmin ? schoolAdminNavigation : parentPortal ? parentNavigation : studentPortal ? studentNavigation : finance ? financeNavigation : navigation;
 
   return (
-    <aside className="sidebar-gloss flex h-full w-60 shrink-0 flex-col overflow-y-auto overscroll-contain px-3 py-5 text-primary-foreground">
-      <div className="flex items-center gap-2.5 px-2 py-1.5">
+    <aside className="sidebar-gloss flex h-dvh w-60 shrink-0 flex-col overflow-hidden px-3 py-5 text-primary-foreground">
+      <div className="flex shrink-0 items-center gap-2.5 px-2 py-1.5">
         <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-highlight font-display text-base font-bold text-highlight-foreground shadow-sm">
           {platform ? <ShieldCheck className="size-4" /> : crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
         </div>
@@ -82,10 +82,11 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
           <p className="text-[11px] text-primary-foreground/50">{platform ? "Klasora Platform" : schoolAdmin ? "School Admin Console" : parentPortal ? "Family Portal" : studentPortal ? "Student Portal" : finance ? "Finance Workspace" : "School Operations"}</p>
         </div>
       </div>
-      <p className="px-3 pb-1 pt-5 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35">
+      <p className="shrink-0 px-3 pb-1 pt-5 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35">
         {platform ? "Platform" : "Workspace"}
       </p>
-      <nav aria-label="Main navigation" className="flex flex-col gap-0.5">
+      <nav aria-label="Main navigation" tabIndex={0} className="sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1 outline-none focus-visible:ring-1 focus-visible:ring-highlight/50">
+        <div className="flex flex-col gap-0.5">
         {links.map((item) => {
           const active = pathname === item.to;
           const Icon = item.icon;
@@ -106,8 +107,9 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
             </Link>
           );
         })}
+        </div>
       </nav>
-      <div className="mt-auto rounded-md bg-primary-foreground/5 px-2 py-3 ring-1 ring-primary-foreground/10">
+      <div className="mt-4 shrink-0 rounded-md bg-primary-foreground/5 px-2 py-3 ring-1 ring-primary-foreground/10">
         <div className="flex items-center gap-2.5">
           {platform ? <div className="grid size-9 place-items-center rounded-md bg-highlight/20 text-highlight"><ShieldCheck className="size-4" /></div> : <img src={headTeacher} alt="Dr. Adaeze Okafor" width={512} height={512} loading="lazy" className="size-9 rounded-md object-cover ring-1 ring-primary-foreground/15" />}
           <div className="min-w-0 leading-tight">
@@ -149,7 +151,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
   return (
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
-      <div className="sticky top-0 hidden h-screen lg:block">
+      <div className="sticky top-0 hidden h-dvh lg:block">
         <Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} />
       </div>
       {menuOpen ? (
