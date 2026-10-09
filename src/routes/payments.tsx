@@ -112,6 +112,7 @@ function PaymentsPage() {
     currency: string;
     paidAt: string;
     method: string;
+    status: string;
   } | null>(null);
   const pendingOtherPayments = otherPayments.filter((payment) => payment.status === "pending");
   const reviewedOtherPayments = otherPayments.filter((payment) => payment.status !== "pending");
@@ -181,7 +182,7 @@ function PaymentsPage() {
     setNewReceipt(null);
     try {
       const result = await schoolApi<{
-        payment: { receipt_number: string; paid_at: string };
+        payment: { receipt_number: string; paid_at: string; status: string };
         balance_due: number;
       }>("/api/school/payments", {
         method: "POST",
@@ -197,9 +198,12 @@ function PaymentsPage() {
         currency: student.currency,
         paidAt: result.payment.paid_at,
         method,
+        status: result.payment.status,
         balanceDue: Number(result.balance_due),
       });
-      setNotice(`Payment recorded as pending validation. Receipt ${result.payment.receipt_number} is ready to download.`);
+      setNotice(result.payment.status === "verified"
+        ? `Payment recorded and verified. Receipt ${result.payment.receipt_number} is ready to download.`
+        : `Payment recorded as pending validation. Receipt ${result.payment.receipt_number} is ready to download.`);
       setSelectedStudentId("");
       setAmount("");
       try {
@@ -225,7 +229,6 @@ function PaymentsPage() {
       schoolName,
       primaryColor,
       ...newReceipt,
-      status: "pending",
       feeCategory: "school_fee",
     });
   }
@@ -302,7 +305,7 @@ function PaymentsPage() {
   }
 
   return <SchoolShell title="Payments" schoolAdmin><div className="mx-auto max-w-6xl rise">
-    <div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CreditCard className="size-5" /></div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record school-fee collections as pending, validate receipts independently, and manage this school’s fee rules.</p></div>
+    <div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CreditCard className="size-5" /></div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record school-fee collections, validate Finance receipts independently, and manage this school’s fee rules.</p></div>
     <section className="glass-panel mt-5 overflow-hidden rounded-lg border-amber-600/30">
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Payment validation</h2><p className="mt-1 text-xs text-muted-foreground">Validate school, exam, or other-fee receipts. A different school admin must review the payment; the recorder cannot approve their own receipt.</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-900">{pendingOtherPayments.length} pending</span></div>
       {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
@@ -330,7 +333,7 @@ function PaymentsPage() {
     </section>
     <section className="glass-panel mt-5 rounded-lg p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <div><h2 className="font-display text-lg font-bold">Record school-fee payment</h2><p className="mt-1 text-sm text-muted-foreground">New payments remain pending until a different school administrator validates them. The receipt shows the remaining balance.</p></div>
+            <div><h2 className="font-display text-lg font-bold">Record school-fee payment</h2><p className="mt-1 text-sm text-muted-foreground">Payments recorded by a school administrator are verified immediately. Finance-recorded payments remain pending until independently validated. The receipt shows the remaining balance.</p></div>
             <Wallet className="size-5 shrink-0 text-primary" />
           </div>
           {schoolFees.length === 0 ? <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">No active tuition or PTA fee rules are configured. Create one below before recording a school-fee payment.</p>
@@ -353,7 +356,7 @@ function PaymentsPage() {
                 <select value={method} onChange={(event) => setMethod(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"><option value="cash">Cash</option><option value="mobile_money">Mobile money</option><option value="bank_transfer">Bank transfer</option><option value="card">Card</option><option value="other">Other</option></select>
               </label>
               <div className="flex items-end sm:col-span-2 lg:col-span-5">
-                <Button disabled={!student || !amount || Number(amount) > Number(student?.balance_due ?? 0) || recordingSchoolFee} onClick={() => void recordSchoolFeePayment()}>{recordingSchoolFee ? "Recording..." : "Record pending payment"}</Button>
+                <Button disabled={!student || !amount || Number(amount) > Number(student?.balance_due ?? 0) || recordingSchoolFee} onClick={() => void recordSchoolFeePayment()}>{recordingSchoolFee ? "Recording..." : "Record school-fee payment"}</Button>
                 {student && <p className="ml-3 pb-2 text-xs text-muted-foreground">Remaining after payment: {student.currency} {Math.max(0, Number(student.balance_due) - (Number(amount) || 0)).toFixed(2)}</p>}
               </div>
             </div>}

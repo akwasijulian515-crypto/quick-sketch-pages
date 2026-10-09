@@ -778,7 +778,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               and school_id = ${school.schoolId}::uuid
               and category in ('school_fee', 'examination_fee', 'other')
               and status = 'pending'
-              and recorded_by_user_id is distinct from ${school.userId}::uuid
+              and (
+                recorded_by_user_id is distinct from ${school.userId}::uuid
+                or (${school.role === "school_admin" && action === "approve"} and category = 'school_fee')
+              )
             returning id, school_id, invoice_id, status, amount
           ),
           audit_event as (
@@ -1069,14 +1072,17 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           recorded as (
             insert into payments
               (school_id, invoice_id, student_id, receipt_number, amount, currency, method,
-               recorded_by_staff_id, recorded_by_user_id, category, status, verified_at)
+               recorded_by_staff_id, recorded_by_user_id, category, status, verified_at, receipt_issued_at)
             select ${school.schoolId}::uuid, b.id, ${studentId}::uuid,
                    ${receiptNumber},
                    ${amount}, b.currency, ${String(method)},
                    (select id from staff_profiles where school_id = ${school.schoolId}::uuid
                     and user_id = ${school.userId}::uuid limit 1),
                    ${school.userId}::uuid,
-                   'school_fee', 'pending', null
+                   'school_fee',
+                   ${school.role === "school_admin" ? "verified" : "pending"}::gateway_payment_status,
+                   case when ${school.role === "school_admin"} then now() else null end,
+                   case when ${school.role === "school_admin"} then now() else null end
             from balance b
             where ${amount} <= b.balance_due and b.balance_due > 0
             returning id, receipt_number, amount, currency, paid_at
