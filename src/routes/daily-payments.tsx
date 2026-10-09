@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Banknote, CheckCircle2, Wallet } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
@@ -56,10 +56,12 @@ function DailyPaymentsPage() {
   const [students, setStudents] = useState<DailyStudent[]>([]);
   const [method, setMethod] = useState("cash");
   const [loading, setLoading] = useState(true);
-  const [recordingStudent, setRecordingStudent] = useState("");
+  const [recordingStudents, setRecordingStudents] = useState<Set<string>>(() => new Set());
   const [classFilter, setClassFilter] = useState("all");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const activeDate = useRef(date);
+  activeDate.current = date;
 
   const loadStudents = useCallback(async () => {
     setLoading(true);
@@ -90,20 +92,29 @@ function DailyPaymentsPage() {
   const paidStudents = visible.filter((student) => student.payment_id);
 
   async function markPaid(student: DailyStudent) {
-    setRecordingStudent(student.student_id);
+    const paymentDate = date;
+    setRecordingStudents((current) => new Set(current).add(student.student_id));
     setError("");
     setNotice("");
     try {
-      const result = await schoolApi<{ payment: { coupon_code: string } }>("/api/school/daily-payments", {
+      const result = await schoolApi<{ payment: { id: string; method: string; coupon_code: string } }>("/api/school/daily-payments", {
         method: "POST",
-        body: JSON.stringify({ student_id: student.student_id, date, method }),
+        body: JSON.stringify({ student_id: student.student_id, date: paymentDate, method }),
       });
       setNotice(`${student.first_name} ${student.last_name} marked paid (${student.currency} ${Number(student.fee_amount).toFixed(2)}). Daily clearance ${result.payment.coupon_code}.`);
-      await loadStudents();
+      if (activeDate.current === paymentDate) {
+        setStudents((current) => current.map((item) => item.student_id === student.student_id
+          ? { ...item, payment_id: result.payment.id, method: result.payment.method, coupon_code: result.payment.coupon_code }
+          : item));
+      }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not record daily-fee payment");
     } finally {
-      setRecordingStudent("");
+      setRecordingStudents((current) => {
+        const next = new Set(current);
+        next.delete(student.student_id);
+        return next;
+      });
     }
   }
 
@@ -144,7 +155,7 @@ function DailyPaymentsPage() {
             <div className="divide-y divide-border/70 md:hidden">
               {visible.map((student) => <article key={student.student_id} className="flex items-center justify-between gap-3 p-4">
                 <div className="min-w-0"><p className="truncate text-sm font-medium">{student.first_name} {student.last_name}</p><p className="text-xs text-muted-foreground">{student.admission_number} · {student.class_name}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{student.attendance_status ?? "Attendance not marked"} · {student.currency} {Number(student.fee_amount).toFixed(2)}</p></div>
-                {student.payment_id ? <span className="inline-flex shrink-0 items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="size-4" />Paid</span> : <Button size="sm" disabled={recordingStudent !== ""} onClick={() => void markPaid(student)}>{recordingStudent === student.student_id ? "Recording..." : "Mark paid"}</Button>}
+                {student.payment_id ? <span className="inline-flex shrink-0 items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="size-4" />Paid</span> : <Button size="sm" disabled={recordingStudents.has(student.student_id)} onClick={() => void markPaid(student)}>{recordingStudents.has(student.student_id) ? "Recording..." : "Mark paid"}</Button>}
               </article>)}
             </div>
             <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[820px] text-left text-sm">
@@ -155,7 +166,7 @@ function DailyPaymentsPage() {
                 <td className="px-5 py-3 capitalize">{student.attendance_status ?? "Not marked"}</td>
                 <td className="px-5 py-3">{student.currency} {Number(student.fee_amount).toFixed(2)}</td>
                 <td className="px-5 py-3">{student.payment_id ? <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="size-4" />Paid · {student.method?.replaceAll("_", " ")}</span> : "Not paid"}</td>
-                <td className="px-5 py-3">{student.payment_id ? <span className="font-mono text-xs text-muted-foreground">{student.coupon_code ?? "Recorded"}</span> : <Button size="sm" disabled={recordingStudent !== ""} onClick={() => void markPaid(student)}>{recordingStudent === student.student_id ? "Recording..." : "Mark paid"}</Button>}</td>
+                <td className="px-5 py-3">{student.payment_id ? <span className="font-mono text-xs text-muted-foreground">{student.coupon_code ?? "Recorded"}</span> : <Button size="sm" disabled={recordingStudents.has(student.student_id)} onClick={() => void markPaid(student)}>{recordingStudents.has(student.student_id) ? "Recording..." : "Mark paid"}</Button>}</td>
               </tr>)}</tbody>
             </table></div>
           </>}
