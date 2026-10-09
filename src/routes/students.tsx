@@ -14,8 +14,9 @@ import {
   Phone,
   MapPin,
   Heart,
-  FileText,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Upload,
 } from "lucide-react";
@@ -258,6 +259,7 @@ export default function StudentsPage() {
   const [showAdmission, setShowAdmission] = useState(false);
   const [showBulkAdmission, setShowBulkAdmission] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [selectedProfileTab, setSelectedProfileTab] = useState<"Overview" | "Fees">("Overview");
   const [notice, setNotice] = useState("");
   const [canManageStudents, setCanManageStudents] = useState(false);
 
@@ -521,7 +523,10 @@ export default function StudentsPage() {
                         <tr
                           key={student.id}
                           className="border-b border-border/50 hover:bg-muted/20 transition-colors cursor-pointer"
-                          onClick={() => setSelectedStudent(student)}
+                          onClick={() => {
+                            setSelectedProfileTab("Overview");
+                            setSelectedStudent(student);
+                          }}
                         >
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-3">
@@ -544,7 +549,19 @@ export default function StudentsPage() {
                             <StatusBadge status={student.status} />
                           </td>
                           <td className="px-3 py-3.5">
-                            <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
+                            <button
+                              type="button"
+                              aria-label={`Open fees for ${student.name}`}
+                              title={`Open ${student.name}'s fee history`}
+                              className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedProfileTab("Fees");
+                                setSelectedStudent(student);
+                              }}
+                            >
+                              <MoreHorizontal className="w-4 h-4" />
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -619,7 +636,9 @@ export default function StudentsPage() {
         )}
         {selectedStudent && (
           <StudentProfile
+            key={selectedStudent.id}
             student={selectedStudent}
+            initialTab={selectedProfileTab}
             canManageStudents={canManageStudents}
             onStatusChange={(studentId, status) => {
               setStudents((current) =>
@@ -1061,21 +1080,25 @@ function BulkAdmissionModal({
 
 function StudentProfile({
   student,
+  initialTab,
   canManageStudents,
   onStatusChange,
   onClose,
 }: {
   student: Student;
+  initialTab: "Overview" | "Fees";
   canManageStudents: boolean;
   onStatusChange: (studentId: string, status: StudentStatus) => void;
   onClose: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState("Overview");
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [details, setDetails] = useState<Student | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingStatus, setSavingStatus] = useState(false);
   const [statusNotice, setStatusNotice] = useState("");
+  const [exportingRecord, setExportingRecord] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -1136,6 +1159,47 @@ function StudentProfile({
     }
   }
 
+  async function downloadStudentRecord() {
+    setExportingRecord(true);
+    setExportError("");
+    try {
+      const [attendance, grades, finances] = await Promise.all([
+        fetchAllProfileRecords<AttendanceHistoryRecord>(
+          `/api/school/students/${encodeURIComponent(student.id)}/history/attendance`,
+        ),
+        fetchAllProfileRecords<GradeHistoryRecord>(
+          `/api/school/students/${encodeURIComponent(student.id)}/history/grades`,
+        ),
+        fetchAllProfileRecords<ProfileFinancialRecord>(
+          "/api/school/student-financial-records",
+          { student_id: student.id },
+        ),
+      ]);
+      const exportData = {
+        exported_at: new Date().toISOString(),
+        student: profile,
+        attendance,
+        grades,
+        financial_records: finances.records,
+        financial_totals: finances.totals,
+      };
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      const safeAdmissionNumber = profile.studentId.replace(/[^a-z0-9_-]/gi, "-") || student.id;
+      anchor.href = url;
+      anchor.download = `student-record-${safeAdmissionNumber}.json`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (cause) {
+      setExportError(cause instanceof Error ? cause.message : "Could not download this student record");
+    } finally {
+      setExportingRecord(false);
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 bg-foreground/30 backdrop-blur-sm flex items-center justify-center p-4"
@@ -1164,9 +1228,22 @@ function StudentProfile({
               </div>
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close student profile">
-            <X className="w-5 h-5 text-muted-foreground" />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {canManageStudents && (
+              <button
+                type="button"
+                onClick={() => void downloadStudentRecord()}
+                disabled={exportingRecord || loading || !details}
+                className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+              >
+                <Download className="size-4" />
+                {exportingRecord ? "Preparing…" : "Download record"}
+              </button>
+            )}
+            <button onClick={onClose} aria-label="Close student profile">
+              <X className="w-5 h-5 text-muted-foreground" />
+            </button>
+          </div>
         </div>
         <div className="flex gap-1 px-6 border-b border-border">
           {profileTabs.map((tab) => (
@@ -1191,6 +1268,11 @@ function StudentProfile({
               className="mb-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800"
             >
               {statusNotice}
+            </p>
+          )}
+          {exportError && (
+            <p role="alert" className="mb-4 text-sm text-destructive">
+              Could not download student record: {exportError}
             </p>
           )}
           {loading ? (
@@ -1231,23 +1313,11 @@ function StudentProfile({
               />
             </div>
           ) : activeTab === "Attendance" ? (
-            <ProfileMetric
-              label="Attendance summary"
-              value="—"
-              note="Student attendance is not connected to this profile yet."
-            />
+            <ProfileHistory key={`${student.id}-attendance`} studentId={student.id} type="attendance" />
           ) : activeTab === "Grades" ? (
-            <ProfileMetric
-              label="Grade records"
-              value="—"
-              note="Student grade details are not connected to this profile yet."
-            />
+            <ProfileHistory key={`${student.id}-grades`} studentId={student.id} type="grades" />
           ) : (
-            <ProfileMetric
-              label="Fee balance"
-              value="—"
-              note="Student fee balances are not connected to this profile yet."
-            />
+            <ProfileFees key={`${student.id}-fees`} studentId={student.id} />
           )}
           {canManageStudents && (
             <div className="mt-6 border-t border-border pt-4">
@@ -1280,6 +1350,284 @@ function StudentProfile({
   );
 }
 
+type ProfilePage<T> = {
+  records: T[];
+  page: number;
+  page_count: number;
+  page_size: number;
+  total_count: number;
+};
+
+type AttendanceHistoryRecord = {
+  id: string;
+  attendance_date: string;
+  status: string;
+  note: string | null;
+  class_name: string;
+};
+
+type GradeHistoryRecord = {
+  id: string;
+  subject_name: string;
+  class_name: string;
+  term_name: string;
+  academic_year_name: string;
+  class_test_score: number | string | null;
+  project_score: number | string | null;
+  homework_score: number | string | null;
+  group_work_score: number | string | null;
+  exam_score: number | string | null;
+  total_score: number | string | null;
+  performance_level: string | null;
+};
+
+type ProfileFinancialRecord = {
+  id: string;
+  receipt_number: string | null;
+  amount: number | string;
+  currency: string;
+  category: string;
+  method: string;
+  status: string;
+  paid_at: string;
+  daily_fee_date: string | null;
+  fee_description: string;
+  class_name: string | null;
+  term_name: string | null;
+  academic_year_name: string | null;
+};
+
+type ProfileFinancialReport = ProfilePage<ProfileFinancialRecord> & {
+  totals: {
+    currency: string;
+    payment_count: number;
+    verified_count: number;
+    pending_count: number;
+    verified_amount: number | string;
+    pending_amount: number | string;
+  }[];
+};
+
+async function fetchAllProfileRecords<T>(
+  path: string,
+  extraParams?: Record<string, string>,
+): Promise<{ records: T[]; totals: ProfileFinancialReport["totals"] }> {
+  const records: T[] = [];
+  let totals: ProfileFinancialReport["totals"] = [];
+  let page = 1;
+  let pageCount = 1;
+  do {
+    const params = new URLSearchParams({ ...extraParams, page: String(page), page_size: "100" });
+    const result = await schoolApi<ProfilePage<T> & { totals?: ProfileFinancialReport["totals"] }>(
+      `${path}?${params}`,
+    );
+    if (!Array.isArray(result.records) || !Number.isInteger(result.page_count) || result.page_count < 0) {
+      throw new Error("The student record export returned an invalid page");
+    }
+    records.push(...result.records);
+    if (page === 1 && result.totals) totals = result.totals;
+    pageCount = result.page_count;
+    page += 1;
+  } while (page <= pageCount);
+  return { records, totals };
+}
+
+function ProfileHistory({ studentId, type }: { studentId: string; type: "attendance" | "grades" }) {
+  const [report, setReport] = useState<ProfilePage<AttendanceHistoryRecord | GradeHistoryRecord> | null>(null);
+  const [summary, setSummary] = useState<Record<string, number>>({});
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const params = new URLSearchParams({ page: String(page), page_size: "20" });
+    void schoolApi<ProfilePage<AttendanceHistoryRecord | GradeHistoryRecord> & { summary?: Record<string, number> }>(
+      `/api/school/students/${encodeURIComponent(studentId)}/history/${type}?${params}`,
+    )
+      .then((result) => {
+        if (!cancelled) {
+          setReport(result);
+          setSummary(result.summary ?? {});
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setReport(null);
+          setError(cause instanceof Error ? cause.message : `Could not load student ${type}`);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [page, studentId, type]);
+
+  if (loading) return <p className="text-sm text-muted-foreground">Loading saved {type} records…</p>;
+  if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+  if (!report) return null;
+
+  return (
+    <div>
+      {type === "attendance" && (
+        <div className="mb-4 flex flex-wrap gap-2 text-xs">
+          {["present", "late", "absent", "excused"].map((status) => (
+            <span key={status} className="rounded-full bg-muted px-3 py-1 text-muted-foreground">
+              {status}: {summary[status] ?? 0}
+            </span>
+          ))}
+        </div>
+      )}
+      {report.records.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+          No saved {type} records for this student yet.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[520px] text-left text-xs">
+            {type === "attendance" ? (
+              <>
+                <thead className="bg-muted/40 text-muted-foreground">
+                  <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Class</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Note</th></tr>
+                </thead>
+                <tbody>
+                  {(report.records as AttendanceHistoryRecord[]).map((record) => (
+                    <tr key={record.id} className="border-t border-border/60">
+                      <td className="px-3 py-2">{record.attendance_date.slice(0, 10)}</td>
+                      <td className="px-3 py-2">{record.class_name}</td>
+                      <td className="px-3 py-2 capitalize">{record.status}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{record.note || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </>
+            ) : (
+              <>
+                <thead className="bg-muted/40 text-muted-foreground">
+                  <tr><th className="px-3 py-2">Subject / period</th><th className="px-3 py-2">Class test</th><th className="px-3 py-2">Project</th><th className="px-3 py-2">Homework</th><th className="px-3 py-2">Group</th><th className="px-3 py-2">Exam</th><th className="px-3 py-2">Total</th><th className="px-3 py-2">Level</th></tr>
+                </thead>
+                <tbody>
+                  {(report.records as GradeHistoryRecord[]).map((record) => (
+                    <tr key={record.id} className="border-t border-border/60">
+                      <td className="px-3 py-2"><span className="font-medium">{record.subject_name}</span><span className="block text-muted-foreground">{record.class_name} · {record.term_name} · {record.academic_year_name}</span></td>
+                      <td className="px-3 py-2">{record.class_test_score ?? "—"}</td>
+                      <td className="px-3 py-2">{record.project_score ?? "—"}</td>
+                      <td className="px-3 py-2">{record.homework_score ?? "—"}</td>
+                      <td className="px-3 py-2">{record.group_work_score ?? "—"}</td>
+                      <td className="px-3 py-2">{record.exam_score ?? "—"}</td>
+                      <td className="px-3 py-2">{record.total_score ?? "—"}</td>
+                      <td className="px-3 py-2">{record.performance_level ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </>
+            )}
+          </table>
+        </div>
+      )}
+      <ProfilePager report={report} onPageChange={setPage} />
+    </div>
+  );
+}
+
+function ProfileFees({ studentId }: { studentId: string }) {
+  const [report, setReport] = useState<ProfileFinancialReport | null>(null);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const params = new URLSearchParams({ student_id: studentId, page: String(page), page_size: "20" });
+    void schoolApi<ProfileFinancialReport>(`/api/school/student-financial-records?${params}`)
+      .then((result) => { if (!cancelled) setReport(result); })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setReport(null);
+          setError(cause instanceof Error ? cause.message : "Could not load student financial records");
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [page, studentId]);
+
+  if (loading) return <p className="text-sm text-muted-foreground">Loading saved payment history…</p>;
+  if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+  if (!report) return null;
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap gap-3">
+        {report.totals.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No payment records yet.</p>
+        ) : report.totals.map((total) => (
+          <div key={total.currency} className="rounded-lg border border-border px-3 py-2">
+            <p className="text-xs text-muted-foreground">{total.currency} · {total.payment_count} records</p>
+            <p className="text-sm font-semibold">{formatProfileAmount(total.verified_amount, total.currency)} verified</p>
+            {Number(total.pending_amount) > 0 && <p className="text-xs text-muted-foreground">{formatProfileAmount(total.pending_amount, total.currency)} pending</p>}
+          </div>
+        ))}
+      </div>
+      {report.records.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+          No saved fee payments for this student yet.
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[620px] text-left text-xs">
+            <thead className="bg-muted/40 text-muted-foreground">
+              <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Fee</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Method</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Receipt</th></tr>
+            </thead>
+            <tbody>
+              {report.records.map((record) => (
+                <tr key={record.id} className="border-t border-border/60">
+                  <td className="px-3 py-2">{(record.daily_fee_date || record.paid_at).slice(0, 10)}</td>
+                  <td className="px-3 py-2"><span className="font-medium">{record.fee_description}</span><span className="block text-muted-foreground">{[record.class_name, record.term_name, record.academic_year_name].filter(Boolean).join(" · ") || record.category.replaceAll("_", " ")}</span></td>
+                  <td className="px-3 py-2">{formatProfileAmount(record.amount, record.currency)}</td>
+                  <td className="px-3 py-2 capitalize">{record.method.replaceAll("_", " ")}</td>
+                  <td className="px-3 py-2 capitalize">{record.status}</td>
+                  <td className="px-3 py-2 font-mono">{record.receipt_number || "Not issued"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <ProfilePager report={report} onPageChange={setPage} />
+    </div>
+  );
+}
+
+function ProfilePager({
+  report,
+  onPageChange,
+}: {
+  report: Pick<ProfilePage<unknown>, "page" | "page_count" | "page_size" | "total_count">;
+  onPageChange: (page: number) => void;
+}) {
+  if (report.total_count === 0) return null;
+  const first = (report.page - 1) * report.page_size + 1;
+  const last = Math.min(report.page * report.page_size, report.total_count);
+  return (
+    <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+      <span>Showing {first}–{last} of {report.total_count}</span>
+      <div className="flex items-center gap-2">
+        <button type="button" aria-label="Previous page" disabled={report.page <= 1} onClick={() => onPageChange(report.page - 1)} className="rounded border border-border p-1 disabled:opacity-40"><ChevronLeft className="size-4" /></button>
+        <span>Page {report.page} of {report.page_count}</span>
+        <button type="button" aria-label="Next page" disabled={report.page >= report.page_count} onClick={() => onPageChange(report.page + 1)} className="rounded border border-border p-1 disabled:opacity-40"><ChevronRight className="size-4" /></button>
+      </div>
+    </div>
+  );
+}
+
+function formatProfileAmount(amount: number | string, currency: string) {
+  return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(Number(amount));
+}
+
 function InfoCard({
   icon: Icon,
   label,
@@ -1299,17 +1647,6 @@ function InfoCard({
         <p className="text-sm font-medium text-foreground">{value}</p>
         {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
       </div>
-    </div>
-  );
-}
-
-function ProfileMetric({ label, value, note }: { label: string; value: string; note: string }) {
-  return (
-    <div className="rounded-xl border border-border p-5">
-      <p className="text-sm font-medium text-foreground">{label}</p>
-      <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
-      <p className="mt-1 text-xs text-muted-foreground">{note}</p>
-      <FileText className="w-4 h-4 mt-4 text-muted-foreground" />
     </div>
   );
 }

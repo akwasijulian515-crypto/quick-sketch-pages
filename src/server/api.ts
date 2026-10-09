@@ -349,6 +349,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
   const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
+  const studentHistoryMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)\/history\/(attendance|grades)$/i);
   const paymentReviewMatch = url.pathname.match(/^\/api\/school\/payments\/([0-9a-f-]+)\/review$/i);
   const workflowRoles: Record<string, Record<string, readonly string[]>> = {
     "/api/school/classes": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
@@ -371,6 +372,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   };
   const workflowMethodRoles = workflowRoles[url.pathname]?.[request.method]
     ?? (studentProfileMatch && ["GET", "PATCH"].includes(request.method) ? ["school_admin"] : undefined)
+    ?? (studentHistoryMatch && request.method === "GET" ? ["school_admin"] : undefined)
     ?? (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined)
     ?? (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined)
     ?? (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
@@ -382,6 +384,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     || url.pathname === "/api/school/team"
     || url.pathname === "/api/school/teaching-setup"
     || studentProfileMatch !== null
+    || studentHistoryMatch !== null
     || paymentReviewMatch !== null
     || classRosterMatch !== null
     || termCloseMatch !== null
@@ -397,6 +400,118 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       : await requireSchoolAdminContext(request, env);
     if (school instanceof Response) return school;
     const sql = database(env);
+
+    if (studentHistoryMatch) {
+      const [, studentId, historyType] = studentHistoryMatch;
+      if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      const offset = (page - 1) * pageSize;
+      const studentRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`select id from students where id = ${studentId}::uuid and school_id = ${school.schoolId}::uuid`,
+      );
+      if (!studentRows[0]) return json({ error: "Student not found" }, 404);
+
+      if (historyType === "attendance") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with filtered_records as materialized (
+              select ar.id, ase.attendance_date, ar.status, ar.note, c.name as class_name
+              from attendance_records ar
+              join attendance_sessions ase
+                on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+              join classes c on c.id = ase.class_id and c.school_id = ase.school_id
+              where ar.school_id = ${school.schoolId}::uuid
+                and ar.student_id = ${studentId}::uuid
+            ),
+            page_records as (
+              select * from filtered_records
+              order by attendance_date desc, id desc
+              limit ${pageSize} offset ${offset}
+            )
+            select
+              coalesce((
+                select jsonb_agg(jsonb_build_object(
+                  'id', id, 'attendance_date', attendance_date, 'status', status,
+                  'note', note, 'class_name', class_name
+                ) order by attendance_date desc, id desc)
+                from page_records
+              ), '[]'::jsonb) as records,
+              (select count(*)::int from filtered_records) as total_count,
+              coalesce((
+                select jsonb_object_agg(status, status_count)
+                from (
+                  select status, count(*)::int as status_count
+                  from filtered_records
+                  group by status
+                ) counts
+              ), '{}'::jsonb) as summary
+          `,
+        );
+        const report = rows[0];
+        if (!report) throw new Error("Student attendance query returned an invalid result");
+        const totalCount = Number(report["total_count"] ?? 0);
+        return json({
+          records: report["records"],
+          summary: report["summary"],
+          total_count: totalCount,
+          page,
+          page_size: pageSize,
+          page_count: Math.ceil(totalCount / pageSize),
+        });
+      }
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with filtered_records as materialized (
+            select m.id, m.class_test_score, m.project_score, m.homework_score,
+                   m.group_work_score, m.exam_score, m.total_score, m.performance_level,
+                   s.name as subject_name, c.name as class_name, t.name as term_name,
+                   ay.name as academic_year_name, ay.starts_on as year_starts_on,
+                   t.starts_on as term_starts_on
+            from subject_term_marks m
+            join class_subjects cs
+              on cs.id = m.class_subject_id and cs.school_id = m.school_id
+            join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+            join classes c on c.id = cs.class_id and c.school_id = cs.school_id
+            join terms t on t.id = m.term_id and t.school_id = m.school_id
+            join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+            where m.school_id = ${school.schoolId}::uuid
+              and m.student_id = ${studentId}::uuid
+          ),
+          page_records as (
+            select * from filtered_records
+            order by year_starts_on desc, term_starts_on desc, subject_name asc, id
+            limit ${pageSize} offset ${offset}
+          )
+          select
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'id', id, 'subject_name', subject_name, 'class_name', class_name,
+                'term_name', term_name, 'academic_year_name', academic_year_name,
+                'class_test_score', class_test_score, 'project_score', project_score,
+                'homework_score', homework_score, 'group_work_score', group_work_score,
+                'exam_score', exam_score, 'total_score', total_score,
+                'performance_level', performance_level
+              ) order by year_starts_on desc, term_starts_on desc, subject_name asc, id)
+              from page_records
+            ), '[]'::jsonb) as records,
+            (select count(*)::int from filtered_records) as total_count
+        `,
+      );
+      const report = rows[0];
+      if (!report) throw new Error("Student grades query returned an invalid result");
+      const totalCount = Number(report["total_count"] ?? 0);
+      return json({
+        records: report["records"],
+        total_count: totalCount,
+        page,
+        page_size: pageSize,
+        page_count: Math.ceil(totalCount / pageSize),
+      });
+    }
 
     if (studentProfileMatch) {
       if (!uuidOrNull(studentProfileMatch[1])) return badRequest("Invalid student ID");

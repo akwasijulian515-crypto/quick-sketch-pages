@@ -65,6 +65,8 @@ type OtherFeePayment = Payment & {
   rejection_reason: string | null;
 };
 
+type ReviewTab = "pending" | "verified" | "rejected";
+
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getNeonAccessToken();
   const url = new URL(path, window.location.origin);
@@ -98,6 +100,7 @@ function PaymentsPage() {
   const [feeBalancesLoading, setFeeBalancesLoading] = useState(false);
   const [recordingSchoolFee, setRecordingSchoolFee] = useState(false);
   const [reviewingId, setReviewingId] = useState("");
+  const [reviewTab, setReviewTab] = useState<ReviewTab>("pending");
   const [error, setError] = useState("");
   const [schoolFeeError, setSchoolFeeError] = useState("");
   const [notice, setNotice] = useState("");
@@ -115,8 +118,13 @@ function PaymentsPage() {
     status: string;
   } | null>(null);
   const pendingOtherPayments = otherPayments.filter((payment) => payment.status === "pending");
-  const reviewedOtherPayments = otherPayments.filter((payment) => payment.status !== "pending");
-  const orderedOtherPayments = [...pendingOtherPayments, ...reviewedOtherPayments];
+  const verifiedOtherPayments = otherPayments.filter((payment) => payment.status === "verified");
+  const rejectedOtherPayments = otherPayments.filter((payment) => payment.status === "voided");
+  const visibleReviewPayments = reviewTab === "pending"
+    ? pendingOtherPayments
+    : reviewTab === "verified"
+      ? verifiedOtherPayments
+      : rejectedOtherPayments;
   const fee = schoolFees.find((item) => item.id === selectedSchoolFeeId);
   const student = feeBalances.find((item) => item.student_id === selectedStudentId);
 
@@ -308,12 +316,30 @@ function PaymentsPage() {
     <div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CreditCard className="size-5" /></div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record school-fee collections, validate Finance receipts independently, and manage this school’s fee rules.</p></div>
     <section className="glass-panel mt-5 overflow-hidden rounded-lg border-amber-600/30">
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Payment validation</h2><p className="mt-1 text-xs text-muted-foreground">Validate school, exam, or other-fee receipts. A different school admin must review the payment; the recorder cannot approve their own receipt.</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-900">{pendingOtherPayments.length} pending</span></div>
+      <div role="tablist" aria-label="Payment review status" className="flex gap-2 border-b border-border px-5 py-3">
+        {([
+          ["pending", "Pending", pendingOtherPayments.length],
+          ["verified", "Verified", verifiedOtherPayments.length],
+          ["rejected", "Rejected", rejectedOtherPayments.length],
+        ] as const).map(([tab, label, count]) => (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={reviewTab === tab}
+            onClick={() => setReviewTab(tab)}
+            className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${reviewTab === tab ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          >
+            {label} <span className="ml-1 opacity-80">({count})</span>
+          </button>
+        ))}
+      </div>
       {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
       {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading review queue...</p>
-        : orderedOtherPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No school, exam, or other-fee receipts have been recorded.</p>
+        : visibleReviewPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">{reviewTab === "pending" ? "No payments need verification right now." : `No ${reviewTab} payments.`}</p>
           : <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm">
             <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Fee type", "Fee", "Receipt", "Amount", "Recorded by", "Status / review", "Action"].map((label) => <th key={label} className="px-4 py-3 font-medium">{label}</th>)}</tr></thead>
-            <tbody className="divide-y divide-border/70">{orderedOtherPayments.map((payment) => <tr key={payment.id} className={payment.status === "pending" ? "bg-amber-50/40" : ""}>
+            <tbody className="divide-y divide-border/70">{visibleReviewPayments.map((payment) => <tr key={payment.id} className={payment.status === "pending" ? "bg-amber-50/40" : ""}>
               <td className="px-4 py-3 font-medium">{payment.first_name} {payment.last_name}<p className="font-mono text-xs text-muted-foreground">{payment.admission_number} · {payment.class_name}</p></td>
               <td className="px-4 py-3 capitalize">{payment.category.replaceAll("_", " ")}</td>
               <td className="px-4 py-3">{payment.fee_description}</td>
