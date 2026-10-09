@@ -44,6 +44,7 @@ const schoolAdminNavigation = [
   { label: "Attendance", to: "/attendance-overview", icon: UserRoundCheck },
   { label: "Grades", to: "/grades", icon: ScrollText },
   { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText },
+  { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck },
   { label: "Academic setup", to: "/academic-setup", icon: CalendarDays },
   { label: "Teachers", to: "/teachers", icon: UsersRound },
   { label: "Classes", to: "/classes", icon: School },
@@ -62,6 +63,7 @@ const studentNavigation = [
 const financeNavigation = [
   { label: "Finance desk", to: "/finance", icon: LayoutDashboard },
   { label: "Daily payments", to: "/daily-payments", icon: Banknote },
+  { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck },
 ] as const;
 
 

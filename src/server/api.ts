@@ -354,7 +354,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/students": { GET: ["school_admin", "teacher"] },
     "/api/school/attendance": { GET: ["school_admin", "teacher"], POST: ["teacher"] },
     "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
-    "/api/school/payments": { GET: ["school_admin", "finance"] },
+    "/api/school/payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
+    "/api/school/daily-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
+    "/api/school/reconciliation": { GET: ["school_admin", "finance"] },
     "/api/school/coupons": { GET: ["school_admin", "teacher", "finance"] },
     "/api/school/marks": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
     "/api/school/terminal-reports": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
@@ -746,18 +748,378 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     }
 
     if (url.pathname === "/api/school/payments" && request.method === "GET") {
+      const feeId = url.searchParams.get("fee_id")?.trim() || null;
+      if (feeId && !uuidOrNull(feeId)) return badRequest("Invalid class fee ID");
+      if (feeId) {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select st.id as student_id, st.first_name, st.last_name,
+                   st.admission_number, c.name as class_name,
+                   coalesce(i.amount_due, f.amount) as original_amount,
+                   coalesce(paid.paid_amount, 0) as paid_amount,
+                   greatest(coalesce(i.amount_due, f.amount) - coalesce(paid.paid_amount, 0), 0) as balance_due,
+                   i.status as invoice_status, f.currency
+            from class_fees f
+            join classes c on c.id = f.class_id and c.school_id = f.school_id
+            join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id and e.ends_on is null
+            join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+            left join invoices i on i.school_id = f.school_id and i.student_id = st.id
+              and i.class_fee_id = f.id and i.status <> 'void'
+            left join lateral (
+              select sum(p.amount) as paid_amount
+              from payments p
+              where p.school_id = f.school_id and p.invoice_id = i.id and p.status = 'verified'
+            ) paid on true
+            where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
+              and f.is_active and f.fee_type <> 'daily'
+            order by st.last_name, st.first_name, st.admission_number
+          `,
+        );
+        return json({ balances: rows });
+      }
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
                  p.status, p.paid_at, st.first_name, st.last_name, st.admission_number
           from payments p
           join students st on st.id = p.student_id and st.school_id = p.school_id
-          where p.school_id = ${school.schoolId}::uuid
+          where p.school_id = ${school.schoolId}::uuid and p.status = 'verified'
           order by p.paid_at desc
           limit 200
         `,
       );
       return json({ payments: rows });
+    }
+
+    if (url.pathname === "/api/school/payments" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const studentId = body["student_id"];
+      const feeId = body["fee_id"];
+      const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
+      const method = body["method"];
+      if (!uuidOrNull(studentId) || !studentId || !uuidOrNull(feeId) || !feeId) return badRequest("Choose a valid student and school fee");
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 99_999_999.99) return badRequest("Enter a valid payment amount");
+      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
+
+      const invoiceNumber = `SF-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+      const receiptNumber = `SF-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`
+          insert into invoices
+            (school_id, student_id, class_fee_id, invoice_number, description, amount_due, currency, status)
+          select f.school_id, ${studentId}::uuid, f.id, ${invoiceNumber},
+                 f.description, f.amount, f.currency, 'issued'
+          from class_fees f
+          join classes c on c.id = f.class_id and c.school_id = f.school_id
+          join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
+            and e.student_id = ${studentId}::uuid and e.ends_on is null
+          join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+          where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
+            and f.is_active and f.fee_type <> 'daily' and c.academic_year_id = f.academic_year_id
+          on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
+        `,
+        tx`
+          select id, amount_due
+          from invoices
+          where school_id = ${school.schoolId}::uuid and student_id = ${studentId}::uuid
+            and class_fee_id = ${feeId}::uuid and status <> 'void'
+          for update
+        `,
+        tx`
+          with invoice as (
+            select id, amount_due, currency
+            from invoices
+            where school_id = ${school.schoolId}::uuid and student_id = ${studentId}::uuid
+              and class_fee_id = ${feeId}::uuid and status <> 'void'
+          ),
+          balance as (
+            select i.id, i.amount_due, i.currency,
+                   greatest(i.amount_due - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0), 0) as balance_due
+            from invoice i
+            left join payments p on p.school_id = ${school.schoolId}::uuid and p.invoice_id = i.id
+            group by i.id, i.amount_due, i.currency
+          ),
+          recorded as (
+            insert into payments
+              (school_id, invoice_id, student_id, receipt_number, amount, currency, method,
+               recorded_by_staff_id, category, status, verified_at, receipt_issued_at)
+            select ${school.schoolId}::uuid, b.id, ${studentId}::uuid,
+                   ${receiptNumber},
+                   ${amount}, b.currency, ${String(method)},
+                   (select id from staff_profiles where school_id = ${school.schoolId}::uuid
+                    and user_id = ${school.userId}::uuid limit 1),
+                   'school_fee', 'verified', now(), now()
+            from balance b
+            where ${amount} <= b.balance_due and b.balance_due > 0
+            returning id, receipt_number, amount, currency, paid_at
+          )
+          select balance.amount_due, balance.balance_due as balance_before,
+                 recorded.id as payment_id
+          from balance left join recorded on true
+        `,
+        tx`
+          update invoices i
+          set status = case
+                when paid.total >= i.amount_due then 'paid'::invoice_status
+                when paid.total > 0 then 'part_paid'::invoice_status
+                else 'issued'::invoice_status
+              end,
+              updated_at = now()
+          from (
+            select i.id, coalesce(sum(p.amount) filter (where p.status = 'verified'), 0) as total
+            from invoices i
+            left join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+            where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+              and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+            group by i.id
+          ) paid
+          where i.id = paid.id
+        `,
+        tx`
+          select p.id, p.receipt_number, p.amount, p.currency, p.paid_at,
+                 i.amount_due,
+                 greatest(i.amount_due - coalesce((
+                   select sum(paid.amount) from payments paid
+                   where paid.school_id = i.school_id and paid.invoice_id = i.id
+                     and paid.status = 'verified'
+                 ), 0), 0) as balance_due
+          from invoices i
+          left join payments p on p.invoice_id = i.id and p.school_id = i.school_id
+            and p.receipt_number = ${receiptNumber}
+          where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+            and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+        `,
+      ]);
+      const result = rows[0];
+      if (!result) return json({ error: "No matching student fee balance was found" }, 404);
+      if (!result["id"]) {
+        return json({
+          error: "Payment exceeds the remaining balance or this fee has already been paid.",
+          balance_due: Number(result["balance_due"] ?? 0),
+        }, 409);
+      }
+      return json({
+        payment: result,
+        balance_due: Number(result["balance_due"] ?? 0),
+      }, 201);
+    }
+
+    if (url.pathname === "/api/school/daily-payments" && request.method === "GET") {
+      const paymentDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      if (!validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select distinct on (st.id)
+                 st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                 c.id as class_id, c.name as class_name,
+                 f.amount as fee_amount, f.currency,
+                 attendance.status as attendance_status,
+                 p.id as payment_id, p.method, p.paid_at,
+                 coupon.code as coupon_code
+          from class_enrollments e
+          join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+          join classes c on c.id = e.class_id and c.school_id = e.school_id
+          join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+            and ${paymentDate}::date between ay.starts_on and ay.ends_on
+          join class_fees f on f.school_id = c.school_id and f.class_id = c.id
+            and f.academic_year_id = ay.id and f.fee_type = 'daily'
+            and f.term_id is null and f.is_active
+          left join lateral (
+            select ar.status
+            from attendance_records ar
+            join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+            where ar.school_id = e.school_id and ar.student_id = st.id and ase.class_id = c.id
+              and ase.attendance_date = ${paymentDate}::date
+            order by ar.marked_at desc
+            limit 1
+          ) attendance on true
+          left join payments p on p.school_id = e.school_id and p.student_id = st.id
+            and p.daily_fee_date = ${paymentDate}::date and p.category = 'daily_fee'
+            and p.status = 'verified'
+          left join coupons coupon on coupon.school_id = p.school_id and coupon.payment_id = p.id
+          where e.school_id = ${school.schoolId}::uuid
+            and e.starts_on <= ${paymentDate}::date and (e.ends_on is null or e.ends_on >= ${paymentDate}::date)
+          order by st.id, e.starts_on desc
+        `,
+      );
+      return json({ students: rows, date: paymentDate });
+    }
+
+    if (url.pathname === "/api/school/daily-payments" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const studentId = body["student_id"];
+      const paymentDate = body["date"];
+      const method = body["method"];
+      if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
+      if (typeof paymentDate !== "string" || !validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
+      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with eligible as (
+            select f.school_id, f.amount, f.currency, st.id as student_id, c.id as class_id,
+                   (select id from staff_profiles where school_id = f.school_id
+                    and user_id = ${school.userId}::uuid limit 1) as staff_id
+            from students st
+            join class_enrollments e on e.student_id = st.id and e.school_id = st.school_id
+              and e.starts_on <= ${paymentDate}::date and (e.ends_on is null or e.ends_on >= ${paymentDate}::date)
+            join classes c on c.id = e.class_id and c.school_id = e.school_id
+            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              and ${paymentDate}::date between ay.starts_on and ay.ends_on
+            join class_fees f on f.class_id = c.id and f.school_id = c.school_id
+              and f.academic_year_id = ay.id and f.fee_type = 'daily' and f.term_id is null and f.is_active
+            where st.id = ${studentId}::uuid and st.school_id = ${school.schoolId}::uuid and st.active
+            order by e.starts_on desc
+            limit 1
+          ),
+          recorded as (
+            insert into payments
+              (school_id, student_id, amount, currency, method, recorded_by_staff_id,
+               category, daily_fee_date, status, verified_at)
+            select school_id, student_id, amount, currency, ${String(method)}, staff_id,
+                   'daily_fee', ${paymentDate}::date, 'verified', now()
+            from eligible
+            on conflict (school_id, student_id, daily_fee_date) where category = 'daily_fee' do nothing
+            returning id, school_id, student_id, amount, currency, daily_fee_date, method
+          ),
+          issued_coupon as (
+            insert into coupons (school_id, student_id, code, issued_by_staff_id, payment_id, valid_on)
+            select r.school_id, r.student_id, 'DF-' || upper(encode(gen_random_bytes(5), 'hex')),
+                   (select id from staff_profiles where school_id = r.school_id
+                    and user_id = ${school.userId}::uuid limit 1),
+                   r.id, r.daily_fee_date
+            from recorded r
+            returning payment_id, code
+          )
+          select r.*, c.code as coupon_code
+          from recorded r join issued_coupon c on c.payment_id = r.id
+        `,
+      );
+      if (!rows[0]) {
+        return json({ error: "Student is not eligible for this date, no daily fee is configured, or payment is already recorded." }, 409);
+      }
+      return json({ payment: rows[0] }, 201);
+    }
+
+    if (url.pathname === "/api/school/reconciliation" && request.method === "GET") {
+      const reconciliationDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      if (!validIsoDate(reconciliationDate)) return badRequest("Enter a valid reconciliation date");
+      const [summaryRows, channels, categoryTotals, payments] = await Promise.all([
+        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+          with expected_students as (
+            select st.id as student_id, f.amount, f.currency
+            from attendance_records ar
+            join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+            join students st on st.id = ar.student_id and st.school_id = ar.school_id and st.active
+            join class_enrollments e on e.student_id = st.id and e.school_id = st.school_id
+              and e.class_id = ase.class_id and e.starts_on <= ${reconciliationDate}::date
+              and (e.ends_on is null or e.ends_on >= ${reconciliationDate}::date)
+            join classes c on c.id = ase.class_id and c.school_id = ase.school_id
+            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              and ${reconciliationDate}::date between ay.starts_on and ay.ends_on
+            join class_fees f on f.class_id = c.id and f.school_id = c.school_id
+              and f.academic_year_id = ay.id and f.fee_type = 'daily'
+              and f.term_id is null and f.is_active
+            where ar.school_id = ${school.schoolId}::uuid
+              and ase.attendance_date = ${reconciliationDate}::date and ar.status in ('present', 'late')
+            group by st.id, f.amount, f.currency
+          ),
+          expected_by_currency as (
+            select currency, sum(amount) as total, count(*)::int as students
+            from expected_students group by currency
+          ),
+          received_by_currency as (
+            select currency,
+                   sum(amount) filter (where category = 'daily_fee') as daily_total,
+                   count(*) filter (where category = 'daily_fee')::int as daily_payments,
+                   sum(amount) filter (where category = 'school_fee') as school_fee_total,
+                   count(*) filter (where category = 'school_fee')::int as school_fee_payments,
+                   sum(amount) filter (where category not in ('daily_fee', 'school_fee')) as other_total,
+                   count(*) filter (where category not in ('daily_fee', 'school_fee'))::int as other_payments,
+                   sum(amount) as total
+            from payments
+            where school_id = ${school.schoolId}::uuid and status = 'verified'
+              and (
+                (category = 'daily_fee' and daily_fee_date = ${reconciliationDate}::date)
+                or (category <> 'daily_fee' and paid_at::date = ${reconciliationDate}::date)
+              )
+            group by currency
+          )
+          select currency,
+                 coalesce(expected_by_currency.total, 0) as expected_daily,
+                 coalesce(expected_by_currency.students, 0) as expected_students,
+                 coalesce(received_by_currency.daily_total, 0) as daily_received,
+                 coalesce(received_by_currency.daily_payments, 0) as daily_payment_count,
+                 coalesce(received_by_currency.school_fee_total, 0) as school_fee_received,
+                 coalesce(received_by_currency.school_fee_payments, 0) as school_fee_payment_count,
+                 coalesce(received_by_currency.other_total, 0) as other_payments_received,
+                 coalesce(received_by_currency.other_payments, 0) as other_payment_count,
+                 coalesce(received_by_currency.total, 0) as total_received
+          from (
+            select currency from expected_by_currency
+            union select currency from received_by_currency
+          ) currencies
+          left join expected_by_currency using (currency)
+          left join received_by_currency using (currency)
+          order by currency
+        `),
+        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+          select method, category, currency, sum(amount) as amount, count(*)::int as payment_count
+          from payments
+          where school_id = ${school.schoolId}::uuid and status = 'verified'
+            and (
+              (category = 'daily_fee' and daily_fee_date = ${reconciliationDate}::date)
+              or (category <> 'daily_fee' and paid_at::date = ${reconciliationDate}::date)
+            )
+          group by method, category, currency
+          order by category, method
+        `),
+        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+          select category, currency, sum(amount) as amount, count(*)::int as payment_count
+          from payments
+          where school_id = ${school.schoolId}::uuid and status = 'verified'
+            and (
+              (category = 'daily_fee' and daily_fee_date = ${reconciliationDate}::date)
+              or (category <> 'daily_fee' and paid_at::date = ${reconciliationDate}::date)
+            )
+          group by category, currency
+          order by currency, category
+        `),
+        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+          select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                 p.paid_at, p.daily_fee_date, st.first_name, st.last_name, st.admission_number
+          from payments p
+          join students st on st.id = p.student_id and st.school_id = p.school_id
+          where p.school_id = ${school.schoolId}::uuid and p.status = 'verified'
+            and (
+              (p.category = 'daily_fee' and p.daily_fee_date = ${reconciliationDate}::date)
+              or (p.category <> 'daily_fee' and p.paid_at::date = ${reconciliationDate}::date)
+            )
+          order by p.paid_at desc
+        `),
+      ]);
+      return json({
+        date: reconciliationDate,
+        currency_totals: summaryRows.map((row) => ({
+          currency: row["currency"],
+          expected_daily: row["expected_daily"],
+          expected_students: row["expected_students"],
+          daily_received: row["daily_received"],
+          daily_payment_count: row["daily_payment_count"],
+          school_fee_received: row["school_fee_received"],
+          school_fee_payment_count: row["school_fee_payment_count"],
+          other_payments_received: row["other_payments_received"],
+          other_payment_count: row["other_payment_count"],
+          total_received: row["total_received"],
+          variance: Number(row["expected_daily"] ?? 0) - Number(row["daily_received"] ?? 0),
+        })),
+        channels,
+        category_totals: categoryTotals,
+        payments,
+      });
     }
 
     if (url.pathname === "/api/school/coupons" && request.method === "GET") {
