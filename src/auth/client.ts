@@ -73,6 +73,18 @@ async function loadNeonAccessToken() {
   throw new Error("Neon Auth did not return a usable session credential. Please sign out and sign in again.");
 }
 
+export async function getNeonSessionCredential() {
+  const client = await ensureNeonAuthClient();
+  if (!client) throw new Error("Neon Auth is not configured for this app");
+  const sessionResult = await client.getSession();
+  if (sessionResult.error) throw new Error(sessionResult.error.message);
+  const sessionToken = asSessionCredential(sessionResult.data?.session?.token);
+  if (!sessionToken) {
+    throw new Error("Neon Auth did not return an active session. Please sign in again.");
+  }
+  return sessionToken;
+}
+
 export function getNeonAccessToken() {
   if (!accessTokenPromise) {
     accessTokenPromise = loadNeonAccessToken().finally(() => {

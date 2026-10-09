@@ -316,7 +316,7 @@ function PaymentsPage() {
     <div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CreditCard className="size-5" /></div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record school-fee collections, validate Finance receipts independently, and manage this school’s fee rules.</p></div>
     <section className="glass-panel mt-5 overflow-hidden rounded-lg border-amber-600/30">
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Payment validation</h2><p className="mt-1 text-xs text-muted-foreground">Validate school, exam, or other-fee receipts. A different school admin must review the payment; the recorder cannot approve their own receipt.</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-900">{pendingOtherPayments.length} pending</span></div>
-      <div role="tablist" aria-label="Payment review status" className="flex gap-2 border-b border-border px-5 py-3">
+      <div role="tablist" aria-label="Payment review status" className="grid grid-cols-3 gap-2 border-b border-border px-3 py-3 sm:flex sm:px-5">
         {([
           ["pending", "Pending", pendingOtherPayments.length],
           ["verified", "Verified", verifiedOtherPayments.length],
@@ -328,9 +328,10 @@ function PaymentsPage() {
             role="tab"
             aria-selected={reviewTab === tab}
             onClick={() => setReviewTab(tab)}
-            className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${reviewTab === tab ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            className={`flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-1.5 sm:px-4 sm:text-sm ${reviewTab === tab ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}
           >
-            {label} <span className="ml-1 opacity-80">({count})</span>
+            <span>{label}</span>
+            <span className={`text-base font-bold leading-none sm:ml-1 sm:text-sm sm:font-medium ${reviewTab === tab ? "opacity-90" : "text-foreground"}`}>{count}</span>
           </button>
         ))}
       </div>

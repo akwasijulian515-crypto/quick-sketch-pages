@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
-import { getNeonAccessToken } from "../auth/client";
+import { getNeonAccessToken, getNeonSessionCredential } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -25,10 +25,17 @@ async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
   const url = new URL(path, window.location.origin);
   const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
   if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
-  const headers = new Headers(init?.headers);
-  headers.set("authorization", `******`);
-  if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const requestWithToken = (credential: string) => {
+    const headers = new Headers(init?.headers);
+    headers.set("authorization", `******`);
+    if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+    return fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  };
+  let response = await requestWithToken(token);
+  if (response.status === 401) {
+    const sessionCredential = await getNeonSessionCredential();
+    if (sessionCredential !== token) response = await requestWithToken(sessionCredential);
+  }
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
