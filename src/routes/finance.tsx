@@ -335,19 +335,25 @@ function FinancePage() {
         : activeFees.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No active tuition or PTA fee rules are configured. Ask the School Admin to set up the fee schedule first.</p>
           : balancesLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading student balances...</p>
             : balances.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No active students are currently enrolled in this fee’s class.</p>
-              : <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[900px] text-left text-sm">
-                  <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Original fee", "Paid to date", "Remaining"].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr></thead>
-                  <tbody className="divide-y divide-border/70">{balances.map((student) => {
-                    const remaining = Number(student.balance_due);
-                    return <tr key={student.student_id}>
-                      <td className="px-4 py-3"><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-xs text-muted-foreground">{student.admission_number} · {student.class_name}</p></td>
-                      <td className="px-4 py-3">{student.currency} {Number(student.original_amount).toFixed(2)}</td>
-                      <td className="px-4 py-3">{student.currency} {Number(student.paid_amount).toFixed(2)}</td>
-                      <td className="px-4 py-3 font-semibold">{student.currency} {remaining.toFixed(2)}</td>
-                    </tr>;
-                  })}</tbody>
-                </table>
+              : <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {balances.map((student) => {
+                  const remaining = Number(student.balance_due);
+                  const settled = remaining <= 0;
+                  return <article key={student.student_id} className="rounded-lg border border-border bg-background/60 p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="truncate font-semibold">{student.first_name} {student.last_name}</h3>
+                        <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{student.admission_number} · {student.class_name}</p>
+                      </div>
+                      <span className={settled ? "shrink-0 rounded-full bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-700" : "shrink-0 rounded-full bg-amber-600/10 px-2.5 py-1 text-xs font-medium text-amber-800"}>{settled ? "Paid" : "Balance due"}</span>
+                    </div>
+                    <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-border pt-3 text-xs">
+                      <div><dt className="text-muted-foreground">Original</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.original_amount).toFixed(2)}</dd></div>
+                      <div><dt className="text-muted-foreground">Paid</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.paid_amount).toFixed(2)}</dd></div>
+                      <div><dt className="text-muted-foreground">Remaining</dt><dd className="mt-1 font-semibold">{student.currency} {remaining.toFixed(2)}</dd></div>
+                    </dl>
+                  </article>;
+                })}
               </div>}
     </section>
 

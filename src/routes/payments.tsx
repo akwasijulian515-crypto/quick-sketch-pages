@@ -321,6 +321,38 @@ function PaymentsPage() {
               </div>
             </div>}
       {!feeBalancesLoading && selectedSchoolFeeId && feeBalances.length === 0 && <p className="mt-3 text-sm text-muted-foreground">No active learners are enrolled in the selected fee’s class.</p>}
+      {feeBalances.length > 0 && <div className="mt-5">
+        <h3 className="mb-3 text-sm font-semibold">Learner balances <span className="font-normal text-muted-foreground">· select a tile to record payment</span></h3>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {feeBalances.map((learner) => {
+            const remaining = Number(learner.balance_due);
+            const selected = learner.student_id === selectedStudentId;
+            const settled = remaining <= 0;
+            return <button
+              key={learner.student_id}
+              type="button"
+              onClick={() => {
+                setSelectedStudentId(learner.student_id);
+                setAmount("");
+              }}
+              className={`rounded-lg border p-4 text-left shadow-sm transition-colors ${selected ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border bg-background/60 hover:border-primary/40"} ${settled ? "opacity-80" : ""}`}
+            >
+              <span className="flex items-start justify-between gap-3">
+                <span className="min-w-0">
+                  <span className="block truncate font-semibold">{learner.first_name} {learner.last_name}</span>
+                  <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">{learner.admission_number} · {learner.class_name}</span>
+                </span>
+                <span className={settled ? "shrink-0 rounded-full bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-700" : "shrink-0 rounded-full bg-amber-600/10 px-2.5 py-1 text-xs font-medium text-amber-800"}>{settled ? "Paid" : "Balance due"}</span>
+              </span>
+              <span className="mt-4 grid grid-cols-3 gap-2 border-t border-border pt-3 text-xs">
+                <span><span className="block text-muted-foreground">Original</span><span className="mt-1 block font-medium">{learner.currency} {Number(learner.original_amount).toFixed(2)}</span></span>
+                <span><span className="block text-muted-foreground">Paid</span><span className="mt-1 block font-medium">{learner.currency} {Number(learner.paid_amount).toFixed(2)}</span></span>
+                <span><span className="block text-muted-foreground">Remaining</span><span className="mt-1 block font-semibold">{learner.currency} {remaining.toFixed(2)}</span></span>
+              </span>
+            </button>;
+          })}
+        </div>
+      </div>}
           {schoolFeeError && <p role="alert" className="mt-3 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{schoolFeeError}</p>}
           {notice && <div role="status" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800"><span>{notice}</span>{newReceipt && <Button size="sm" variant="outline" onClick={downloadNewReceipt}><Download className="mr-2 size-4" />Download receipt PDF</Button>}</div>}
     </section>
