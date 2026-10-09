@@ -31,6 +31,9 @@ type FeeBalance = {
   admission_number: string;
   class_name: string;
   original_amount: number | string;
+  base_amount_due: number | string;
+  arrears_amount: number | string;
+  arrears_sources: string | null;
   paid_amount: number | string;
   pending_amount: number | string;
   balance_due: number | string;
@@ -351,12 +354,14 @@ function FinancePage() {
                       </div>
                       <span className={settled ? "shrink-0 rounded-full bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-700" : "shrink-0 rounded-full bg-amber-600/10 px-2.5 py-1 text-xs font-medium text-amber-800"}>{settled ? "Paid" : "Balance due"}</span>
                     </div>
-                    <dl className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs sm:grid-cols-4">
-                      <div><dt className="text-muted-foreground">Original</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.original_amount).toFixed(2)}</dd></div>
+                    <dl className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs sm:grid-cols-5">
+                      <div><dt className="text-muted-foreground">Current term</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.base_amount_due).toFixed(2)}</dd></div>
+                      <div><dt className="text-muted-foreground">Arrears</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.arrears_amount).toFixed(2)}</dd></div>
                       <div><dt className="text-muted-foreground">Paid</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.paid_amount).toFixed(2)}</dd></div>
                       <div><dt className="text-muted-foreground">Pending</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.pending_amount).toFixed(2)}</dd></div>
                       <div><dt className="text-muted-foreground">Remaining</dt><dd className="mt-1 font-semibold">{student.currency} {remaining.toFixed(2)}</dd></div>
                     </dl>
+                    {student.arrears_sources && <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground"><span className="font-medium text-foreground">Carried from: </span>{student.arrears_sources}</p>}
                   </article>;
                 })}
               </div>}

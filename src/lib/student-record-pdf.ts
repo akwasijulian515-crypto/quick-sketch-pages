@@ -60,6 +60,19 @@ type StudentPdfTotal = {
   pending_amount: number | string;
 };
 
+type StudentPdfFeeBalance = {
+  fee_description: string;
+  term_name: string;
+  academic_year_name: string;
+  currency: string;
+  arrears_sources: string | null;
+  base_amount_due: number | string;
+  arrears_amount: number | string;
+  paid_amount: number | string;
+  pending_amount: number | string;
+  balance_due: number | string;
+};
+
 export function downloadStudentRecordPdf({
   schoolName,
   primaryColor,
@@ -68,6 +81,7 @@ export function downloadStudentRecordPdf({
   grades,
   financialRecords,
   financialTotals,
+  financialBalances,
 }: {
   schoolName: string;
   primaryColor: string;
@@ -76,6 +90,7 @@ export function downloadStudentRecordPdf({
   grades: StudentPdfGrade[];
   financialRecords: StudentPdfPayment[];
   financialTotals: StudentPdfTotal[];
+  financialBalances: StudentPdfFeeBalance[];
 }) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -260,6 +275,20 @@ export function downloadStudentRecordPdf({
   }
 
   addTableSection(
+    "Term-based school-fee balances",
+    ["Fee / term", "Current", "Arrears", "Paid", "Pending", "Balance due"],
+    financialBalances.map((balance) => [
+      `${balance.fee_description}\n${balance.academic_year_name} · ${balance.term_name}${balance.arrears_sources ? `\nCarried from: ${balance.arrears_sources}` : ""}`,
+      pdfMoney(balance.base_amount_due, balance.currency),
+      pdfMoney(balance.arrears_amount, balance.currency),
+      pdfMoney(balance.paid_amount, balance.currency),
+      pdfMoney(balance.pending_amount, balance.currency),
+      pdfMoney(balance.balance_due, balance.currency),
+    ]),
+    [contentWidth - 105, 21, 21, 21, 21, 21],
+  );
+
+  addTableSection(
     "Payment history",
     ["Date", "Fee", "Amount", "Method", "Status", "Receipt"],
     financialRecords.map((record) => [
@@ -287,6 +316,170 @@ export function downloadStudentRecordPdf({
 
   const safeAdmissionNumber = student.studentId.replace(/[^a-z0-9_-]/gi, "-") || "student";
   doc.save(`student-record-${safeAdmissionNumber}.pdf`);
+}
+
+export function downloadFinancialRecordsPdf({
+  schoolName,
+  primaryColor,
+  studentName,
+  admissionNumber,
+  className,
+  termName,
+  records,
+  totals,
+  feeBalances,
+}: {
+  schoolName: string;
+  primaryColor: string;
+  studentName: string;
+  admissionNumber: string;
+  className: string | null;
+  termName: string;
+  records: StudentPdfPayment[];
+  totals: StudentPdfTotal[];
+  feeBalances: StudentPdfFeeBalance[];
+}) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 14;
+  const contentWidth = pageWidth - margin * 2;
+  const palette = pdfPalette(primaryColor);
+  let y = 0;
+
+  function drawHeader() {
+    doc.setFillColor(...palette.deep);
+    doc.rect(0, 0, pageWidth, 30, "F");
+    doc.setFillColor(...palette.primary);
+    doc.rect(0, 30, pageWidth, 2, "F");
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(margin, 6, 18, 18, 3, 3, "F");
+    doc.setTextColor(...palette.deep);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.text(schoolInitials(schoolName), margin + 9, 17, { align: "center" });
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(15);
+    doc.text(doc.splitTextToSize(schoolName, contentWidth - 30), margin + 25, 14);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text("FINANCIAL RECORDS", pageWidth - margin, 23, { align: "right" });
+    y = 40;
+  }
+
+  function ensureSpace(height: number) {
+    if (y + height <= pageHeight - 17) return;
+    doc.addPage();
+    drawHeader();
+  }
+
+  function addSectionTitle(title: string) {
+    ensureSpace(13);
+    doc.setFillColor(...palette.pale);
+    doc.roundedRect(margin, y, contentWidth, 9, 1.5, 1.5, "F");
+    doc.setTextColor(...palette.deep);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text(title.toUpperCase(), margin + 3, y + 6);
+    y += 13;
+  }
+
+  function addTableSection(title: string, headers: string[], rows: string[][], widths: number[]) {
+    addSectionTitle(title);
+    const tableRows = rows.length ? [headers, ...rows] : [["No saved records.", ...Array(headers.length - 1).fill("")]];
+    tableRows.forEach((cells, rowIndex) => {
+      const heading = rowIndex === 0 && rows.length > 0;
+      const padding = 2;
+      const lineHeight = 3.5;
+      const cellLines = cells.map((cell, index) =>
+        doc.splitTextToSize(cell || "—", Math.max(widths[index]! - padding * 2, 8)),
+      );
+      const rowHeight = Math.max(7, Math.max(...cellLines.map((lines) => lines.length)) * lineHeight + padding * 2);
+      ensureSpace(rowHeight);
+      if (heading) doc.setFillColor(...palette.deep);
+      else if (rowIndex % 2 === 0) doc.setFillColor(246, 249, 247);
+      else doc.setFillColor(255, 255, 255);
+      doc.setDrawColor(224, 230, 226);
+      doc.rect(margin, y, contentWidth, rowHeight, heading || rowIndex % 2 === 0 ? "FD" : "D");
+      let x = margin;
+      cells.forEach((_, index) => {
+        const width = widths[index]!;
+        if (index > 0) doc.line(x, y, x, y + rowHeight);
+        doc.setTextColor(...(heading ? [255, 255, 255] as [number, number, number] : [39, 52, 44] as [number, number, number]));
+        doc.setFont("helvetica", heading ? "bold" : "normal");
+        doc.setFontSize(heading ? 7 : 6.8);
+        doc.text(cellLines[index]!, x + padding, y + padding + 2.3);
+        x += width;
+      });
+      y += rowHeight;
+    });
+  }
+
+  drawHeader();
+  doc.setTextColor(...palette.deep);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.text(studentName, margin, y + 6);
+  doc.setTextColor(100, 112, 104);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text(`Admission no. ${admissionNumber}  |  ${className ?? "Class not recorded"}  |  ${termName}`, margin, y + 12);
+  y += 20;
+
+  addTableSection(
+    "Payment totals",
+    ["Currency", "Payments", "Verified", "Pending"],
+    totals.map((total) => [
+      total.currency,
+      String(total.payment_count),
+      `${pdfMoney(total.verified_amount, total.currency)} (${total.verified_count})`,
+      `${pdfMoney(total.pending_amount, total.currency)} (${total.pending_count})`,
+    ]),
+    [contentWidth * 0.2, contentWidth * 0.2, contentWidth * 0.3, contentWidth * 0.3],
+  );
+  addTableSection(
+    "Term-based school-fee balances",
+    ["Fee / term", "Current", "Arrears", "Paid", "Pending", "Balance"],
+    feeBalances.map((balance) => [
+      `${balance.fee_description}\n${balance.academic_year_name} · ${balance.term_name}${balance.arrears_sources ? `\nCarried from: ${balance.arrears_sources}` : ""}`,
+      pdfMoney(balance.base_amount_due, balance.currency),
+      pdfMoney(balance.arrears_amount, balance.currency),
+      pdfMoney(balance.paid_amount, balance.currency),
+      pdfMoney(balance.pending_amount, balance.currency),
+      pdfMoney(balance.balance_due, balance.currency),
+    ]),
+    [contentWidth - 105, 21, 21, 21, 21, 21],
+  );
+  addTableSection(
+    "Payment history",
+    ["Date", "Category", "Fee", "Term", "Receipt", "Amount", "Method", "Status"],
+    records.map((record) => [
+      (record.daily_fee_date || record.paid_at).slice(0, 10),
+      record.category.replaceAll("_", " "),
+      `${record.fee_description}${record.class_name ? ` · ${record.class_name}` : ""}`,
+      [record.academic_year_name, record.term_name].filter(Boolean).join(" · ") || "—",
+      record.receipt_number ?? "Not issued",
+      pdfMoney(record.amount, record.currency),
+      record.method.replaceAll("_", " "),
+      record.status,
+    ]),
+    [21, 19, 41, 31, 23, 18, 17, 12],
+  );
+
+  const pageCount = doc.getNumberOfPages();
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page);
+    doc.setDrawColor(220, 227, 222);
+    doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
+    doc.setTextColor(115, 126, 118);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.text("Generated by Klasora", margin, pageHeight - 7);
+    doc.text(`Page ${page} of ${pageCount}`, pageWidth - margin, pageHeight - 7, { align: "right" });
+  }
+
+  const safeAdmissionNumber = admissionNumber.replace(/[^a-z0-9_-]/gi, "-") || "student";
+  doc.save(`financial-records-${safeAdmissionNumber}.pdf`);
 }
 
 function pdfPalette(color: string) {

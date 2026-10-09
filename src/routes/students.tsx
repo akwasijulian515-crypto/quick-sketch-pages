@@ -1186,6 +1186,7 @@ function StudentProfile({
         grades: grades.records,
         financialRecords: finances.records,
         financialTotals: finances.totals,
+        financialBalances: finances.fee_balances,
       });
     } catch (cause) {
       setExportError(cause instanceof Error ? cause.message : "Could not download this student record");
@@ -1400,30 +1401,53 @@ type ProfileFinancialReport = ProfilePage<ProfileFinancialRecord> & {
     verified_amount: number | string;
     pending_amount: number | string;
   }[];
+  fee_balances: {
+    fee_description: string;
+    term_name: string;
+    academic_year_name: string;
+    currency: string;
+    arrears_sources: string | null;
+    base_amount_due: number | string;
+    arrears_amount: number | string;
+    paid_amount: number | string;
+    pending_amount: number | string;
+    balance_due: number | string;
+  }[];
 };
 
 async function fetchAllProfileRecords<T>(
   path: string,
   extraParams?: Record<string, string>,
-): Promise<{ records: T[]; totals: ProfileFinancialReport["totals"] }> {
+): Promise<{
+  records: T[];
+  totals: ProfileFinancialReport["totals"];
+  fee_balances: ProfileFinancialReport["fee_balances"];
+}> {
   const records: T[] = [];
   let totals: ProfileFinancialReport["totals"] = [];
+  let feeBalances: ProfileFinancialReport["fee_balances"] = [];
   let page = 1;
   let pageCount = 1;
   do {
     const params = new URLSearchParams({ ...extraParams, page: String(page), page_size: "100" });
-    const result = await schoolApi<ProfilePage<T> & { totals?: ProfileFinancialReport["totals"] }>(
+    const result = await schoolApi<ProfilePage<T> & {
+      totals?: ProfileFinancialReport["totals"];
+      fee_balances?: ProfileFinancialReport["fee_balances"];
+    }>(
       `${path}?${params}`,
     );
     if (!Array.isArray(result.records) || !Number.isInteger(result.page_count) || result.page_count < 0) {
       throw new Error("The student record export returned an invalid page");
     }
     records.push(...result.records);
-    if (page === 1 && result.totals) totals = result.totals;
+    if (page === 1) {
+      if (result.totals) totals = result.totals;
+      if (result.fee_balances) feeBalances = result.fee_balances;
+    }
     pageCount = result.page_count;
     page += 1;
   } while (page <= pageCount);
-  return { records, totals };
+  return { records, totals, fee_balances: feeBalances };
 }
 
 function ProfileHistory({ studentId, type }: { studentId: string; type: "attendance" | "grades" }) {

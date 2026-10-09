@@ -7,6 +7,208 @@ type SchoolRecord = { id: string; name: string; subdomain: string; status: "tria
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
 const badRequest = (message: string) => json({ error: message }, 400);
 
+async function ensureTermFeeArrears(sql: ReturnType<typeof database>, schoolId: string) {
+  const endedTerms = await withDatabaseContext(sql, { schoolId }, (tx) => tx`
+    select id
+    from terms
+    where school_id = ${schoolId}::uuid
+      and ends_on < current_date
+      and arrears_processed_at is null
+    order by ends_on, starts_on
+  `);
+
+  for (const term of endedTerms) {
+    await withDatabaseContext(sql, { schoolId }, (tx) => tx`
+      with source_term as materialized (
+        select id, starts_on, ends_on
+        from terms
+        where id = ${String(term["id"])}::uuid
+          and school_id = ${schoolId}::uuid
+          and ends_on < current_date
+          and arrears_processed_at is null
+      ),
+      next_term as materialized (
+        select t.id, t.starts_on, t.ends_on
+        from terms t cross join source_term s
+        where t.school_id = ${schoolId}::uuid and t.starts_on > s.ends_on
+        order by t.starts_on, t.ends_on
+        limit 1
+      ),
+      source_invoice_insert as (
+        insert into invoices
+          (school_id, student_id, class_fee_id, invoice_number, description,
+           amount_due, base_amount_due, currency, status)
+        select f.school_id, e.student_id, f.id,
+               'SF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+               f.description, f.amount, f.amount, f.currency, 'issued'
+        from class_fees f
+        join source_term s on s.id = f.term_id
+        join class_enrollments e on e.school_id = f.school_id and e.class_id = f.class_id
+          and e.starts_on <= s.ends_on and coalesce(e.ends_on, 'infinity'::date) >= s.starts_on
+        where f.school_id = ${schoolId}::uuid and f.fee_type in ('tuition', 'pta')
+          and not exists (
+            select 1 from invoices existing
+            where existing.school_id = f.school_id and existing.student_id = e.student_id
+              and existing.class_fee_id = f.id and existing.status <> 'void'
+          )
+        on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
+        returning id, school_id, student_id, class_fee_id, amount_due, currency
+      ),
+      source_invoices as materialized (
+        select i.id, i.school_id, i.student_id, i.class_fee_id, i.amount_due, i.currency
+        from invoices i
+        join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+        join source_term s on s.id = f.term_id
+        where i.school_id = ${schoolId}::uuid and i.status <> 'void'
+        union
+        select id, school_id, student_id, class_fee_id, amount_due, currency
+        from source_invoice_insert
+      ),
+      source_balance as materialized (
+        select i.id as source_invoice_id, i.school_id, i.student_id, i.class_fee_id,
+               f.fee_type, i.currency,
+               greatest(i.amount_due
+                 - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0), 0) as amount
+        from source_invoices i
+        join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+        left join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+        where f.fee_type in ('tuition', 'pta') and i.rolled_forward_at is null
+        group by i.id, i.school_id, i.student_id, i.class_fee_id, f.fee_type,
+                 i.currency, i.amount_due
+      ),
+      eligible as materialized (
+        select b.*, target_fee.id as destination_fee_id,
+               target_fee.amount as destination_base_amount,
+               target_fee.description as destination_description,
+               target_fee.currency as destination_currency,
+               n.id as destination_term_id
+        from source_balance b
+        join class_fees source_fee
+          on source_fee.id = b.class_fee_id and source_fee.school_id = b.school_id
+        join source_term s on s.id = source_fee.term_id
+        join next_term n on true
+        join class_enrollments next_enrollment
+          on next_enrollment.school_id = b.school_id
+          and next_enrollment.student_id = b.student_id
+          and next_enrollment.starts_on <= n.ends_on
+          and coalesce(next_enrollment.ends_on, 'infinity'::date) >= n.starts_on
+        join class_fees target_fee
+          on target_fee.school_id = b.school_id
+          and target_fee.class_id = next_enrollment.class_id
+          and target_fee.term_id = n.id
+          and target_fee.fee_type = b.fee_type
+      ),
+      pending_source as materialized (
+        select exists (
+          select 1
+          from source_invoices i
+          join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+          where p.status = 'pending' and p.category = 'school_fee'
+        ) as has_pending
+      ),
+      unmapped_source as materialized (
+        select exists (
+          select 1 from source_balance b
+          where b.amount > 0
+            and not exists (
+              select 1 from eligible e where e.source_invoice_id = b.source_invoice_id
+            )
+        ) as has_unmapped
+      ),
+      destination_invoice_insert as (
+        insert into invoices
+          (school_id, student_id, class_fee_id, invoice_number, description,
+           amount_due, base_amount_due, arrears_amount, currency, status)
+        select distinct e.school_id, e.student_id, e.destination_fee_id,
+               'SF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+               e.destination_description, e.destination_base_amount,
+               e.destination_base_amount, 0, e.destination_currency, 'issued'
+        from eligible e
+        where e.amount > 0
+        on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
+        returning id, school_id, student_id, class_fee_id
+      ),
+      destination_invoices as materialized (
+        select i.id, i.school_id, i.student_id, i.class_fee_id
+        from invoices i
+        join eligible e on e.school_id = i.school_id and e.student_id = i.student_id
+          and e.destination_fee_id = i.class_fee_id
+        where i.status <> 'void'
+        union
+        select id, school_id, student_id, class_fee_id
+        from destination_invoice_insert
+      ),
+      arrears_insert as (
+        insert into invoice_arrears
+          (school_id, source_invoice_id, destination_invoice_id,
+           source_term_id, destination_term_id, amount)
+        select e.school_id, e.source_invoice_id, d.id, s.id,
+               e.destination_term_id, e.amount
+        from eligible e
+        join destination_invoices d on d.school_id = e.school_id
+          and d.student_id = e.student_id and d.class_fee_id = e.destination_fee_id
+        join source_term s on true
+        where e.amount > 0
+        on conflict (source_invoice_id, destination_invoice_id) do nothing
+        returning id, school_id, source_invoice_id, destination_invoice_id, amount
+      ),
+      changed_arrears as materialized (
+        select id, school_id, source_invoice_id, destination_invoice_id, amount
+        from invoice_arrears
+        where school_id = ${schoolId}::uuid
+          and destination_invoice_id in (select id from destination_invoices)
+        union all
+        select id, school_id, source_invoice_id, destination_invoice_id, amount
+        from arrears_insert
+      ),
+      arrears_totals as (
+        select destination_invoice_id, sum(amount) as arrears_amount
+        from changed_arrears
+        group by destination_invoice_id
+      ),
+      destination_invoice_update as (
+        update invoices i
+        set arrears_amount = totals.arrears_amount,
+            amount_due = i.base_amount_due + totals.arrears_amount,
+            status = case
+              when coalesce(paid.verified_amount, 0) >= i.base_amount_due + totals.arrears_amount then 'paid'::invoice_status
+              when coalesce(paid.verified_amount, 0) > 0 then 'part_paid'::invoice_status
+              else 'issued'::invoice_status
+            end,
+            updated_at = now()
+        from arrears_totals totals
+        left join lateral (
+          select sum(p.amount) as verified_amount
+          from payments p
+          where p.school_id = ${schoolId}::uuid
+            and p.invoice_id = totals.destination_invoice_id
+            and p.status = 'verified'
+        ) paid on true
+        where i.id = totals.destination_invoice_id and i.school_id = ${schoolId}::uuid
+        returning i.id
+      ),
+      source_invoice_update as (
+        update invoices i
+        set rolled_forward_at = coalesce(i.rolled_forward_at, now()),
+            updated_at = now()
+        where i.id in (select source_invoice_id from changed_arrears)
+          and i.school_id = ${schoolId}::uuid
+        returning i.id
+      ),
+      term_processed as (
+        update terms t
+        set arrears_processed_at = now()
+        from source_term s, pending_source p, unmapped_source u
+        where t.id = s.id and t.school_id = ${schoolId}::uuid
+          and not p.has_pending and not u.has_unmapped
+          and t.arrears_processed_at is null
+        returning t.id
+      )
+      select id from term_processed
+    `);
+  }
+}
+
 function platformTokenFromRequest(request: Request) {
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (bearer) return bearer;
@@ -814,6 +1016,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/fees") {
       if (request.method === "GET") {
+        await ensureTermFeeArrears(sql, school.schoolId);
         const classId = url.searchParams.get("class_id")?.trim() || null;
         const yearId = url.searchParams.get("academic_year_id")?.trim() || null;
         if ((classId && !uuidOrNull(classId)) || (yearId && !uuidOrNull(yearId))) return badRequest("Invalid class or academic year ID");
@@ -999,9 +1202,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
         tx`
           insert into invoices
-            (school_id, student_id, class_fee_id, invoice_number, description, amount_due, currency, status)
+            (school_id, student_id, class_fee_id, invoice_number, description,
+             amount_due, base_amount_due, currency, status)
           select f.school_id, ${studentId}::uuid, f.id, ${invoiceNumber},
-                 f.description, f.amount, f.currency, 'issued'
+                 f.description, f.amount, f.amount, f.currency, 'issued'
           from class_fees f
           join classes c on c.id = f.class_id and c.school_id = f.school_id
           join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
@@ -1076,6 +1280,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     }
 
     if (url.pathname === "/api/school/payments" && request.method === "GET") {
+      await ensureTermFeeArrears(sql, school.schoolId);
       const feeId = url.searchParams.get("fee_id")?.trim() || null;
       if (feeId && !uuidOrNull(feeId)) return badRequest("Invalid class fee ID");
       if (feeId) {
@@ -1084,11 +1289,16 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             select st.id as student_id, st.first_name, st.last_name,
                    st.admission_number, c.name as class_name,
                    coalesce(i.amount_due, f.amount) as original_amount,
+                   coalesce(i.base_amount_due, f.amount) as base_amount_due,
+                   coalesce(i.arrears_amount, 0) as arrears_amount,
+                   arrears.sources as arrears_sources,
                    coalesce(paid.paid_amount, 0) as paid_amount,
                    coalesce(paid.pending_amount, 0) as pending_amount,
-                   greatest(coalesce(i.amount_due, f.amount)
-                     - coalesce(paid.paid_amount, 0)
-                     - coalesce(paid.pending_amount, 0), 0) as balance_due,
+                   case when i.rolled_forward_at is not null then 0
+                     else greatest(coalesce(i.amount_due, f.amount)
+                       - coalesce(paid.paid_amount, 0)
+                       - coalesce(paid.pending_amount, 0), 0)
+                   end as balance_due,
                    i.status as invoice_status, f.currency
             from class_fees f
             join classes c on c.id = f.class_id and c.school_id = f.school_id
@@ -1105,6 +1315,23 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               from payments p
               where p.school_id = f.school_id and p.invoice_id = i.id
             ) paid on true
+            left join lateral (
+              select string_agg(
+                source_year.name || ' · ' || source_term.name || ' (' || source_invoice.currency || ' ' ||
+                  to_char(a.amount, 'FM999999999990.00') || ')',
+                ', ' order by source_term.starts_on
+              ) as sources
+              from invoice_arrears a
+              join invoices source_invoice
+                on source_invoice.id = a.source_invoice_id and source_invoice.school_id = a.school_id
+              join class_fees source_fee
+                on source_fee.id = source_invoice.class_fee_id and source_fee.school_id = source_invoice.school_id
+              join academic_years source_year
+                on source_year.id = source_fee.academic_year_id and source_year.school_id = source_fee.school_id
+              join terms source_term
+                on source_term.id = a.source_term_id and source_term.school_id = a.school_id
+              where a.school_id = f.school_id and a.destination_invoice_id = i.id
+            ) arrears on true
             where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
               and f.is_active and f.fee_type <> 'daily'
             order by st.last_name, st.first_name, st.admission_number
@@ -1131,6 +1358,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     }
 
     if (url.pathname === "/api/school/payments" && request.method === "POST") {
+      await ensureTermFeeArrears(sql, school.schoolId);
       const payload: unknown = await request.json().catch(() => null);
       if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
@@ -1147,9 +1375,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
         tx`
           insert into invoices
-            (school_id, student_id, class_fee_id, invoice_number, description, amount_due, currency, status)
+            (school_id, student_id, class_fee_id, invoice_number, description,
+             amount_due, base_amount_due, currency, status)
           select f.school_id, ${studentId}::uuid, f.id, ${invoiceNumber},
-                 f.description, f.amount, f.currency, 'issued'
+                 f.description, f.amount, f.amount, f.currency, 'issued'
           from class_fees f
           join classes c on c.id = f.class_id and c.school_id = f.school_id
           join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
@@ -2030,6 +2259,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         return json({ academic_year: rows[0] }, 201);
       }
 
+      await ensureTermFeeArrears(sql, school.schoolId);
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           select
@@ -2039,16 +2269,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             ay.is_current,
             t.id as term_id,
             t.name as term_name,
+            t.starts_on as term_starts_on,
             t.ends_on as term_ends_on,
             (current_date between t.starts_on and t.ends_on) as term_is_current,
-            t.is_closed as term_is_closed
+            t.is_closed as term_is_closed,
+            t.arrears_processed_at as term_arrears_processed_at
           from academic_years ay
           left join terms t on t.academic_year_id = ay.id and t.school_id = ay.school_id
           where ay.school_id = ${school.schoolId}::uuid
           order by ay.is_current desc, ay.starts_on desc, t.starts_on asc
         `,
       );
-      const years = new Map<string, { id: string; name: string; starts_on: string; is_current: boolean; terms: { id: string; name: string; ends_on: string; is_current: boolean; is_closed: boolean }[] }>();
+      const years = new Map<string, { id: string; name: string; starts_on: string; is_current: boolean; terms: { id: string; name: string; starts_on: string; ends_on: string; is_current: boolean; is_closed: boolean; arrears_processed_at: string | null }[] }>();
       for (const row of rows) {
         const yearId = String(row["academic_year_id"]);
         let year = years.get(yearId);
@@ -2060,9 +2292,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           year.terms.push({
             id: String(row["term_id"]),
             name: String(row["term_name"]),
+            starts_on: String(row["term_starts_on"]),
             ends_on: String(row["term_ends_on"]),
             is_current: row["term_is_current"] === true,
             is_closed: row["term_is_closed"] === true,
+            arrears_processed_at: row["term_arrears_processed_at"] == null ? null : String(row["term_arrears_processed_at"]),
           });
         }
       }
@@ -2084,20 +2318,34 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
+          with selected_year as materialized (
+            select id, school_id, starts_on, ends_on
+            from academic_years
+            where id = ${academicYearId}::uuid and school_id = ${school.schoolId}::uuid
+            for update
+          ),
+          existing as materialized (
+            select count(*)::int as term_count, max(t.ends_on) as latest_end
+            from terms t
+            join selected_year ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+          )
           insert into terms (school_id, academic_year_id, name, starts_on, ends_on)
-          select ${school.schoolId}::uuid, ay.id, ${name}, ${startsOn}::date, ${endsOn}::date
-          from academic_years ay
-          where ay.id = ${academicYearId}::uuid and ay.school_id = ${school.schoolId}::uuid
-            and ${startsOn}::date >= ay.starts_on and ${endsOn}::date <= ay.ends_on
+          select ay.school_id, ay.id, ${name}, ${startsOn}::date, ${endsOn}::date
+          from selected_year ay cross join existing
+          where existing.term_count < 3
+            and ${startsOn}::date >= ay.starts_on
+            and ${endsOn}::date <= ay.ends_on
+            and ${startsOn}::date > coalesce(existing.latest_end, ay.starts_on - 1)
             and not exists (
-              select 1 from terms existing
-              where existing.school_id = ay.school_id and existing.academic_year_id = ay.id
-                and existing.starts_on < ${endsOn}::date and existing.ends_on > ${startsOn}::date
+              select 1 from terms other
+              where other.school_id = ay.school_id and other.academic_year_id = ay.id
+                and (lower(other.name) = lower(${name})
+                  or (other.starts_on < ${endsOn}::date and other.ends_on > ${startsOn}::date))
             )
           returning id, academic_year_id, name, starts_on, ends_on
         `,
       );
-      if (!rows[0]) return json({ error: "Academic year not found, term name already exists, or dates are outside the year/overlap another term" }, 409);
+      if (!rows[0]) return json({ error: "Academic year must have no more than three terms. Add each term in date order, with a unique name and dates inside the academic year." }, 409);
       return json({ term: rows[0] }, 201);
     }
 
@@ -2438,7 +2686,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           ),
           inserted_term as (
             insert into terms (school_id, academic_year_id, name, starts_on, ends_on)
-            select y.school_id, y.id, 'Term 1', y.starts_on, y.ends_on
+            select y.school_id, y.id, 'Term 1', y.starts_on,
+                   y.starts_on + greatest(1, (y.ends_on - y.starts_on + 1) / 3) - 1
             from selected_year y
             where ${termId}::uuid is null
               and not exists (select 1 from terms t where t.school_id = y.school_id and t.academic_year_id = y.id)
@@ -2473,19 +2722,21 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     }
 
     if (url.pathname === "/api/school/student-financial-records" && request.method === "GET") {
+      await ensureTermFeeArrears(sql, school.schoolId);
       const studentId = url.searchParams.get("student_id")?.trim() ?? "";
       const termId = url.searchParams.get("term_id")?.trim() || null;
-      const selectedTypes = new Set((url.searchParams.get("types") ?? "daily,other").split(",").map((value) => value.trim()));
+      const selectedTypes = new Set((url.searchParams.get("types") ?? "daily,school,other").split(",").map((value) => value.trim()));
       const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
       const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "50", 10);
       if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
       if (termId && !uuidOrNull(termId)) return badRequest("Choose a valid academic term");
-      if (!selectedTypes.size || [...selectedTypes].some((type) => type !== "daily" && type !== "other")) {
-        return badRequest("Choose daily payments, other fees, or both");
+      if (!selectedTypes.size || [...selectedTypes].some((type) => !["daily", "school", "other"].includes(type))) {
+        return badRequest("Choose daily payments, school fees, or other fees");
       }
       if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
       if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
       const includeDaily = selectedTypes.has("daily");
+      const includeSchool = selectedTypes.has("school");
       const includeOther = selectedTypes.has("other");
       const offset = (page - 1) * pageSize;
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
@@ -2520,7 +2771,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             where p.school_id = ${school.schoolId}::uuid
               and p.student_id = ${studentId}::uuid
               and ((${includeDaily} and p.category = 'daily_fee')
-                or (${includeOther} and p.category <> 'daily_fee'))
+                or (${includeSchool} and p.category = 'school_fee')
+                or (${includeOther} and p.category in ('examination_fee', 'other')))
               and (${termId}::uuid is null or coalesce(fee_term.id, payment_term.id) = ${termId}::uuid)
           ),
           page_rows as (
@@ -2537,6 +2789,41 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                    coalesce(sum(amount) filter (where status = 'pending'), 0) as pending_amount
             from filtered_records
             group by currency
+          ),
+          fee_balances as (
+            select i.id, i.amount_due, i.base_amount_due, i.arrears_amount, i.currency,
+                   f.description as fee_description, t.name as term_name,
+                   ay.name as academic_year_name, sources.arrears_sources,
+                   coalesce(sum(p.amount) filter (where p.status = 'verified'), 0) as paid_amount,
+                   coalesce(sum(p.amount) filter (where p.status = 'pending'), 0) as pending_amount,
+                   greatest(i.amount_due
+                     - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0)
+                     - coalesce(sum(p.amount) filter (where p.status = 'pending'), 0), 0) as balance_due
+            from invoices i
+            join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+            join terms t on t.id = f.term_id and t.school_id = f.school_id
+            join academic_years ay on ay.id = f.academic_year_id and ay.school_id = f.school_id
+            left join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+            left join lateral (
+              select string_agg(source_year.name || ' · ' || source_term.name, ', '
+                order by source_term.starts_on) as arrears_sources
+              from invoice_arrears a
+              join invoices source_invoice
+                on source_invoice.id = a.source_invoice_id and source_invoice.school_id = a.school_id
+              join class_fees source_fee
+                on source_fee.id = source_invoice.class_fee_id and source_fee.school_id = source_invoice.school_id
+              join academic_years source_year
+                on source_year.id = source_fee.academic_year_id and source_year.school_id = source_fee.school_id
+              join terms source_term
+                on source_term.id = a.source_term_id and source_term.school_id = a.school_id
+              where a.school_id = i.school_id and a.destination_invoice_id = i.id
+            ) sources on true
+            where ${includeSchool}
+              and i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+              and i.status <> 'void' and i.rolled_forward_at is null
+              and f.fee_type in ('tuition', 'pta')
+              and (${termId}::uuid is null or t.id = ${termId}::uuid)
+            group by i.id, f.description, t.name, t.starts_on, ay.name, sources.arrears_sources
           )
           select
             coalesce((
@@ -2559,17 +2846,30 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               ) order by currency)
               from currency_totals
             ), '[]'::jsonb) as totals,
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'fee_description', fee_description, 'term_name', term_name,
+                'academic_year_name', academic_year_name, 'currency', currency,
+                'arrears_sources', arrears_sources,
+                'base_amount_due', base_amount_due, 'arrears_amount', arrears_amount,
+                'paid_amount', paid_amount, 'pending_amount', pending_amount,
+                'balance_due', balance_due
+              ) order by academic_year_name, term_name, fee_description)
+              from fee_balances
+            ), '[]'::jsonb) as fee_balances,
             (select count(*)::int from filtered_records) as total_count
         `,
       );
       const report = rows[0];
-      if (!report || !Array.isArray(report["records"]) || !Array.isArray(report["totals"])) {
+      if (!report || !Array.isArray(report["records"]) || !Array.isArray(report["totals"])
+        || !Array.isArray(report["fee_balances"])) {
         throw new Error("Student financial-record query returned an invalid result");
       }
       const totalCount = Number(report["total_count"] ?? 0);
       return json({
         records: report["records"],
         totals: report["totals"],
+        fee_balances: report["fee_balances"],
         total_count: totalCount,
         page,
         page_size: pageSize,

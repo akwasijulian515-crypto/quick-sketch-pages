@@ -20,7 +20,15 @@ type AcademicYear = {
   id: string;
   name: string;
   is_current: boolean;
-  terms: { id: string; name: string; is_current: boolean; is_closed: boolean }[];
+  terms: {
+    id: string;
+    name: string;
+    starts_on: string;
+    ends_on: string;
+    is_current: boolean;
+    is_closed: boolean;
+    arrears_processed_at: string | null;
+  }[];
 };
 
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
@@ -50,6 +58,9 @@ function AcademicSetupPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const selectedYear = years.find((year) => year.id === selectedYearId) ?? years.find((year) => year.is_current);
+  const nextTermName = selectedYear && selectedYear.terms.length < 3
+    ? `Term ${selectedYear.terms.length + 1}`
+    : "";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -127,7 +138,7 @@ function AcademicSetupPage() {
     setNotice("");
     try {
       await schoolApi(`/api/school/terms/${encodeURIComponent(termId)}/close`, { method: "POST", body: "{}" });
-      setNotice("Term 3 closed. Teachers can now submit promotion decisions.");
+      setNotice("Term closed. Teachers can now submit promotion decisions if this is Term 3.");
       await load();
     } catch (closeError) {
       setError(closeError instanceof Error ? closeError.message : "Could not close Term 3");
@@ -142,7 +153,7 @@ function AcademicSetupPage() {
         <div>
           <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CalendarDays className="size-5" /></div>
           <h1 className="font-display text-3xl font-bold">Academic setup</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Create academic years and terms. Closing Term 3 opens the teacher promotion register.</p>
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Set up exactly three dated terms per academic year. Term-based unpaid tuition and PTA balances automatically carry into the next term as labeled arrears; daily payments are never carried forward. Closing Term 3 opens the teacher promotion register.</p>
         </div>
         {error && <p role="alert" className="mt-5 rounded-md border border-destructive/30 px-4 py-3 text-sm text-destructive">{error}</p>}
         {notice && <p role="status" className="mt-5 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
@@ -157,17 +168,17 @@ function AcademicSetupPage() {
           <form onSubmit={(event) => void createTerm(event)} className="glass-panel space-y-3 rounded-lg p-5">
             <h2 className="font-display text-lg font-bold">Add term</h2>
             <Field label="Academic year"><select value={selectedYear?.id ?? ""} onChange={(event) => setSelectedYearId(event.target.value)} required className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">{years.map((year) => <option key={year.id} value={year.id}>{year.name}{year.is_current ? " (Current)" : ""}</option>)}</select></Field>
-            <Field label="Term name"><input name="term_name" required minLength={2} maxLength={80} placeholder="Term 1" /></Field>
+            <Field label="Term name"><input name="term_name" required minLength={2} maxLength={80} value={nextTermName} readOnly placeholder="Term 1" /></Field>
             <div className="grid grid-cols-2 gap-3"><Field label="Starts"><input name="term_start" required type="date" /></Field><Field label="Ends"><input name="term_end" required type="date" /></Field></div>
-            <Button type="submit" disabled={saving || !selectedYear}>{saving ? "Saving..." : "Save term"}</Button>
+            <Button type="submit" disabled={saving || !selectedYear || selectedYear.terms.length >= 3}>{saving ? "Saving..." : selectedYear?.terms.length === 3 ? "Three terms configured" : "Save term"}</Button>
           </form>
         </div>
         <section className="glass-panel mt-4 rounded-lg p-5">
           <h2 className="font-display text-lg font-bold">School academic periods</h2>
           {loading ? <p className="py-6 text-sm text-muted-foreground">Loading academic periods...</p> : years.length === 0 ? <p className="py-6 text-sm text-muted-foreground">No academic years yet. Add a year to get started.</p> : (
             <div className="mt-3 space-y-4">{years.map((year) => <article key={year.id} className="rounded-md border border-border p-4">
-              <h3 className="font-semibold">{year.name}{year.is_current ? " · Current" : ""}</h3>
-              {year.terms.length ? <ul className="mt-3 divide-y divide-border/70">{year.terms.map((term) => <li key={term.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><span>{term.name}{term.is_current ? " · Current" : ""}{term.is_closed ? " · Closed" : ""}</span>{term.name.toLowerCase().includes("term 3") && !term.is_closed && <Button size="sm" variant="outline" disabled={saving} onClick={() => void closeTerm(term.id)}>Close Term 3</Button>}</li>)}</ul> : <p className="mt-2 text-sm text-muted-foreground">No terms set for this year.</p>}
+              <h3 className="font-semibold">{year.name}{year.is_current ? " · Current" : ""}<span className="ml-2 text-xs font-normal text-muted-foreground">{year.terms.length}/3 terms configured</span></h3>
+              {year.terms.length ? <ul className="mt-3 divide-y divide-border/70">{year.terms.map((term) => <li key={term.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><span>{term.name} · {term.starts_on} to {term.ends_on}{term.is_current ? " · Current" : ""}{term.is_closed ? " · Closed" : ""}<span className="block text-xs text-muted-foreground">{term.arrears_processed_at ? "Term-fee arrears carried forward" : term.ends_on < new Date().toISOString().slice(0, 10) ? "Arrears will carry after pending payments are resolved and next-term fees are set up" : "Unpaid term-based fees carry forward after the end date"}</span></span>{term.name.toLowerCase().includes("term 3") && !term.is_closed && <Button size="sm" variant="outline" disabled={saving} onClick={() => void closeTerm(term.id)}>Close Term 3</Button>}</li>)}</ul> : <p className="mt-2 text-sm text-muted-foreground">No terms set for this year.</p>}
             </article>)}</div>
           )}
         </section>
