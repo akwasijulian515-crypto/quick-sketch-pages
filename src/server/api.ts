@@ -357,6 +357,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
     "/api/school/payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/other-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
+    "/api/school/student-financial-records": { GET: ["school_admin"] },
     "/api/school/daily-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/reconciliation": { GET: ["school_admin", "finance"] },
     "/api/school/coupons": { GET: ["school_admin", "teacher", "finance"] },
@@ -377,6 +378,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     || url.pathname === "/api/school/students"
     || url.pathname === "/api/school/academic-periods"
     || url.pathname === "/api/school/terms"
+    || url.pathname === "/api/school/student-financial-records"
     || url.pathname === "/api/school/team"
     || url.pathname === "/api/school/teaching-setup"
     || studentProfileMatch !== null
@@ -952,7 +954,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           error: "No eligible configured fee was found, the learner is not enrolled, or the amount exceeds the uncollected balance.",
         }, 409);
       }
-      return json({ payment: result }, 201);
+      return json({ payment: result, balance_due: Number(result["balance_due"]) }, 201);
     }
 
     if (url.pathname === "/api/school/payments" && request.method === "GET") {
@@ -1067,14 +1069,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           recorded as (
             insert into payments
               (school_id, invoice_id, student_id, receipt_number, amount, currency, method,
-               recorded_by_staff_id, recorded_by_user_id, category, status, verified_at, receipt_issued_at)
+               recorded_by_staff_id, recorded_by_user_id, category, status, verified_at)
             select ${school.schoolId}::uuid, b.id, ${studentId}::uuid,
                    ${receiptNumber},
                    ${amount}, b.currency, ${String(method)},
                    (select id from staff_profiles where school_id = ${school.schoolId}::uuid
                     and user_id = ${school.userId}::uuid limit 1),
                    ${school.userId}::uuid,
-                   'school_fee', 'pending', null, now()
+                   'school_fee', 'pending', null
             from balance b
             where ${amount} <= b.balance_due and b.balance_due > 0
             returning id, receipt_number, amount, currency, paid_at
@@ -2347,6 +2349,111 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       );
       if (!rows[0]) return json({ error: "Could not create class. Check the selected year and term, and ensure its name is unique for that year." }, 409);
       return json({ class: rows[0] }, 201);
+    }
+
+    if (url.pathname === "/api/school/student-financial-records" && request.method === "GET") {
+      const studentId = url.searchParams.get("student_id")?.trim() ?? "";
+      const termId = url.searchParams.get("term_id")?.trim() || null;
+      const selectedTypes = new Set((url.searchParams.get("types") ?? "daily,other").split(",").map((value) => value.trim()));
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "50", 10);
+      if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
+      if (termId && !uuidOrNull(termId)) return badRequest("Choose a valid academic term");
+      if (!selectedTypes.size || [...selectedTypes].some((type) => type !== "daily" && type !== "other")) {
+        return badRequest("Choose daily payments, other fees, or both");
+      }
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      const includeDaily = selectedTypes.has("daily");
+      const includeOther = selectedTypes.has("other");
+      const offset = (page - 1) * pageSize;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with filtered_records as materialized (
+            select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                   p.status, p.paid_at, p.daily_fee_date,
+                   st.first_name, st.last_name, st.admission_number,
+                   coalesce(f.description, i.description,
+                     case when p.category = 'daily_fee' then 'Daily fee' else 'Fee payment' end) as fee_description,
+                   c.name as class_name,
+                   coalesce(fee_term.id, payment_term.id) as term_id,
+                   coalesce(fee_term.name, payment_term.name) as term_name,
+                   coalesce(fee_year.name, payment_term.academic_year_name) as academic_year_name
+            from payments p
+            join students st on st.id = p.student_id and st.school_id = p.school_id
+            left join invoices i on i.id = p.invoice_id and i.school_id = p.school_id
+            left join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+            left join classes c on c.id = f.class_id and c.school_id = f.school_id
+            left join terms fee_term on fee_term.id = f.term_id and fee_term.school_id = f.school_id
+            left join academic_years fee_year on fee_year.id = f.academic_year_id
+              and fee_year.school_id = f.school_id
+            left join lateral (
+              select t.id, t.name, ay.name as academic_year_name
+              from terms t
+              join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+              where t.school_id = p.school_id
+                and coalesce(p.daily_fee_date, p.paid_at::date) between t.starts_on and t.ends_on
+              order by ay.starts_on desc, t.starts_on desc
+              limit 1
+            ) payment_term on true
+            where p.school_id = ${school.schoolId}::uuid
+              and p.student_id = ${studentId}::uuid
+              and ((${includeDaily} and p.category = 'daily_fee')
+                or (${includeOther} and p.category <> 'daily_fee'))
+              and (${termId}::uuid is null or coalesce(fee_term.id, payment_term.id) = ${termId}::uuid)
+          ),
+          page_rows as (
+            select * from filtered_records
+            order by coalesce(daily_fee_date, paid_at::date) desc, paid_at desc, id desc
+            limit ${pageSize} offset ${offset}
+          ),
+          currency_totals as (
+            select currency,
+                   count(*)::int as payment_count,
+                   count(*) filter (where status = 'verified')::int as verified_count,
+                   count(*) filter (where status = 'pending')::int as pending_count,
+                   coalesce(sum(amount) filter (where status = 'verified'), 0) as verified_amount,
+                   coalesce(sum(amount) filter (where status = 'pending'), 0) as pending_amount
+            from filtered_records
+            group by currency
+          )
+          select
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'id', id, 'receipt_number', receipt_number, 'amount', amount,
+                'currency', currency, 'category', category, 'method', method,
+                'status', status, 'paid_at', paid_at, 'daily_fee_date', daily_fee_date,
+                'first_name', first_name, 'last_name', last_name,
+                'admission_number', admission_number, 'fee_description', fee_description,
+                'class_name', class_name, 'term_id', term_id, 'term_name', term_name,
+                'academic_year_name', academic_year_name
+              ) order by coalesce(daily_fee_date, paid_at::date) desc, paid_at desc, id desc)
+              from page_rows
+            ), '[]'::jsonb) as records,
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'currency', currency, 'payment_count', payment_count,
+                'verified_count', verified_count, 'pending_count', pending_count,
+                'verified_amount', verified_amount, 'pending_amount', pending_amount
+              ) order by currency)
+              from currency_totals
+            ), '[]'::jsonb) as totals,
+            (select count(*)::int from filtered_records) as total_count
+        `,
+      );
+      const report = rows[0];
+      if (!report || !Array.isArray(report["records"]) || !Array.isArray(report["totals"])) {
+        throw new Error("Student financial-record query returned an invalid result");
+      }
+      const totalCount = Number(report["total_count"] ?? 0);
+      return json({
+        records: report["records"],
+        totals: report["totals"],
+        total_count: totalCount,
+        page,
+        page_size: pageSize,
+        page_count: Math.ceil(totalCount / pageSize),
+      });
     }
 
     if (url.pathname === "/api/school/students" && request.method === "GET") {

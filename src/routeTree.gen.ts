@@ -28,6 +28,7 @@ import { Route as ReconciliationRouteImport } from './routes/reconciliation'
 import { Route as SchoolAdminRouteImport } from './routes/school-admin'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as StudentRouteImport } from './routes/student'
+import { Route as StudentFinancesRouteImport } from './routes/student-finances'
 import { Route as StudentsRouteImport } from './routes/students'
 import { Route as SubjectsRouteImport } from './routes/subjects'
 import { Route as TeacherRouteImport } from './routes/teacher'
@@ -130,6 +131,11 @@ const StudentRoute = StudentRouteImport.update({
   path: '/student',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StudentFinancesRoute = StudentFinancesRouteImport.update({
+  id: '/student-finances',
+  path: '/student-finances',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const StudentsRoute = StudentsRouteImport.update({
   id: '/students',
   path: '/students',
@@ -181,6 +187,7 @@ export interface FileRoutesByFullPath {
   '/school-admin': typeof SchoolAdminRoute
   '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
+  '/student-finances': typeof StudentFinancesRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRouteWithChildren
@@ -208,6 +215,7 @@ export interface FileRoutesByTo {
   '/school-admin': typeof SchoolAdminRoute
   '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
+  '/student-finances': typeof StudentFinancesRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRouteWithChildren
@@ -236,6 +244,7 @@ export interface FileRoutesById {
   '/school-admin': typeof SchoolAdminRoute
   '/signup': typeof SignupRoute
   '/student': typeof StudentRoute
+  '/student-finances': typeof StudentFinancesRoute
   '/students': typeof StudentsRoute
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRouteWithChildren
@@ -265,6 +274,7 @@ export interface FileRouteTypes {
     | '/school-admin'
     | '/signup'
     | '/student'
+    | '/student-finances'
     | '/students'
     | '/subjects'
     | '/teacher'
@@ -292,6 +302,7 @@ export interface FileRouteTypes {
     | '/school-admin'
     | '/signup'
     | '/student'
+    | '/student-finances'
     | '/students'
     | '/subjects'
     | '/teacher'
@@ -319,6 +330,7 @@ export interface FileRouteTypes {
     | '/school-admin'
     | '/signup'
     | '/student'
+    | '/student-finances'
     | '/students'
     | '/subjects'
     | '/teacher'
@@ -347,6 +359,7 @@ export interface RootRouteChildren {
   SchoolAdminRoute: typeof SchoolAdminRoute
   SignupRoute: typeof SignupRoute
   StudentRoute: typeof StudentRoute
+  StudentFinancesRoute: typeof StudentFinancesRoute
   StudentsRoute: typeof StudentsRoute
   SubjectsRoute: typeof SubjectsRoute
   TeacherRoute: typeof TeacherRouteWithChildren
@@ -489,6 +502,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StudentRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/student-finances': {
+      id: '/student-finances'
+      path: '/student-finances'
+      fullPath: '/student-finances'
+      preLoaderRoute: typeof StudentFinancesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/students': {
       id: '/students'
       path: '/students'
@@ -565,6 +585,7 @@ const rootRouteChildren: RootRouteChildren = {
   SchoolAdminRoute: SchoolAdminRoute,
   SignupRoute: SignupRoute,
   StudentRoute: StudentRoute,
+  StudentFinancesRoute: StudentFinancesRoute,
   StudentsRoute: StudentsRoute,
   SubjectsRoute: SubjectsRoute,
   TeacherRoute: TeacherRouteWithChildren,
