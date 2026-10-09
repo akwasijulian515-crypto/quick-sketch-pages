@@ -349,12 +349,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
   const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
+  const paymentReviewMatch = url.pathname.match(/^\/api\/school\/payments\/([0-9a-f-]+)\/review$/i);
   const workflowRoles: Record<string, Record<string, readonly string[]>> = {
     "/api/school/classes": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
     "/api/school/students": { GET: ["school_admin", "teacher", "finance"] },
     "/api/school/attendance": { GET: ["school_admin", "teacher"], POST: ["teacher"] },
     "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
     "/api/school/payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
+    "/api/school/other-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/daily-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/reconciliation": { GET: ["school_admin", "finance"] },
     "/api/school/coupons": { GET: ["school_admin", "teacher", "finance"] },
@@ -368,6 +370,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   };
   const workflowMethodRoles = workflowRoles[url.pathname]?.[request.method]
     ?? (studentProfileMatch && ["GET", "PATCH"].includes(request.method) ? ["school_admin"] : undefined)
+    ?? (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined)
     ?? (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined)
     ?? (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
   const schoolDataRoute = url.pathname === "/api/school/classes"
@@ -377,6 +380,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     || url.pathname === "/api/school/team"
     || url.pathname === "/api/school/teaching-setup"
     || studentProfileMatch !== null
+    || paymentReviewMatch !== null
     || classRosterMatch !== null
     || termCloseMatch !== null
     || workflowMethodRoles !== undefined;
@@ -747,6 +751,202 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       return json({ fee: rows[0] }, 201);
     }
 
+    if (paymentReviewMatch) {
+      if (!uuidOrNull(paymentReviewMatch[1])) return badRequest("Invalid payment ID");
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const action = body["action"];
+      const reason = typeof body["reason"] === "string" ? body["reason"].trim() : "";
+      if (action !== "approve" && action !== "reject") return badRequest("Choose approve or reject");
+      if (action === "reject" && (reason.length < 3 || reason.length > 500)) {
+        return badRequest("Enter a rejection reason between 3 and 500 characters");
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with reviewed as (
+            update payments
+            set status = ${action === "approve" ? "verified" : "voided"}::gateway_payment_status,
+                verified_at = case when ${action === "approve"} then now() else null end,
+                receipt_issued_at = case when ${action === "approve"} then now() else null end,
+                reviewed_by_user_id = ${school.userId}::uuid,
+                reviewed_at = now(),
+                rejection_reason = case when ${action === "reject"} then ${reason} else null end
+            where id = ${paymentReviewMatch[1]}::uuid
+              and school_id = ${school.schoolId}::uuid
+              and category in ('examination_fee', 'other')
+              and status = 'pending'
+              and recorded_by_user_id is distinct from ${school.userId}::uuid
+            returning id, school_id, invoice_id, status, amount
+          ),
+          audit_event as (
+            insert into payment_review_events
+              (school_id, payment_id, action, performed_by_user_id, reason)
+            select school_id, id, ${action === "approve" ? "approved" : "rejected"},
+                   ${school.userId}::uuid, ${action === "reject" ? reason : null}
+            from reviewed
+            returning payment_id
+          ),
+          invoice_update as (
+            update invoices i
+            set status = case
+                  when verified.total >= i.amount_due then 'paid'::invoice_status
+                  when verified.total > 0 then 'part_paid'::invoice_status
+                  else 'issued'::invoice_status
+                end,
+                updated_at = now()
+            from (
+              select i.id, coalesce(sum(p.amount), 0) + r.amount as total
+              from invoices i
+              join reviewed r on r.invoice_id = i.id and r.status = 'verified'
+              left join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+                and p.status = 'verified' and p.id <> r.id
+              group by i.id, r.amount
+            ) verified
+            where i.id = verified.id
+            returning i.id
+          )
+          select id, status from reviewed
+        `,
+      );
+      if (!rows[0]) {
+        return json({ error: "This payment is no longer pending, belongs to another school, or was recorded by this admin." }, 409);
+      }
+      return json({ payment: rows[0] });
+    }
+
+    if (url.pathname === "/api/school/other-payments" && request.method === "GET") {
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                 p.status, p.paid_at, p.receipt_issued_at, p.rejection_reason,
+                 st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                 f.description as fee_description, c.name as class_name,
+                 recorded.display_name as recorded_by,
+                 reviewer.display_name as reviewed_by, p.reviewed_at,
+                 event.action as review_action, event.reason as review_event_reason
+          from payments p
+          join students st on st.id = p.student_id and st.school_id = p.school_id
+          join invoices i on i.id = p.invoice_id and i.school_id = p.school_id
+          join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+          join classes c on c.id = f.class_id and c.school_id = f.school_id
+          left join users recorded on recorded.id = p.recorded_by_user_id
+          left join users reviewer on reviewer.id = p.reviewed_by_user_id
+          left join lateral (
+            select e.action, e.reason
+            from payment_review_events e
+            where e.school_id = p.school_id and e.payment_id = p.id
+            order by e.occurred_at desc
+            limit 1
+          ) event on true
+          where p.school_id = ${school.schoolId}::uuid
+            and p.category in ('examination_fee', 'other')
+          order by p.paid_at desc
+          limit 200
+        `,
+      );
+      return json({ payments: rows });
+    }
+
+    if (url.pathname === "/api/school/other-payments" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const studentId = body["student_id"];
+      const feeId = body["fee_id"];
+      const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
+      const method = body["method"];
+      if (!uuidOrNull(studentId) || !studentId || !uuidOrNull(feeId) || !feeId) {
+        return badRequest("Choose a valid student and configured fee");
+      }
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 99_999_999.99) {
+        return badRequest("Enter a valid payment amount");
+      }
+      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) {
+        return badRequest("Choose a valid payment method");
+      }
+
+      const invoiceNumber = `OFI-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+      const receiptNumber = `OF-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`
+          insert into invoices
+            (school_id, student_id, class_fee_id, invoice_number, description, amount_due, currency, status)
+          select f.school_id, ${studentId}::uuid, f.id, ${invoiceNumber},
+                 f.description, f.amount, f.currency, 'issued'
+          from class_fees f
+          join classes c on c.id = f.class_id and c.school_id = f.school_id
+          join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
+            and e.student_id = ${studentId}::uuid and e.starts_on <= current_date and e.ends_on is null
+          join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+          where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
+            and f.is_active and f.fee_type in ('exam', 'other')
+            and c.academic_year_id = f.academic_year_id
+          on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
+        `,
+        tx`
+          select i.id, i.amount_due, i.currency, f.fee_type
+          from invoices i
+          join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+          where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+            and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+            and f.is_active and f.fee_type in ('exam', 'other')
+          for update of i
+        `,
+        tx`
+          with invoice as (
+            select i.id, i.amount_due, i.currency, f.fee_type
+            from invoices i
+            join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+            where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+              and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+              and f.is_active and f.fee_type in ('exam', 'other')
+          ),
+          balance as (
+            select i.id, i.amount_due, i.currency, i.fee_type,
+                   greatest(i.amount_due
+                     - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0)
+                     - coalesce(sum(p.amount) filter (where p.status = 'pending'
+                         and p.category in ('examination_fee', 'other')), 0), 0) as balance_due
+            from invoice i
+            left join payments p on p.school_id = ${school.schoolId}::uuid and p.invoice_id = i.id
+            group by i.id, i.amount_due, i.currency, i.fee_type
+          ),
+          recorded as (
+            insert into payments
+              (school_id, invoice_id, student_id, receipt_number, amount, currency, method,
+               recorded_by_staff_id, recorded_by_user_id, category, status)
+            select ${school.schoolId}::uuid, b.id, ${studentId}::uuid, ${receiptNumber},
+                   ${amount}, b.currency, ${String(method)},
+                   (select id from staff_profiles where school_id = ${school.schoolId}::uuid
+                    and user_id = ${school.userId}::uuid limit 1),
+                   ${school.userId}::uuid,
+                   case when b.fee_type = 'exam' then 'examination_fee'::payment_category
+                        else 'other'::payment_category end,
+                   'pending'
+            from balance b
+            where ${amount} <= b.balance_due and b.balance_due > 0
+            returning id, invoice_id, receipt_number, amount, currency, category, method, status, paid_at
+          )
+          select recorded.*, balance.balance_due - recorded.amount as balance_due,
+                 st.first_name, st.last_name, st.admission_number, f.description as fee_description,
+                 c.name as class_name
+          from balance
+          join recorded on recorded.invoice_id = balance.id
+          join students st on st.id = ${studentId}::uuid and st.school_id = ${school.schoolId}::uuid
+          join class_fees f on f.id = ${feeId}::uuid and f.school_id = ${school.schoolId}::uuid
+          join classes c on c.id = f.class_id and c.school_id = f.school_id
+        `,
+      ]);
+      const result = rows[2]?.[0];
+      if (!result) {
+        return json({
+          error: "No eligible configured fee was found, the learner is not enrolled, or the amount exceeds the uncollected balance.",
+        }, 409);
+      }
+      return json({ payment: result }, 201);
+    }
+
     if (url.pathname === "/api/school/payments" && request.method === "GET") {
       const feeId = url.searchParams.get("fee_id")?.trim() || null;
       if (feeId && !uuidOrNull(feeId)) return badRequest("Invalid class fee ID");
@@ -757,7 +957,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                    st.admission_number, c.name as class_name,
                    coalesce(i.amount_due, f.amount) as original_amount,
                    coalesce(paid.paid_amount, 0) as paid_amount,
-                   greatest(coalesce(i.amount_due, f.amount) - coalesce(paid.paid_amount, 0), 0) as balance_due,
+                   coalesce(paid.pending_amount, 0) as pending_amount,
+                   greatest(coalesce(i.amount_due, f.amount)
+                     - coalesce(paid.paid_amount, 0)
+                     - coalesce(paid.pending_amount, 0), 0) as balance_due,
                    i.status as invoice_status, f.currency
             from class_fees f
             join classes c on c.id = f.class_id and c.school_id = f.school_id
@@ -767,9 +970,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             left join invoices i on i.school_id = f.school_id and i.student_id = st.id
               and i.class_fee_id = f.id and i.status <> 'void'
             left join lateral (
-              select sum(p.amount) as paid_amount
+              select sum(p.amount) filter (where p.status = 'verified') as paid_amount,
+                     sum(p.amount) filter (
+                       where p.status = 'pending' and p.category in ('examination_fee', 'other')
+                     ) as pending_amount
               from payments p
-              where p.school_id = f.school_id and p.invoice_id = i.id and p.status = 'verified'
+              where p.school_id = f.school_id and p.invoice_id = i.id
             ) paid on true
             where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
               and f.is_active and f.fee_type <> 'daily'
@@ -818,7 +1024,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             and e.student_id = ${studentId}::uuid and e.starts_on <= current_date and e.ends_on is null
           join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
           where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
-            and f.is_active and f.fee_type <> 'daily' and c.academic_year_id = f.academic_year_id
+            and f.is_active and f.fee_type in ('tuition', 'pta') and c.academic_year_id = f.academic_year_id
           on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
         `,
         tx`
@@ -830,10 +1036,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         `,
         tx`
           with invoice as (
-            select id, amount_due, currency
-            from invoices
-            where school_id = ${school.schoolId}::uuid and student_id = ${studentId}::uuid
-              and class_fee_id = ${feeId}::uuid and status <> 'void'
+            select i.id, i.amount_due, i.currency
+            from invoices i
+            join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+            where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+              and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+              and f.fee_type in ('tuition', 'pta')
           ),
           balance as (
             select i.id, i.amount_due, i.currency,
@@ -845,12 +1053,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           recorded as (
             insert into payments
               (school_id, invoice_id, student_id, receipt_number, amount, currency, method,
-               recorded_by_staff_id, category, status, verified_at, receipt_issued_at)
+               recorded_by_staff_id, recorded_by_user_id, category, status, verified_at, receipt_issued_at)
             select ${school.schoolId}::uuid, b.id, ${studentId}::uuid,
                    ${receiptNumber},
                    ${amount}, b.currency, ${String(method)},
                    (select id from staff_profiles where school_id = ${school.schoolId}::uuid
                     and user_id = ${school.userId}::uuid limit 1),
+                   ${school.userId}::uuid,
                    'school_fee', 'verified', now(), now()
             from balance b
             where ${amount} <= b.balance_due and b.balance_due > 0
