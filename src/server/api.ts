@@ -986,10 +986,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
-          select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
-                 p.status, p.paid_at, st.first_name, st.last_name, st.admission_number
+          select p.id, p.student_id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                 p.status, p.paid_at, st.first_name, st.last_name, st.admission_number,
+                 f.description as fee_description, c.name as class_name
           from payments p
           join students st on st.id = p.student_id and st.school_id = p.school_id
+          left join invoices i on i.id = p.invoice_id and i.school_id = p.school_id
+          left join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+          left join classes c on c.id = f.class_id and c.school_id = f.school_id
           where p.school_id = ${school.schoolId}::uuid and p.status = 'verified'
           order by p.paid_at desc
           limit 200

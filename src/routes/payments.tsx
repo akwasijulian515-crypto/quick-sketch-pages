@@ -59,6 +59,9 @@ function PaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [reviewingId, setReviewingId] = useState("");
   const [error, setError] = useState("");
+  const pendingOtherPayments = otherPayments.filter((payment) => payment.status === "pending");
+  const reviewedOtherPayments = otherPayments.filter((payment) => payment.status !== "pending");
+  const orderedOtherPayments = [...pendingOtherPayments, ...reviewedOtherPayments];
 
   useEffect(() => {
     let cancelled = false;
@@ -109,18 +112,14 @@ function PaymentsPage() {
 
   return <SchoolShell title="Payments" schoolAdmin><div className="mx-auto max-w-6xl rise">
     <div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CreditCard className="size-5" /></div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Configure class fees and review payment records saved for this school.</p></div>
-    <SchoolFeeRules />
-    <section className="glass-panel mt-5 overflow-hidden rounded-lg"><div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Recorded payments</h2><p className="mt-1 text-xs text-muted-foreground">Latest recorded school payments.</p></div><ReceiptText className="size-5 text-primary" /></div>
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg border-amber-600/30">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Exam & other fee validation</h2><p className="mt-1 text-xs text-muted-foreground">Review pending receipts before school-fee setup or payment history. The person who recorded a payment cannot approve it.</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-900">{pendingOtherPayments.length} pending</span></div>
       {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
-      {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading payments...</p> : payments.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">No payments have been recorded for this school yet.</p> : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Admission no.", "Category", "Amount", "Method", "Status", "Paid at"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{payments.map((payment) => <tr key={payment.id}><td className="px-5 py-3 font-medium">{payment.first_name} {payment.last_name}</td><td className="px-5 py-3 font-mono text-xs">{payment.admission_number}</td><td className="px-5 py-3 capitalize">{payment.category.replaceAll("_", " ")}</td><td className="px-5 py-3">{payment.currency} {Number(payment.amount).toFixed(2)}</td><td className="px-5 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td><td className="px-5 py-3 capitalize">{payment.status}</td><td className="px-5 py-3">{new Date(payment.paid_at).toLocaleString()}</td></tr>)}</tbody></table></div>}
-    </section>
-    <section className="glass-panel mt-5 overflow-hidden rounded-lg">
-      <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Exam & other fee validation</h2><p className="mt-1 text-xs text-muted-foreground">Check cash counts or payment evidence before approval. The person who recorded a payment cannot approve it.</p></div><ReceiptText className="size-5 text-primary" /></div>
       {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading review queue...</p>
-        : otherPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No configured exam or other fee receipts have been recorded.</p>
+        : orderedOtherPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No exam or other-fee receipts have been recorded. New pending receipts will appear here for validation.</p>
           : <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm">
             <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Fee", "Receipt", "Amount", "Recorded by", "Status / review", "Action"].map((label) => <th key={label} className="px-4 py-3 font-medium">{label}</th>)}</tr></thead>
-            <tbody className="divide-y divide-border/70">{otherPayments.map((payment) => <tr key={payment.id}>
+            <tbody className="divide-y divide-border/70">{orderedOtherPayments.map((payment) => <tr key={payment.id} className={payment.status === "pending" ? "bg-amber-50/40" : ""}>
               <td className="px-4 py-3 font-medium">{payment.first_name} {payment.last_name}<p className="font-mono text-xs text-muted-foreground">{payment.admission_number} · {payment.class_name}</p></td>
               <td className="px-4 py-3">{payment.fee_description}</td>
               <td className="px-4 py-3 font-mono text-xs">{payment.receipt_number ?? "—"}</td>
@@ -133,6 +132,11 @@ function PaymentsPage() {
               </div> : "—"}</td>
             </tr>)}</tbody>
           </table></div>}
+    </section>
+    <SchoolFeeRules />
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg"><div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Recorded payments</h2><p className="mt-1 text-xs text-muted-foreground">Latest recorded school payments.</p></div><ReceiptText className="size-5 text-primary" /></div>
+      {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+      {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading payments...</p> : payments.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">No payments have been recorded for this school yet.</p> : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Admission no.", "Category", "Amount", "Method", "Status", "Paid at"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{payments.map((payment) => <tr key={payment.id}><td className="px-5 py-3 font-medium">{payment.first_name} {payment.last_name}</td><td className="px-5 py-3 font-mono text-xs">{payment.admission_number}</td><td className="px-5 py-3 capitalize">{payment.category.replaceAll("_", " ")}</td><td className="px-5 py-3">{payment.currency} {Number(payment.amount).toFixed(2)}</td><td className="px-5 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td><td className="px-5 py-3 capitalize">{payment.status}</td><td className="px-5 py-3">{new Date(payment.paid_at).toLocaleString()}</td></tr>)}</tbody></table></div>}
     </section>
   </div></SchoolShell>;
 }

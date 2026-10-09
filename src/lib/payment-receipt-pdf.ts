@@ -13,6 +13,7 @@ export type PaymentReceiptData = {
   method: string;
   paidAt: string;
   status: string;
+  feeCategory: "school_fee" | "other_fee";
 };
 
 function palette(color: string): { primary: [number, number, number]; deep: [number, number, number]; pale: [number, number, number] } {
@@ -44,7 +45,7 @@ export function downloadPaymentReceipt(receipt: PaymentReceiptData) {
   doc.text(receipt.schoolName, 16, 18);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
-  doc.text("OTHER FEE PAYMENT", 16, 28);
+  doc.text(receipt.feeCategory === "school_fee" ? "SCHOOL FEE PAYMENT" : "EXAMINATION / OTHER FEE PAYMENT", 16, 28);
   doc.setFillColor(...primary);
   doc.rect(0, 38, 210, 2, "F");
 
