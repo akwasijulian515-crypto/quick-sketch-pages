@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getNeonAccessToken, neonAuthClient } from "../auth/client";
 import { Button } from "@/components/ui/button";
+import { LearnerProfileEntry } from "@/components/learner-profile-entry";
 import { calculateMarkResult } from "@/lib/grade-calculations";
 
 export const Route = createFileRoute("/teacher")({
@@ -364,6 +365,7 @@ function AttendanceRegister() {
 }
 
 function TeacherMarkEntry() {
+  const [activeEntryTab, setActiveEntryTab] = useState<"grades" | "profile">("grades");
   const [assignments, setAssignments] = useState<MarkAssignment[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
   const [students, setStudents] = useState<MarkStudent[]>([]);
@@ -492,9 +494,13 @@ function TeacherMarkEntry() {
       </select>
       </div>
     </div>
+    <div role="tablist" aria-label="Mark sheet sections" className="flex gap-1 border-b border-border px-5">
+      <button role="tab" aria-selected={activeEntryTab === "grades"} onClick={() => setActiveEntryTab("grades")} className={`border-b-2 px-3 py-2 text-sm font-medium ${activeEntryTab === "grades" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}>Grades</button>
+      <button role="tab" aria-selected={activeEntryTab === "profile"} onClick={() => setActiveEntryTab("profile")} className={`border-b-2 px-3 py-2 text-sm font-medium ${activeEntryTab === "profile" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}>Conduct, Attitude &amp; Interest</button>
+    </div>
     {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
     {notice && <p role="status" className="mx-5 mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
-    {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading marks...</p> : students.length === 0 ? (
+    <div role="tabpanel" hidden={activeEntryTab !== "grades"}>{loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading marks...</p> : students.length === 0 ? (
       <p className="py-10 text-center text-sm text-muted-foreground">{assignments.length ? "No active students are enrolled in this class." : "Ask your School Admin to assign you to a class subject before entering marks."}</p>
     ) : <>
       <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm">
@@ -506,6 +512,9 @@ function TeacherMarkEntry() {
           <td className="px-4 py-3">{student.performance_level ?? "—"}</td>
         </tr>)}</tbody>
       </table></div>
-    </>}
+    </>}</div>
+    <div className="px-5">
+      <LearnerProfileEntry classId={selected?.class_id ?? ""} termId={selected?.term_id ?? ""} active={activeEntryTab === "profile"} />
+    </div>
   </section>;
 }
