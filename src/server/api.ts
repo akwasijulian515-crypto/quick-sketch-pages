@@ -351,7 +351,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
   const workflowRoles: Record<string, Record<string, readonly string[]>> = {
     "/api/school/classes": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
-    "/api/school/students": { GET: ["school_admin", "teacher"] },
+    "/api/school/students": { GET: ["school_admin", "teacher", "finance"] },
     "/api/school/attendance": { GET: ["school_admin", "teacher"], POST: ["teacher"] },
     "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
     "/api/school/payments": { GET: ["school_admin", "finance"] },
@@ -1788,7 +1788,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               and (${search} = '' or position(lower(${search}) in lower(st.first_name || ' ' || st.last_name || ' ' || st.admission_number)) > 0)
               and (${classId}::uuid is null or e.class_id = ${classId}::uuid)
               and (
-                ${school.role === "school_admin"}
+                ${school.role === "school_admin" || school.role === "finance"}
                 or exists (
                   select 1 from classes authorized_class
                   where authorized_class.id = e.class_id and authorized_class.school_id = st.school_id
