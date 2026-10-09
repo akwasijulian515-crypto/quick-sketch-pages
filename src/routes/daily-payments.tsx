@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
-import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/daily-payments")({
   head: () => ({ meta: [{ title: "Daily Payments — Klasora" }, { name: "description", content: "Daily-fee payment register for Finance." }] }),
