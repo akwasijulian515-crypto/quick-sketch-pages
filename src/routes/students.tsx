@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { getNeonAccessToken } from "@/auth/client";
 import { SchoolShell } from "@/components/school-shell";
+import { useTenantBranding } from "@/components/tenant-branding-provider";
+import { downloadStudentRecordPdf } from "@/lib/student-record-pdf";
 import {
   Users,
   UserPlus,
@@ -1091,6 +1093,7 @@ function StudentProfile({
   onStatusChange: (studentId: string, status: StudentStatus) => void;
   onClose: () => void;
 }) {
+  const { schoolName, primaryColor } = useTenantBranding();
   const [activeTab, setActiveTab] = useState(initialTab);
   const [details, setDetails] = useState<Student | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1175,24 +1178,15 @@ function StudentProfile({
           { student_id: student.id },
         ),
       ]);
-      const exportData = {
-        exported_at: new Date().toISOString(),
+      downloadStudentRecordPdf({
+        schoolName,
+        primaryColor,
         student: profile,
-        attendance,
-        grades,
-        financial_records: finances.records,
-        financial_totals: finances.totals,
-      };
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: "application/json;charset=utf-8",
+        attendance: attendance.records,
+        grades: grades.records,
+        financialRecords: finances.records,
+        financialTotals: finances.totals,
       });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      const safeAdmissionNumber = profile.studentId.replace(/[^a-z0-9_-]/gi, "-") || student.id;
-      anchor.href = url;
-      anchor.download = `student-record-${safeAdmissionNumber}.json`;
-      anchor.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (cause) {
       setExportError(cause instanceof Error ? cause.message : "Could not download this student record");
     } finally {
@@ -1237,7 +1231,7 @@ function StudentProfile({
                 className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
               >
                 <Download className="size-4" />
-                {exportingRecord ? "Preparing…" : "Download record"}
+                {exportingRecord ? "Preparing…" : "Download PDF"}
               </button>
             )}
             <button onClick={onClose} aria-label="Close student profile">
