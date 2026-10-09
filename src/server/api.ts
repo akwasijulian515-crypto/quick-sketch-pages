@@ -774,7 +774,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 rejection_reason = case when ${action === "reject"} then ${reason} else null end
             where id = ${paymentReviewMatch[1]}::uuid
               and school_id = ${school.schoolId}::uuid
-              and category in ('examination_fee', 'other')
+              and category in ('school_fee', 'examination_fee', 'other')
               and status = 'pending'
               and recorded_by_user_id is distinct from ${school.userId}::uuid
             returning id, school_id, invoice_id, status, amount
@@ -824,7 +824,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                  f.description as fee_description, c.name as class_name,
                  recorded.display_name as recorded_by,
                  reviewer.display_name as reviewed_by, p.reviewed_at,
-                 event.action as review_action, event.reason as review_event_reason
+                 event.action as review_action, event.reason as review_event_reason,
+                 balance.balance_due
           from payments p
           join students st on st.id = p.student_id and st.school_id = p.school_id
           join invoices i on i.id = p.invoice_id and i.school_id = p.school_id
@@ -839,8 +840,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             order by e.occurred_at desc
             limit 1
           ) event on true
+          left join lateral (
+            select greatest(i.amount_due
+              - coalesce(sum(all_payments.amount) filter (where all_payments.status = 'verified'), 0)
+              - coalesce(sum(all_payments.amount) filter (where all_payments.status = 'pending'), 0), 0) as balance_due
+            from payments all_payments
+            where all_payments.school_id = p.school_id and all_payments.invoice_id = i.id
+          ) balance on true
           where p.school_id = ${school.schoolId}::uuid
-            and p.category in ('examination_fee', 'other')
+            and p.category in ('school_fee', 'examination_fee', 'other')
           order by p.paid_at desc
           limit 200
         `,
@@ -972,7 +980,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             left join lateral (
               select sum(p.amount) filter (where p.status = 'verified') as paid_amount,
                      sum(p.amount) filter (
-                       where p.status = 'pending' and p.category in ('examination_fee', 'other')
+                       where p.status = 'pending' and p.category in ('school_fee', 'examination_fee', 'other')
                      ) as pending_amount
               from payments p
               where p.school_id = f.school_id and p.invoice_id = i.id
@@ -1049,7 +1057,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           ),
           balance as (
             select i.id, i.amount_due, i.currency,
-                   greatest(i.amount_due - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0), 0) as balance_due
+                   greatest(i.amount_due
+                     - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0)
+                     - coalesce(sum(p.amount) filter (where p.status = 'pending'), 0), 0) as balance_due
             from invoice i
             left join payments p on p.school_id = ${school.schoolId}::uuid and p.invoice_id = i.id
             group by i.id, i.amount_due, i.currency
@@ -1064,7 +1074,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                    (select id from staff_profiles where school_id = ${school.schoolId}::uuid
                     and user_id = ${school.userId}::uuid limit 1),
                    ${school.userId}::uuid,
-                   'school_fee', 'verified', now(), now()
+                   'school_fee', 'pending', null, now()
             from balance b
             where ${amount} <= b.balance_due and b.balance_due > 0
             returning id, receipt_number, amount, currency, paid_at
@@ -1097,7 +1107,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                  greatest(i.amount_due - coalesce((
                    select sum(paid.amount) from payments paid
                    where paid.school_id = i.school_id and paid.invoice_id = i.id
-                     and paid.status = 'verified'
+                     and paid.status in ('verified', 'pending')
                  ), 0), 0) as balance_due
           from invoices i
           left join payments p on p.invoice_id = i.id and p.school_id = i.school_id

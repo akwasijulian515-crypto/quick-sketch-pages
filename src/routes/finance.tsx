@@ -51,6 +51,7 @@ type Payment = {
   admission_number: string;
   fee_description: string | null;
   class_name: string | null;
+  balance_due?: number | string | null;
 };
 type OtherFeePayment = Payment & {
   student_id: string;
@@ -208,6 +209,7 @@ function FinancePage() {
           paidAt: payment.paid_at,
           status: payment.status,
           feeCategory: "other_fee",
+          balanceDue: Number(balance_due),
         });
         setNotice(`Pending receipt ${payment.receipt_number} downloaded. School-admin validation is required.`);
       } else {
@@ -227,11 +229,12 @@ function FinancePage() {
           currency: collectionStudent.currency,
           method,
           paidAt: new Date().toISOString(),
-          status: "verified",
+          status: "pending",
           feeCategory: "school_fee",
+          balanceDue: Number(result.balance_due),
         });
-        setNotice(`Payment recorded. Remaining balance: ${collectionStudent.currency} ${result.balance_due.toFixed(2)}. Receipt ${result.payment.receipt_number} downloaded.`);
-        await loadPayments();
+        setNotice(`Payment recorded as pending validation. Remaining balance: ${collectionStudent.currency} ${result.balance_due.toFixed(2)}. Receipt ${result.payment.receipt_number} downloaded.`);
+        await loadOtherPayments();
       }
       setCollectionAmount("");
       setCollectionStudentId("");
@@ -249,7 +252,7 @@ function FinancePage() {
     <div>
       <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><Wallet className="size-5" /></div>
       <h1 className="font-display text-3xl font-bold">Finance desk</h1>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record configured fee collections, print numbered receipts, and track remaining balances. Exam and other fee receipts require independent school-admin validation.</p>
+      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record configured fee collections, print numbered receipts, and track remaining balances. School, exam, and other-fee receipts remain pending until a different school admin validates them.</p>
     </div>
 
     {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p>}
@@ -257,7 +260,7 @@ function FinancePage() {
 
     <section className="glass-panel mt-5 rounded-lg p-4 sm:p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <div><h2 className="font-display text-lg font-bold">Record a fee & issue receipt</h2><p className="mt-1 text-sm text-muted-foreground">Choose any configured fee, learner, amount, and payment method. Exam and other-fee receipts are marked pending until an admin validates them.</p></div>
+        <div><h2 className="font-display text-lg font-bold">Record a fee & issue receipt</h2><p className="mt-1 text-sm text-muted-foreground">Choose any configured fee, learner, amount, and payment method. Every school-fee, exam, and other-fee receipt remains pending until an admin validates it.</p></div>
         <ReceiptText className="size-5 shrink-0 text-primary" />
       </div>
       {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Loading configured fees...</p>
@@ -288,13 +291,13 @@ function FinancePage() {
     </section>
 
     <section className="glass-panel mt-5 overflow-hidden rounded-lg">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Other-fee receipts</h2><p className="mt-1 text-xs text-muted-foreground">Download or print the numbered receipt; its status shows whether an admin has validated the collection.</p></div><Download className="size-5 text-primary" /></div>
-      {otherPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No examination or other-fee payments have been recorded yet.</p>
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Pending validation receipts</h2><p className="mt-1 text-xs text-muted-foreground">Download or print each receipt, including school-fee, exam, and other-fee collections. It remains pending until a school admin validates it.</p></div><Download className="size-5 text-primary" /></div>
+      {otherPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No receipts awaiting school-admin validation.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm">
           <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Fee", "Receipt", "Amount", "Method", "Status", "Received", ""].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr></thead>
           <tbody className="divide-y divide-border/70">{otherPayments.map((payment) => <tr key={payment.id}>
             <td className="px-4 py-3 font-medium">{payment.first_name} {payment.last_name}<p className="font-mono text-xs text-muted-foreground">{payment.admission_number} · {payment.class_name}</p></td>
-            <td className="px-4 py-3">{payment.fee_description}</td>
+            <td className="px-4 py-3">{payment.fee_description}<p className="text-xs capitalize text-muted-foreground">{payment.category.replaceAll("_", " ")}</p></td>
             <td className="px-4 py-3 font-mono text-xs">{payment.receipt_number ?? "—"}</td>
             <td className="px-4 py-3">{payment.currency} {Number(payment.amount).toFixed(2)}</td>
             <td className="px-4 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td>
@@ -313,7 +316,8 @@ function FinancePage() {
               method: payment.method,
               paidAt: payment.paid_at,
               status: payment.status,
-              feeCategory: "other_fee",
+              feeCategory: payment.category === "school_fee" ? "school_fee" : "other_fee",
+              balanceDue: payment.balance_due == null ? undefined : Number(payment.balance_due),
             })}><Download className="mr-2 size-4" />Download receipt</Button></td>
           </tr>)}</tbody>
         </table></div>}
@@ -347,9 +351,10 @@ function FinancePage() {
                       </div>
                       <span className={settled ? "shrink-0 rounded-full bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-700" : "shrink-0 rounded-full bg-amber-600/10 px-2.5 py-1 text-xs font-medium text-amber-800"}>{settled ? "Paid" : "Balance due"}</span>
                     </div>
-                    <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-border pt-3 text-xs">
+                    <dl className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs sm:grid-cols-4">
                       <div><dt className="text-muted-foreground">Original</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.original_amount).toFixed(2)}</dd></div>
                       <div><dt className="text-muted-foreground">Paid</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.paid_amount).toFixed(2)}</dd></div>
+                      <div><dt className="text-muted-foreground">Pending</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.pending_amount).toFixed(2)}</dd></div>
                       <div><dt className="text-muted-foreground">Remaining</dt><dd className="mt-1 font-semibold">{student.currency} {remaining.toFixed(2)}</dd></div>
                     </dl>
                   </article>;

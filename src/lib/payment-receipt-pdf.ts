@@ -9,6 +9,7 @@ export type PaymentReceiptData = {
   className: string;
   feeDescription: string;
   amount: number;
+  balanceDue?: number;
   currency: string;
   method: string;
   paidAt: string;
@@ -70,6 +71,7 @@ export function downloadPaymentReceipt(receipt: PaymentReceiptData) {
     ["Class", receipt.className],
     ["Fee", receipt.feeDescription],
     ["Payment method", receipt.method.replaceAll("_", " ")],
+    ...(receipt.balanceDue === undefined ? [] : [["Balance remaining", `${receipt.currency} ${receipt.balanceDue.toFixed(2)}`] as [string, string]]),
   ];
   let y = 96;
   for (const [label, value] of details) {
