@@ -761,7 +761,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                    i.status as invoice_status, f.currency
             from class_fees f
             join classes c on c.id = f.class_id and c.school_id = f.school_id
-            join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id and e.ends_on is null
+            join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
+              and e.starts_on <= current_date and e.ends_on is null
             join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
             left join invoices i on i.school_id = f.school_id and i.student_id = st.id
               and i.class_fee_id = f.id and i.status <> 'void'
@@ -814,7 +815,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           from class_fees f
           join classes c on c.id = f.class_id and c.school_id = f.school_id
           join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
-            and e.student_id = ${studentId}::uuid and e.ends_on is null
+            and e.student_id = ${studentId}::uuid and e.starts_on <= current_date and e.ends_on is null
           join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
           where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
             and f.is_active and f.fee_type <> 'daily' and c.academic_year_id = f.academic_year_id
@@ -909,11 +910,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (url.pathname === "/api/school/daily-payments" && request.method === "GET") {
       const paymentDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
       if (!validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
+      if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee register dates cannot be in the future");
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           select distinct on (st.id)
                  st.id as student_id, st.first_name, st.last_name, st.admission_number,
                  c.id as class_id, c.name as class_name,
+                 ay.name as academic_year_name,
                  f.amount as fee_amount, f.currency,
                  attendance.status as attendance_status,
                  p.id as payment_id, p.method, p.paid_at,
@@ -956,6 +959,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const method = body["method"];
       if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
       if (typeof paymentDate !== "string" || !validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
+      if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee payments cannot be recorded for a future date");
       if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`

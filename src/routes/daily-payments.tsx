@@ -18,6 +18,7 @@ type DailyStudent = {
   admission_number: string;
   class_id: string;
   class_name: string;
+  academic_year_name: string;
   fee_amount: number | string;
   currency: string;
   attendance_status: string | null;
@@ -75,11 +76,15 @@ function DailyPaymentsPage() {
 
   useEffect(() => { void loadStudents(); }, [loadStudents]);
 
-  const classNames = useMemo(() => [...new Set(students.map((student) => student.class_name))].sort(), [students]);
+  const classes = useMemo(() => Array.from(new Map(students.map((student) => [
+    student.class_id,
+    { id: student.class_id, name: student.class_name, year: student.academic_year_name },
+  ])).values()).sort((a, b) => a.name.localeCompare(b.name) || a.year.localeCompare(b.year)), [students]);
   const visible = useMemo(() => students
     .filter((student) => classFilter === "all" || student.class_id === classFilter)
     .sort((a, b) => a.class_name.localeCompare(b.class_name) || a.last_name.localeCompare(b.last_name) || a.first_name.localeCompare(b.first_name)),
   [students, classFilter]);
+  const selectedClass = classes.find((item) => item.id === classFilter);
   const paidCount = visible.filter((student) => student.payment_id).length;
   const dueStudents = visible.filter((student) => student.attendance_status === "present" || student.attendance_status === "late");
   const paidStudents = visible.filter((student) => student.payment_id);
@@ -110,10 +115,7 @@ function DailyPaymentsPage() {
     <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <label className="space-y-1 text-xs font-medium text-muted-foreground">Class
         <select value={classFilter} onChange={(event) => setClassFilter(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground sm:w-56">
-          <option value="all">All classes</option>{classNames.map((name) => {
-            const classId = students.find((student) => student.class_name === name)?.class_id;
-            return classId ? <option key={classId} value={classId}>{name}</option> : null;
-          })}
+          <option value="all">All classes</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.year}</option>)}
         </select>
       </label>
       <div className="flex items-center gap-2 text-sm">
@@ -133,7 +135,7 @@ function DailyPaymentsPage() {
     {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
     <section className="glass-panel mt-4 overflow-hidden rounded-lg">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-        <div><h2 className="font-display text-lg font-bold">Daily-fee register</h2><p className="mt-1 text-xs text-muted-foreground">{date} · {visible.length} learners{classFilter !== "all" ? ` in ${classNames.find((name) => students.some((student) => student.class_id === classFilter && student.class_name === name)) ?? "selected class"}` : ""}. One collection per student per day. Daily clearance is not an official receipt.</p></div>
+        <div><h2 className="font-display text-lg font-bold">Daily-fee register</h2><p className="mt-1 text-xs text-muted-foreground">{date} · {visible.length} learners{selectedClass ? ` in ${selectedClass.name} · ${selectedClass.year}` : ""}. One collection per student per day. Daily clearance is not an official receipt.</p></div>
         <Banknote className="size-5 text-primary" />
       </div>
       {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading daily-fee register...</p>
