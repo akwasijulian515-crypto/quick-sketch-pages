@@ -182,7 +182,7 @@ function PaidButton({ isPaid, onClick }: { isPaid: boolean; onClick: () => void 
     type="button"
     size="sm"
     variant={isPaid ? "default" : "outline"}
-    className={cn("min-w-28", isPaid && "pointer-events-none")}
+    className="min-w-28"
     onClick={onClick}
     aria-pressed={isPaid}
   >
