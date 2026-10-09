@@ -89,9 +89,7 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
       <nav aria-label="Main navigation" tabIndex={0} className="sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1 outline-none focus-visible:ring-1 focus-visible:ring-highlight/50">
         <div className="flex flex-col gap-0.5">
         {links.map((item) => {
-          const active = item.to === "/subjects"
-            ? pathname === "/subjects" || viewingSubjects
-            : pathname === item.to && !(item.to === "/teachers" && viewingSubjects);
+          const active = pathname === item.to && !(item.to === "/teachers" && viewingSubjects);
           const Icon = item.icon;
           return (
             <Link
