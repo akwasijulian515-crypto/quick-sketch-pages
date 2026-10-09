@@ -133,7 +133,7 @@ function parseCsv(text: string): string[][] {
   let closedQuote = false;
 
   for (let index = 0; index < text.length; index += 1) {
-    const character = text[index];
+    const character = text[index]!;
     if (quoted) {
       if (character === '"') {
         if (text[index + 1] === '"') {
@@ -189,7 +189,7 @@ function parseBulkAdmissionRows(text: string): { rows: BulkAdmissionRow[]; error
   const parsed = parseCsv(text.replace(/^\uFEFF/, ""));
   if (!parsed.length) throw new Error("The CSV file is empty.");
 
-  const headers = parsed[0].map((header) => header.trim().toLowerCase());
+  const headers = parsed[0]!.map((header) => header.trim().toLowerCase());
   if (new Set(headers).size !== headers.length)
     throw new Error("The CSV contains duplicate column names.");
   const requiredHeaders = ["first_name", "last_name"];
@@ -341,6 +341,7 @@ export default function StudentsPage() {
         const index = nextIndex;
         nextIndex += 1;
         const item = rows[index];
+        if (!item) continue;
         try {
           await schoolApi<{ student: StudentRecord }>("/api/school/students", {
             method: "POST",
