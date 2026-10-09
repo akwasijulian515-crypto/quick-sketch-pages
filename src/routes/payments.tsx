@@ -6,6 +6,7 @@ import { getNeonAccessToken } from "../auth/client";
 import { SchoolFeeRules } from "@/components/school-fee-rules";
 import { SchoolShell } from "@/components/school-shell";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
+import { Button } from "@/components/ui/button";
 import { downloadPaymentReceipt } from "@/lib/payment-receipt-pdf";
 
 export const Route = createFileRoute("/payments")({
