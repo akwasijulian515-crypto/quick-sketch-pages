@@ -98,6 +98,7 @@ function FinancePage() {
   const [otherPayments, setOtherPayments] = useState<OtherFeePayment[]>([]);
   const [method, setMethod] = useState("cash");
   const [loading, setLoading] = useState(true);
+  const [otherPaymentsLoading, setOtherPaymentsLoading] = useState(true);
   const [balancesLoading, setBalancesLoading] = useState(false);
   const [collectionBalancesLoading, setCollectionBalancesLoading] = useState(false);
   const [recordingCollection, setRecordingCollection] = useState(false);
@@ -109,8 +110,13 @@ function FinancePage() {
     setPayments(result.payments);
   }, []);
   const loadOtherPayments = useCallback(async () => {
-    const result = await schoolApi<{ payments: OtherFeePayment[] }>("/api/school/other-payments");
-    setOtherPayments(result.payments);
+    setOtherPaymentsLoading(true);
+    try {
+      const result = await schoolApi<{ payments: OtherFeePayment[] }>("/api/school/other-payments");
+      setOtherPayments(result.payments);
+    } finally {
+      setOtherPaymentsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -178,6 +184,7 @@ function FinancePage() {
   const activeCollectionFees = fees.filter((item) => item.is_active && (schoolFeeTypes.has(item.fee_type) || otherFeeTypes.has(item.fee_type)));
   const collectionStudent = collectionBalances.find((item) => item.student_id === collectionStudentId);
   const collectionIsOtherFee = collectionFee ? otherFeeTypes.has(collectionFee.fee_type) : false;
+  const pendingValidationPayments = otherPayments.filter((payment) => payment.status === "pending");
   async function recordPayment() {
     const amount = Number(collectionAmount);
     if (!collectionFee || !collectionStudent || !Number.isFinite(amount) || amount <= 0 || amount > Number(collectionStudent.balance_due)) {
@@ -295,10 +302,11 @@ function FinancePage() {
 
     <section className="glass-panel mt-5 overflow-hidden rounded-lg">
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Pending validation receipts</h2><p className="mt-1 text-xs text-muted-foreground">Download or print each receipt, including school-fee, exam, and other-fee collections. It remains pending until a school admin validates it.</p></div><Download className="size-5 text-primary" /></div>
-      {otherPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No receipts awaiting school-admin validation.</p>
+      {otherPaymentsLoading ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">Loading pending receipts...</p>
+        : pendingValidationPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No receipts awaiting school-admin validation.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm">
           <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Fee", "Receipt", "Amount", "Method", "Status", "Received", ""].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr></thead>
-          <tbody className="divide-y divide-border/70">{otherPayments.map((payment) => <tr key={payment.id}>
+          <tbody className="divide-y divide-border/70">{pendingValidationPayments.map((payment) => <tr key={payment.id}>
             <td className="px-4 py-3 font-medium">{payment.first_name} {payment.last_name}<p className="font-mono text-xs text-muted-foreground">{payment.admission_number} · {payment.class_name}</p></td>
             <td className="px-4 py-3">{payment.fee_description}<p className="text-xs capitalize text-muted-foreground">{payment.category.replaceAll("_", " ")}</p></td>
             <td className="px-4 py-3 font-mono text-xs">{payment.receipt_number ?? "—"}</td>
