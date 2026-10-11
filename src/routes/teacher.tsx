@@ -1,8 +1,8 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRight, BookOpenCheck, CalendarDays, CheckCircle2, FileText, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowUpRight, Banknote, BookOpenCheck, CalendarDays, CheckCircle2, FileText, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getNeonAccessToken, neonAuthClient } from "../auth/client";
+import { fetchWithNeonAuth, neonAuthClient } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { LearnerProfileEntry } from "@/components/learner-profile-entry";
 import { calculateMarkResult } from "@/lib/grade-calculations";
@@ -28,10 +28,9 @@ function TeacherPortal() {
     let cancelled = false;
     async function verifyTeacher() {
       try {
-        const token = await getNeonAccessToken();
         const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
         const endpoint = tenant ? `/api/auth/context?tenant=${encodeURIComponent(tenant)}` : "/api/auth/context";
-        const response = await fetch(endpoint, { headers: { authorization: `Bearer ${token}` } });
+        const response = await fetchWithNeonAuth(endpoint);
         const payload = await response.json().catch(() => null) as { membership?: { role?: string } } | null;
         if (!response.ok || payload?.membership?.role !== "teacher") throw new Error("Teacher membership is required");
         if (!cancelled) setAllowed(true);
@@ -64,11 +63,7 @@ function TeacherPortal() {
         </div>
       </div>
 
-      {tab === "grades" ? <TeacherMarkEntry /> : tab === "register" ? <AttendanceRegister /> : <section className="glass-panel mt-5 rounded-lg border border-dashed border-border p-10 text-center">
-        <TicketCheck className="mx-auto size-7 text-primary/55" />
-        <h2 className="mt-3 font-display text-lg font-bold">Daily payment records are not connected</h2>
-        <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">Payment and coupon status is not available from this workspace yet. Check the Finance portal for supported payment workflows.</p>
-      </section>}
+      {tab === "grades" ? <TeacherMarkEntry /> : tab === "register" ? <AttendanceRegister /> : <TeacherDailyPayments />}
     </main>
   </div>;
 }
@@ -108,14 +103,12 @@ const markFields = [
 ] as const;
 
 async function teacherApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getNeonAccessToken();
   const url = new URL(path, window.location.origin);
   const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
   if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
   const headers = new Headers(init?.headers);
-  headers.set("authorization", `Bearer ${token}`);
   if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const response = await fetchWithNeonAuth(`${url.pathname}${url.search}`, { ...init, headers });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
@@ -147,6 +140,168 @@ type AttendanceDay = {
 
 function localDateString(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+type TeacherDailyPayment = {
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+  class_id: string;
+  class_name: string;
+  academic_year_name: string;
+  fee_amount: number | string;
+  currency: string;
+  attendance_status: string | null;
+  payment_id: string | null;
+  method: string | null;
+  paid_at: string | null;
+  coupon_code: string | null;
+};
+
+function TeacherDailyPayments() {
+  const [date, setDate] = useState(() => localDateString(new Date()));
+  const [students, setStudents] = useState<TeacherDailyPayment[]>([]);
+  const [classFilter, setClassFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    void teacherApi<{ students: TeacherDailyPayment[] }>(
+      `/api/school/daily-payments?date=${encodeURIComponent(date)}`,
+    )
+      .then((result) => {
+        if (!cancelled) setStudents(result.students);
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setStudents([]);
+          setError(cause instanceof Error ? cause.message : "Could not load daily-fee records");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [date, retry]);
+
+  const classes = useMemo(
+    () => Array.from(new Map(students.map((student) => [
+      student.class_id,
+      { id: student.class_id, name: student.class_name, year: student.academic_year_name },
+    ])).values()).sort((a, b) => a.name.localeCompare(b.name) || a.year.localeCompare(b.year)),
+    [students],
+  );
+  const visible = students.filter(
+    (student) => classFilter === "all" || student.class_id === classFilter,
+  );
+  const paidCount = visible.filter((student) => student.payment_id).length;
+
+  return <section className="glass-panel mt-5 overflow-hidden rounded-lg">
+    <div className="flex flex-col gap-4 border-b border-border p-4 sm:flex-row sm:items-end sm:justify-between sm:p-5">
+      <div>
+        <div className="mb-2 grid size-9 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><Banknote className="size-4" /></div>
+        <h2 className="font-display text-xl font-bold">Daily fees and coupons</h2>
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+          Read-only daily payment status for your assigned classes. Record and reconcile payments in Finance.
+        </p>
+      </div>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">
+          Date
+          <input
+            type="date"
+            max={localDateString(new Date())}
+            value={date}
+            onChange={(event) => event.target.value && setDate(event.target.value)}
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+          />
+        </label>
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">
+          Class
+          <select
+            value={classFilter}
+            onChange={(event) => setClassFilter(event.target.value)}
+            className="h-10 min-w-48 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+          >
+            <option value="all">All assigned classes</option>
+            {classes.map((item) => (
+              <option key={item.id} value={item.id}>{item.name} · {item.year}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </div>
+    <div className="flex flex-wrap gap-2 px-4 pt-4 sm:px-5">
+      <span className="rounded-md bg-secondary px-2.5 py-1 text-xs text-secondary-foreground ring-1 ring-border">{loading ? "—" : `${paidCount} paid`}</span>
+      <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">{loading ? "—" : `${visible.length - paidCount} unpaid`}</span>
+      <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">{date}</span>
+    </div>
+    {error ? (
+      <div role="alert" className="p-8 text-center">
+        <p className="text-sm text-destructive">{error}</p>
+        <Button variant="outline" size="sm" className="mt-3" onClick={() => setRetry((count) => count + 1)}>Retry</Button>
+      </div>
+    ) : loading ? (
+      <p className="py-10 text-center text-sm text-muted-foreground">Loading daily-fee records…</p>
+    ) : visible.length === 0 ? (
+      <div className="p-10 text-center">
+        <TicketCheck className="mx-auto size-7 text-primary/55" />
+        <h3 className="mt-3 font-display text-lg font-bold">{classes.length ? "No daily-fee records" : "No assigned classes"}</h3>
+        <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
+          {classes.length ? "There are no students with a configured daily fee in this class for the selected date." : "Ask your School Admin to assign you to a class with daily-fee records."}
+        </p>
+      </div>
+    ) : (
+      <>
+        <div className="divide-y divide-border/70 md:hidden">
+          {visible.map((student) => (
+            <article key={student.student_id} className="space-y-2 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">{student.first_name} {student.last_name}</p>
+                  <p className="font-mono text-[11px] text-muted-foreground">{student.admission_number} · {student.class_name}</p>
+                </div>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${student.payment_id ? "bg-emerald-600/10 text-emerald-700" : "bg-muted text-muted-foreground"}`}>
+                  {student.payment_id ? "Paid" : "Unpaid"}
+                </span>
+              </div>
+              <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                <span>Attendance: <span className="capitalize">{student.attendance_status ?? "Not marked"}</span></span>
+                <span>{student.currency} {Number(student.fee_amount).toFixed(2)}</span>
+              </div>
+              {student.payment_id && <p className="font-mono text-xs text-primary">Coupon: {student.coupon_code ?? "—"}</p>}
+            </article>
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead className="bg-muted/60 text-xs text-muted-foreground">
+              <tr>{["Student", "Class", "Attendance", "Daily fee", "Payment", "Coupon"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-border/70">
+              {visible.map((student) => (
+                <tr key={student.student_id}>
+                  <td className="px-5 py-3"><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></td>
+                  <td className="px-5 py-3">{student.class_name}</td>
+                  <td className="px-5 py-3 capitalize">{student.attendance_status ?? "Not marked"}</td>
+                  <td className="px-5 py-3">{student.currency} {Number(student.fee_amount).toFixed(2)}</td>
+                  <td className="px-5 py-3">{student.payment_id ? <span className="text-emerald-700">Paid</span> : <span className="text-muted-foreground">Unpaid</span>}</td>
+                  <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{student.coupon_code ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    )}
+  </section>;
 }
 
 function AttendanceRegister() {

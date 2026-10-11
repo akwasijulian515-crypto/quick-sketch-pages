@@ -565,7 +565,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/other-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/student-financial-records": { GET: ["school_admin"] },
-    "/api/school/daily-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
+    "/api/school/daily-payments": { GET: ["school_admin", "finance", "teacher"], POST: ["school_admin", "finance"] },
+    "/api/school/student-attendance": { GET: ["school_admin"] },
     "/api/school/reconciliation": { GET: ["school_admin", "finance"] },
     "/api/school/coupons": { GET: ["school_admin", "teacher", "finance"] },
     "/api/school/marks": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
@@ -1226,6 +1227,79 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       );
       if (!rows[0]) return json({ error: "Term not found, already closed, or it is not Term 3" }, 409);
       return json({ term: rows[0] });
+    }
+
+    if (url.pathname === "/api/school/student-attendance" && request.method === "GET") {
+      const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      const classId = url.searchParams.get("class_id")?.trim() || null;
+      const search = url.searchParams.get("search")?.trim() || null;
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "50", 10);
+      if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid attendance date");
+      if (classId && !uuidOrNull(classId)) return badRequest("Invalid class ID");
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      if (search && search.length > 120) return badRequest("Search text is too long");
+      const offset = (page - 1) * pageSize;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with enrolled_students as materialized (
+            select distinct on (st.id)
+                   st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   c.id as class_id, c.name as class_name, e.starts_on
+            from students st
+            join class_enrollments e on e.school_id = st.school_id and e.student_id = st.id
+              and e.starts_on <= ${attendanceDate}::date
+              and (e.ends_on is null or e.ends_on >= ${attendanceDate}::date)
+            join classes c on c.id = e.class_id and c.school_id = e.school_id
+            where st.school_id = ${school.schoolId}::uuid and st.active
+              and (${classId}::uuid is null or c.id = ${classId}::uuid)
+              and (${search}::text is null or
+                concat_ws(' ', st.first_name, st.last_name) ilike '%' || ${search} || '%'
+                or st.admission_number ilike '%' || ${search} || '%')
+            order by st.id, e.starts_on desc, c.name
+          ),
+          attendance_rows as materialized (
+            select e.*, coalesce(attendance.status, 'unmarked') as attendance_status,
+                   attendance.note
+            from enrolled_students e
+            left join lateral (
+              select ar.status, ar.note
+              from attendance_sessions ase
+              join attendance_records ar
+                on ar.attendance_session_id = ase.id and ar.school_id = ase.school_id
+              where ase.school_id = ${school.schoolId}::uuid
+                and ase.class_id = e.class_id and ar.student_id = e.student_id
+                and ase.attendance_date = ${attendanceDate}::date
+              order by ar.marked_at desc
+              limit 1
+            ) attendance on true
+          ),
+          page_records as (
+            select * from attendance_rows
+            order by class_name, last_name, first_name, student_id
+            limit ${pageSize} offset ${offset}
+          )
+          select coalesce(jsonb_agg(jsonb_build_object(
+                   'student_id', student_id, 'first_name', first_name, 'last_name', last_name,
+                   'admission_number', admission_number, 'class_id', class_id,
+                   'class_name', class_name, 'attendance_status', attendance_status, 'note', note
+                 ) order by class_name, last_name, first_name, student_id), '[]'::jsonb) as records,
+                 (select count(*)::int from attendance_rows) as total_count
+          from page_records
+        `,
+      );
+      const result = rows[0];
+      if (!result) throw new Error("Student attendance summary query returned no result");
+      const totalCount = Number(result["total_count"] ?? 0);
+      return json({
+        records: result["records"],
+        date: attendanceDate,
+        total_count: totalCount,
+        page,
+        page_size: pageSize,
+        page_count: Math.ceil(totalCount / pageSize),
+      });
     }
 
     if (url.pathname === "/api/school/attendance") {
@@ -1967,6 +2041,23 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           left join coupons coupon on coupon.school_id = p.school_id and coupon.payment_id = p.id
           where e.school_id = ${school.schoolId}::uuid
             and e.starts_on <= ${paymentDate}::date and (e.ends_on is null or e.ends_on >= ${paymentDate}::date)
+            and (
+              ${school.role !== "teacher"}
+              or c.class_teacher_id in (
+                select sp.id from staff_profiles sp
+                where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+              )
+              or exists (
+                select 1
+                from teaching_assignments ta
+                join class_subjects cs
+                  on cs.id = ta.class_subject_id and cs.school_id = ta.school_id
+                join staff_profiles sp
+                  on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = ay.id
+                  and cs.class_id = c.id and sp.user_id = ${school.userId}::uuid
+              )
+            )
           order by st.id, e.starts_on desc
         `,
       );

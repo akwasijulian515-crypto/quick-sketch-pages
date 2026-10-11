@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { getNeonAccessToken } from "@/auth/client";
+import { fetchWithNeonAuth } from "@/auth/client";
 import { SchoolShell } from "@/components/school-shell";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
 import { downloadStudentRecordPdf } from "@/lib/student-record-pdf";
@@ -64,6 +64,17 @@ type ClassOption = {
   academic_year_name?: string | null;
 };
 
+type StudentAttendanceRecord = {
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+  class_id: string;
+  class_name: string;
+  attendance_status: "present" | "late" | "absent" | "excused" | "unmarked";
+  note: string | null;
+};
+
 type AdmissionInput = {
   full_name: string;
   class_id: string | null;
@@ -84,17 +95,19 @@ type BulkAdmissionOutcome = { rowNumber: number; error?: string };
 
 const csvHeaders = ["first_name", "last_name"] as const;
 
+function localDateString(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getNeonAccessToken();
   const url = new URL(path, window.location.origin);
   const tenant =
     new URLSearchParams(window.location.search).get("tenant") ??
     sessionStorage.getItem("hg-school");
   if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
   const headers = new Headers(init?.headers);
-  headers.set("Authorization", `Bearer ${token}`);
   if (init?.body) headers.set("Content-Type", "application/json");
-  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const response = await fetchWithNeonAuth(`${url.pathname}${url.search}`, { ...init, headers });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message =
@@ -261,9 +274,14 @@ export default function StudentsPage() {
   const [showAdmission, setShowAdmission] = useState(false);
   const [showBulkAdmission, setShowBulkAdmission] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [selectedProfileTab, setSelectedProfileTab] = useState<"Overview" | "Fees">("Overview");
+  const [selectedProfileTab, setSelectedProfileTab] = useState<"Overview" | "Fees" | "Attendance">("Overview");
   const [notice, setNotice] = useState("");
   const [canManageStudents, setCanManageStudents] = useState(false);
+  const [attendanceDate, setAttendanceDate] = useState(() => localDateString(new Date()));
+  const [attendanceRecords, setAttendanceRecords] = useState<StudentAttendanceRecord[]>([]);
+  const [attendanceTotal, setAttendanceTotal] = useState(0);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceError, setAttendanceError] = useState("");
 
   useEffect(() => {
     setCanManageStudents(sessionStorage.getItem("hg-role") === "school_admin");
@@ -321,6 +339,48 @@ export default function StudentsPage() {
       window.clearTimeout(timer);
     };
   }, [filterClassId, page, query, reloadCount]);
+
+  useEffect(() => {
+    if (activeTab !== "Attendance") return;
+    let cancelled = false;
+    const params = new URLSearchParams({
+      date: attendanceDate,
+      page: String(page),
+      page_size: "50",
+    });
+    if (query.trim()) params.set("search", query.trim());
+    if (filterClassId) params.set("class_id", filterClassId);
+    setAttendanceLoading(true);
+    setAttendanceError("");
+    if (page === 1) {
+      setAttendanceRecords([]);
+      setAttendanceTotal(0);
+    }
+    void schoolApi<{
+      records: StudentAttendanceRecord[];
+      total_count: number;
+    }>(`/api/school/student-attendance?${params}`)
+      .then((result) => {
+        if (cancelled) return;
+        setAttendanceRecords((current) =>
+          page === 1 ? result.records : [...current, ...result.records],
+        );
+        setAttendanceTotal(result.total_count);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setAttendanceError(
+            error instanceof Error ? error.message : "Could not load student attendance",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAttendanceLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, attendanceDate, filterClassId, page, query, reloadCount]);
 
   async function admitStudent(input: AdmissionInput) {
     const result = await schoolApi<{ student: StudentRecord }>("/api/school/students", {
@@ -435,7 +495,10 @@ export default function StudentsPage() {
           {tabs.map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => {
+                setPage(1);
+                setActiveTab(tab);
+              }}
               className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
                 activeTab === tab
                   ? "border-primary text-primary"
@@ -546,7 +609,19 @@ export default function StudentsPage() {
                             {student.studentId}
                           </td>
                           <td className="px-5 py-3.5 text-foreground">{student.className}</td>
-                          <td className="px-5 py-3.5 text-muted-foreground">Not connected</td>
+                          <td className="px-5 py-3.5">
+                            <button
+                              type="button"
+                              className="text-xs font-medium text-primary hover:underline"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedProfileTab("Attendance");
+                                setSelectedStudent(student);
+                              }}
+                            >
+                              View records
+                            </button>
+                          </td>
                           <td className="px-5 py-3.5">
                             <StatusBadge status={student.status} />
                           </td>
@@ -611,12 +686,82 @@ export default function StudentsPage() {
             </button>
           </div>
         ) : (
-          <div className="admin-card p-8 text-center">
-            <CalendarDays className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
-            <h2 className="font-semibold text-foreground">Attendance records</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Student attendance summaries are not connected to this view yet.
-            </p>
+          <div className="admin-card overflow-hidden">
+            <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h2 className="font-semibold text-foreground">Student attendance</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Saved register status for students enrolled on the selected date.
+                </p>
+              </div>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                Attendance date
+                <input
+                  type="date"
+                  value={attendanceDate}
+                  onChange={(event) => {
+                    setPage(1);
+                    setAttendanceDate(event.target.value);
+                  }}
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                />
+              </label>
+            </div>
+            {attendanceError ? (
+              <div role="alert" className="p-8 text-center">
+                <p className="text-sm text-destructive">{attendanceError}</p>
+                <button
+                  className="admin-btn-secondary mt-3"
+                  onClick={() => setReloadCount((count) => count + 1)}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-sm">
+                    <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
+                      <tr>
+                        {["Student", "Student ID", "Class", "Status", "Note"].map((label) => (
+                          <th key={label} className="px-5 py-3 font-medium">{label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/50">
+                      {attendanceRecords.map((record) => (
+                        <tr key={record.student_id}>
+                          <td className="px-5 py-3 font-medium">{record.first_name} {record.last_name}</td>
+                          <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{record.admission_number}</td>
+                          <td className="px-5 py-3">{record.class_name}</td>
+                          <td className="px-5 py-3 capitalize">{record.attendance_status}</td>
+                          <td className="px-5 py-3 text-muted-foreground">{record.note || "—"}</td>
+                        </tr>
+                      ))}
+                      {!attendanceLoading && attendanceRecords.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-5 py-12 text-center text-muted-foreground">
+                            {query.trim() || filterClassId
+                              ? "No enrolled students match these filters."
+                              : "No students were enrolled on this date."}
+                          </td>
+                        </tr>
+                      )}
+                      {attendanceLoading && attendanceRecords.length === 0 && (
+                        <tr><td colSpan={5} className="px-5 py-12 text-center text-muted-foreground">Loading attendance records…</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {attendanceRecords.length < attendanceTotal && !attendanceLoading && (
+                  <div className="border-t border-border p-4 text-center">
+                    <button className="admin-btn-secondary" onClick={() => setPage((current) => current + 1)}>
+                      Load more attendance records
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -1088,7 +1233,7 @@ function StudentProfile({
   onClose,
 }: {
   student: Student;
-  initialTab: "Overview" | "Fees";
+  initialTab: "Overview" | "Fees" | "Attendance";
   canManageStudents: boolean;
   onStatusChange: (studentId: string, status: StudentStatus) => void;
   onClose: () => void;
