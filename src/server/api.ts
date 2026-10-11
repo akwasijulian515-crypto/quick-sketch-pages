@@ -1260,7 +1260,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             order by st.id, e.starts_on desc, c.name
           ),
           attendance_rows as materialized (
-            select e.*, coalesce(attendance.status, 'unmarked') as attendance_status,
+            select e.*, coalesce(attendance.status::text, 'unmarked') as attendance_status,
                    attendance.note
             from enrolled_students e
             left join lateral (
