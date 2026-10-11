@@ -554,6 +554,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const studentHistoryMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)\/history\/(attendance|grades)$/i);
   const paymentReviewMatch = url.pathname.match(/^\/api\/school\/payments\/([0-9a-f-]+)\/review$/i);
   const workflowRoles: Record<string, Record<string, readonly string[]>> = {
+    "/api/school/dashboard": { GET: ["school_admin"] },
+    "/api/school/admin-summary": { GET: ["school_admin"] },
+    "/api/school/portal-accounts": { GET: ["school_admin"], POST: ["school_admin"] },
+    "/api/school/portal-data": { GET: ["parent", "student"] },
     "/api/school/classes": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
     "/api/school/students": { GET: ["school_admin", "teacher", "finance"] },
     "/api/school/attendance": { GET: ["school_admin", "teacher"], POST: ["teacher"] },
@@ -603,7 +607,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (school instanceof Response) return school;
     const sql = database(env);
 
-    if (studentHistoryMatch) {
+    if (
+      studentHistoryMatch
+      || url.pathname === "/api/school/dashboard"
+      || url.pathname === "/api/school/admin-summary"
+      || url.pathname === "/api/school/portal-accounts"
+      || url.pathname === "/api/school/portal-data"
+    ) {
+      if (studentHistoryMatch) {
       const [, studentId, historyType] = studentHistoryMatch;
       if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
       const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
@@ -664,7 +675,436 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           page_count: Math.ceil(totalCount / pageSize),
         });
       }
+      }
 
+      if (url.pathname === "/api/school/dashboard") {
+        const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+        if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid dashboard date");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with class_totals as (
+              select count(*)::int as class_count
+              from classes c
+              join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              where c.school_id = ${school.schoolId}::uuid and ay.ends_on >= ${attendanceDate}::date
+            ),
+            student_totals as (
+              select count(distinct st.id)::int as student_count
+              from students st
+              join class_enrollments e on e.student_id = st.id and e.school_id = st.school_id
+              where st.school_id = ${school.schoolId}::uuid and st.active
+                and e.starts_on <= ${attendanceDate}::date
+                and (e.ends_on is null or e.ends_on >= ${attendanceDate}::date)
+            ),
+            attendance_totals as (
+              select count(*) filter (where ar.status = 'present')::int as present_count,
+                     count(*) filter (where ar.status = 'late')::int as late_count,
+                     count(*) filter (where ar.status = 'absent')::int as absent_count,
+                     count(*)::int as marked_count
+              from attendance_sessions ase
+              join attendance_records ar
+                on ar.attendance_session_id = ase.id and ar.school_id = ase.school_id
+              where ase.school_id = ${school.schoolId}::uuid and ase.attendance_date = ${attendanceDate}::date
+            ),
+            payment_totals as (
+              select p.currency,
+                     coalesce(sum(p.amount) filter (where p.status = 'verified'), 0)::numeric(12,2) as verified_amount,
+                     count(*) filter (where p.status = 'verified')::int as verified_count,
+                     count(*) filter (where p.status in ('pending', 'initiated'))::int as pending_count
+              from payments p
+              where p.school_id = ${school.schoolId}::uuid and p.paid_at::date = ${attendanceDate}::date
+              group by p.currency
+            ),
+            current_term as (
+              select ay.name as academic_year_name, t.name as term_name
+              from terms t
+              join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+              where t.school_id = ${school.schoolId}::uuid
+                and ${attendanceDate}::date between t.starts_on and t.ends_on
+              order by ay.starts_on desc, t.starts_on desc
+              limit 1
+            )
+            select (select class_count from class_totals) as class_count,
+                   (select student_count from student_totals) as student_count,
+                   (select row_to_json(attendance_totals) from attendance_totals) as attendance,
+                   coalesce((select jsonb_agg(jsonb_build_object(
+                     'currency', currency, 'verified_amount', verified_amount,
+                     'verified_count', verified_count, 'pending_count', pending_count
+                   ) order by currency) from payment_totals), '[]'::jsonb) as payments,
+                   (select row_to_json(current_term) from current_term) as current_term,
+                   coalesce((
+                     select jsonb_agg(jsonb_build_object(
+                       'id', p.id, 'receipt_number', p.receipt_number, 'amount', p.amount,
+                       'currency', p.currency, 'status', p.status, 'paid_at', p.paid_at,
+                       'category', p.category, 'student_name', st.first_name || ' ' || st.last_name
+                     ) order by p.paid_at desc)
+                     from (
+                       select id, student_id, receipt_number, amount, currency, status, paid_at, category
+                       from payments
+                       where school_id = ${school.schoolId}::uuid
+                       order by paid_at desc
+                       limit 8
+                     ) p
+                     join students st on st.id = p.student_id and st.school_id = ${school.schoolId}::uuid
+                   ), '[]'::jsonb) as recent_payments
+          `,
+        );
+        const summary = rows[0];
+        if (!summary) throw new Error("School dashboard query returned no result");
+        return json({
+          date: attendanceDate,
+          class_count: Number(summary["class_count"] ?? 0),
+          student_count: Number(summary["student_count"] ?? 0),
+          attendance: summary["attendance"] ?? { present_count: 0, late_count: 0, absent_count: 0, marked_count: 0 },
+          payments: summary["payments"],
+          current_term: summary["current_term"],
+          recent_payments: summary["recent_payments"],
+        });
+      }
+
+      if (url.pathname === "/api/school/admin-summary") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select
+              (select count(distinct m.user_id)::int from memberships m
+               where m.school_id = ${school.schoolId}::uuid and m.role <> 'super_admin') as active_users,
+              (select count(*)::int
+               from memberships m join users u on u.id = m.user_id
+               where m.school_id = ${school.schoolId}::uuid and m.role <> 'super_admin'
+                 and not exists (
+                   select 1 from neon_auth.user au
+                   where lower(au.email) = lower(u.email) and au."emailVerified" = true
+                 )) as pending_activations,
+              (select count(*)::int from terminal_reports r
+               where r.school_id = ${school.schoolId}::uuid) as terminal_reports,
+              (select count(*)::int from students st
+               where st.school_id = ${school.schoolId}::uuid and st.user_id is not null) as linked_student_accounts,
+              (select count(*)::int from guardians g
+               where g.school_id = ${school.schoolId}::uuid and g.user_id is not null) as linked_parent_accounts
+          `,
+        );
+        const summary = rows[0];
+        if (!summary) throw new Error("School administration summary query returned no result");
+        return json({
+          active_users: Number(summary["active_users"] ?? 0),
+          pending_activations: Number(summary["pending_activations"] ?? 0),
+          terminal_reports: Number(summary["terminal_reports"] ?? 0),
+          linked_student_accounts: Number(summary["linked_student_accounts"] ?? 0),
+          linked_parent_accounts: Number(summary["linked_parent_accounts"] ?? 0),
+        });
+      }
+
+      if (url.pathname === "/api/school/portal-accounts") {
+        if (request.method === "GET") {
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              select coalesce((
+                select jsonb_agg(jsonb_build_object(
+                  'id', st.id, 'name', st.first_name || ' ' || st.last_name,
+                  'admission_number', st.admission_number,
+                  'class_name', c.name, 'linked', st.user_id is not null
+                ) order by st.last_name, st.first_name, st.admission_number)
+                from students st
+                left join lateral (
+                  select c.name
+                  from class_enrollments e
+                  join classes c on c.id = e.class_id and c.school_id = e.school_id
+                  where e.school_id = st.school_id and e.student_id = st.id and e.ends_on is null
+                  order by e.starts_on desc limit 1
+                ) c on true
+                where st.school_id = ${school.schoolId}::uuid and st.active
+              ), '[]'::jsonb) as students,
+              coalesce((
+                select jsonb_agg(jsonb_build_object(
+                  'id', g.id, 'name', g.full_name, 'email', g.email,
+                  'linked', g.user_id is not null,
+                  'students', coalesce((
+                    select string_agg(st.first_name || ' ' || st.last_name, ', ' order by st.last_name, st.first_name)
+                    from student_guardians sg
+                    join students st on st.id = sg.student_id and st.school_id = sg.school_id
+                    where sg.school_id = g.school_id and sg.guardian_id = g.id
+                  ), '')
+                ) order by g.full_name)
+                from guardians g
+                where g.school_id = ${school.schoolId}::uuid
+              ), '[]'::jsonb) as guardians
+            `,
+          );
+          return json({ students: rows[0]?.["students"] ?? [], guardians: rows[0]?.["guardians"] ?? [] });
+        }
+
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const accountType = body["account_type"];
+        const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
+        if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid account email");
+
+        if (accountType === "student") {
+          const studentId = body["student_id"];
+          if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              with selected_student as materialized (
+                select id, school_id, first_name, last_name, user_id
+                from students
+                where id = ${studentId}::uuid and school_id = ${school.schoolId}::uuid and active
+                  and (
+                    user_id is null
+                    or exists (
+                      select 1 from users linked_user
+                      where linked_user.id = students.user_id and lower(linked_user.email) = ${email}
+                    )
+                  )
+                for update
+              ),
+              app_user as (
+                insert into users (email, display_name)
+                select ${email}, first_name || ' ' || last_name from selected_student
+                on conflict (email) do update set display_name = excluded.display_name
+                returning id, email, display_name
+              ),
+              member as (
+                insert into memberships (user_id, school_id, role)
+                select id, ${school.schoolId}::uuid, 'student'::membership_role from app_user
+                on conflict (user_id, school_id, role) do update set role = excluded.role
+                returning user_id
+              ),
+              linked_student as (
+                update students st set user_id = app_user.id
+                from app_user, member, selected_student
+                where st.id = selected_student.id and st.school_id = selected_student.school_id
+                  and (selected_student.user_id is null or selected_student.user_id = app_user.id)
+                returning st.id, st.first_name, st.last_name, app_user.email
+              )
+              select * from linked_student
+            `,
+          );
+          if (!rows[0]) return json({ error: "Student account could not be linked. The student may already be linked to another account." }, 409);
+          const activationUrl = new URL("/login", request.url);
+          activationUrl.searchParams.set("tenant", school.subdomain);
+          activationUrl.searchParams.set("mode", "activate");
+          return json({ account: rows[0], activation_url: activationUrl.toString() }, 201);
+        }
+
+        if (accountType === "parent") {
+          const guardianId = body["guardian_id"];
+          if (!uuidOrNull(guardianId) || !guardianId) return badRequest("Choose a valid guardian");
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              with selected_guardian as materialized (
+                select id, school_id, full_name, email, user_id
+                from guardians
+                where id = ${guardianId}::uuid and school_id = ${school.schoolId}::uuid
+                  and (
+                    user_id is null
+                    or exists (
+                      select 1 from users linked_user
+                      where linked_user.id = guardians.user_id and lower(linked_user.email) = ${email}
+                    )
+                  )
+                for update
+              ),
+              app_user as (
+                insert into users (email, display_name)
+                select ${email}, full_name from selected_guardian
+                where selected_guardian.email is null or lower(selected_guardian.email) = ${email}
+                on conflict (email) do update set display_name = excluded.display_name
+                returning id, email, display_name
+              ),
+              member as (
+                insert into memberships (user_id, school_id, role)
+                select id, ${school.schoolId}::uuid, 'parent'::membership_role from app_user
+                on conflict (user_id, school_id, role) do update set role = excluded.role
+                returning user_id
+              ),
+              linked_guardian as (
+                update guardians g set user_id = app_user.id,
+                       email = coalesce(g.email, app_user.email)
+                from app_user, member, selected_guardian
+                where g.id = selected_guardian.id and g.school_id = selected_guardian.school_id
+                  and (selected_guardian.user_id is null or selected_guardian.user_id = app_user.id)
+                returning g.id, g.full_name, app_user.email
+              )
+              select * from linked_guardian
+            `,
+          );
+          if (!rows[0]) return json({ error: "Parent account could not be linked. Confirm the email matches the guardian record, or that the guardian is not linked to another account." }, 409);
+          const activationUrl = new URL("/login", request.url);
+          activationUrl.searchParams.set("tenant", school.subdomain);
+          activationUrl.searchParams.set("mode", "activate");
+          return json({ account: rows[0], activation_url: activationUrl.toString() }, 201);
+        }
+
+        return badRequest("Choose a student or parent account");
+      }
+
+      if (url.pathname === "/api/school/portal-data") {
+        if (school.role === "parent") {
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              with linked_children as materialized (
+                select st.id, st.first_name, st.last_name, st.admission_number,
+                       c.name as class_name, t.id as term_id, t.name as term_name,
+                       t.academic_year_name,
+                       t.starts_on as term_starts_on, t.ends_on as term_ends_on
+                from guardians g
+                join student_guardians sg on sg.guardian_id = g.id and sg.school_id = g.school_id
+                join students st on st.id = sg.student_id and st.school_id = sg.school_id
+                left join lateral (
+                  select c.name, c.academic_year_id
+                  from class_enrollments e
+                  join classes c on c.id = e.class_id and c.school_id = e.school_id
+                  where e.school_id = st.school_id and e.student_id = st.id and e.ends_on is null
+                  order by e.starts_on desc limit 1
+                ) c on true
+                left join lateral (
+                  select t.id, t.name, t.starts_on, t.ends_on, ay.name as academic_year_name
+                  from terms t
+                  join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+                  where t.school_id = st.school_id and current_date between t.starts_on and t.ends_on
+                  order by t.starts_on desc limit 1
+                ) t on true
+                where g.school_id = ${school.schoolId}::uuid and g.user_id = ${school.userId}::uuid
+                  and st.active
+              ),
+              child_data as (
+                select lc.*,
+                  (select count(*)::int from attendance_records ar
+                   join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+                   where ar.school_id = ${school.schoolId}::uuid and ar.student_id = lc.id
+                     and lc.term_id is not null
+                     and ase.attendance_date between lc.term_starts_on and current_date
+                     and ar.status in ('present', 'late')) as attendance_present,
+                  (select count(*)::int from attendance_records ar
+                   join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+                   where ar.school_id = ${school.schoolId}::uuid and ar.student_id = lc.id
+                     and lc.term_id is not null
+                     and ase.attendance_date between lc.term_starts_on and current_date) as attendance_total,
+                  (select greatest(coalesce(sum(i.amount_due - coalesce(paid.paid_amount, 0) - coalesce(paid.pending_amount, 0)), 0), 0)::numeric(12,2)
+                   from invoices i
+                   left join lateral (
+                     select sum(p.amount) filter (where p.status = 'verified') as paid_amount,
+                            sum(p.amount) filter (where p.status in ('pending', 'initiated')) as pending_amount
+                     from payments p where p.school_id = i.school_id and p.invoice_id = i.id
+                   ) paid on true
+                   where i.school_id = ${school.schoolId}::uuid and i.student_id = lc.id and i.status <> 'void') as balance_due,
+                  (select count(*)::int from subject_term_marks m
+                   where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
+                     and lc.term_id is not null and m.term_id = lc.term_id) as mark_count,
+                  (select avg(m.total_score)::numeric(5,2) from subject_term_marks m
+                   where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
+                     and lc.term_id is not null and m.term_id = lc.term_id) as term_average
+                from linked_children lc
+              )
+              select coalesce(jsonb_agg(to_jsonb(child_data) order by last_name, first_name), '[]'::jsonb) as children,
+                coalesce((
+                  select jsonb_agg(jsonb_build_object(
+                    'id', p.id, 'student_name', st.first_name || ' ' || st.last_name,
+                    'receipt_number', p.receipt_number, 'amount', p.amount, 'currency', p.currency,
+                    'category', p.category, 'paid_at', p.paid_at, 'status', p.status
+                  ) order by p.paid_at desc)
+                  from (
+                    select p.* from payments p
+                    join student_guardians sg on sg.student_id = p.student_id and sg.school_id = p.school_id
+                    join guardians g on g.id = sg.guardian_id and g.school_id = sg.school_id
+                    where p.school_id = ${school.schoolId}::uuid and g.user_id = ${school.userId}::uuid
+                    order by p.paid_at desc limit 20
+                  ) p
+                  join students st on st.id = p.student_id and st.school_id = p.school_id
+                ), '[]'::jsonb) as recent_payments
+              from child_data
+            `,
+          );
+          return json({ portal: "parent", children: rows[0]?.["children"] ?? [], recent_payments: rows[0]?.["recent_payments"] ?? [] });
+        }
+
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with selected_student as materialized (
+              select st.id, st.first_name, st.last_name, st.admission_number
+              from students st
+              where st.school_id = ${school.schoolId}::uuid and st.user_id = ${school.userId}::uuid and st.active
+            ),
+            selected_term as materialized (
+              select t.id, t.name, ay.name as academic_year_name, t.starts_on, t.ends_on
+              from terms t join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+              where t.school_id = ${school.schoolId}::uuid and current_date between t.starts_on and t.ends_on
+              order by t.starts_on desc limit 1
+            )
+            select st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   class_info.class_name, term.name as term_name, term.academic_year_name,
+                   coalesce(attendance.present_count, 0)::int as attendance_present,
+                   coalesce(attendance.total_count, 0)::int as attendance_total,
+                   coalesce(fees.balance_due, 0)::numeric(12,2) as balance_due,
+                   coalesce(fees.currency, 'GHS') as currency,
+                   coalesce(grades.results, '[]'::jsonb) as results,
+                   coalesce(payments.recent_payments, '[]'::jsonb) as recent_payments
+            from selected_student st
+            left join selected_term term on true
+            left join lateral (
+              select c.name as class_name, c.id as class_id
+              from class_enrollments e join classes c on c.id = e.class_id and c.school_id = e.school_id
+              where e.school_id = ${school.schoolId}::uuid and e.student_id = st.id and e.ends_on is null
+              order by e.starts_on desc limit 1
+            ) class_info on true
+            left join lateral (
+              select count(*) filter (where ar.status in ('present', 'late'))::int as present_count,
+                     count(*)::int as total_count
+              from attendance_records ar
+              join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+              where ar.school_id = ${school.schoolId}::uuid and ar.student_id = st.id
+                and term.id is not null
+                and ase.attendance_date between term.starts_on and least(term.ends_on, current_date)
+            ) attendance on true
+            left join lateral (
+              select greatest(sum(i.amount_due - coalesce(paid.paid_amount, 0) - coalesce(paid.pending_amount, 0)), 0)::numeric(12,2) as balance_due,
+                     max(i.currency) as currency
+              from invoices i
+              left join lateral (
+                select sum(p.amount) filter (where p.status = 'verified') as paid_amount,
+                       sum(p.amount) filter (where p.status in ('pending', 'initiated')) as pending_amount
+                from payments p where p.school_id = i.school_id and p.invoice_id = i.id
+              ) paid on true
+              where i.school_id = ${school.schoolId}::uuid and i.student_id = st.id and i.status <> 'void'
+            ) fees on true
+            left join lateral (
+              select jsonb_agg(jsonb_build_object(
+                'subject_name', s.name, 'total_score', m.total_score,
+                'performance_level', m.performance_level
+              ) order by s.name) as results
+              from subject_term_marks m
+              join class_subjects cs on cs.id = m.class_subject_id and cs.school_id = m.school_id
+              join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+              where m.school_id = ${school.schoolId}::uuid and m.student_id = st.id
+                and term.id is not null and m.term_id = term.id
+            ) grades on true
+            left join lateral (
+              select jsonb_agg(jsonb_build_object(
+                'id', p.id, 'receipt_number', p.receipt_number, 'amount', p.amount,
+                'currency', p.currency, 'category', p.category, 'paid_at', p.paid_at,
+                'status', p.status
+              ) order by p.paid_at desc) as recent_payments
+              from (
+                select p.* from payments p
+                where p.school_id = ${school.schoolId}::uuid and p.student_id = st.id
+                order by p.paid_at desc limit 10
+              ) p
+            ) payments on true
+          `,
+        );
+        if (!rows[0]) return json({ error: "No student portal account is linked to this sign-in. Contact your school administrator." }, 404);
+        return json({ portal: "student", student: rows[0] });
+      }
+
+      if (studentHistoryMatch) {
+      const [, studentId] = studentHistoryMatch;
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
+      if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      const offset = (page - 1) * pageSize;
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           with filtered_records as materialized (
@@ -713,6 +1153,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         page_size: pageSize,
         page_count: Math.ceil(totalCount / pageSize),
       });
+      }
     }
 
     if (studentProfileMatch) {
@@ -3144,7 +3585,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     const memberships = await withDatabaseContext(sql, { userEmail: tokenEmail }, (tx) =>
       tx`
-        select m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
+        select u.display_name, m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
                coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
         from users u
         join memberships m on m.user_id = u.id
@@ -3155,7 +3596,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     const platformAdmin = memberships.find((row) => row["role"] === "super_admin" && row["school_id"] == null);
     if (platformAdmin) {
       return json(
-        { user: { email: tokenEmail }, membership: { role: "super_admin", schoolId: null } },
+        { user: { email: tokenEmail, displayName: String(platformAdmin["display_name"] ?? tokenEmail) }, membership: { role: "super_admin", schoolId: null } },
         200,
         { "set-cookie": authSessionCookie("", request, 0) },
       );
@@ -3174,7 +3615,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     const schoolId = String(selectedMembership["school_id"]);
     const scopedMemberships = await withDatabaseContext(sql, { schoolId, userEmail: tokenEmail }, (tx) =>
       tx`
-        select m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
+        select u.display_name, m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
                coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
         from users u
         join memberships m on m.user_id = u.id
@@ -3188,7 +3629,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (tenantMembership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
 
     return json({
-      user: { email: tokenEmail },
+      user: { email: tokenEmail, displayName: String(tenantMembership["display_name"] ?? tokenEmail) },
       membership: {
         role: String(tenantMembership["role"]),
         schoolId: String(tenantMembership["school_id"]),
