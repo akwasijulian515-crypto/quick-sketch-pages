@@ -93,3 +93,19 @@ export function getNeonAccessToken() {
   }
   return accessTokenPromise;
 }
+
+export async function fetchWithNeonAuth(input: RequestInfo | URL, init?: RequestInit) {
+  const accessToken = await getNeonAccessToken();
+  const requestWithCredential = (credential: string) => {
+    const headers = new Headers(init?.headers);
+    headers.set("authorization", `Bearer ${credential}`);
+    return fetch(input, { ...init, headers });
+  };
+
+  let response = await requestWithCredential(accessToken);
+  if (response.status === 401) {
+    const sessionCredential = await getNeonSessionCredential();
+    if (sessionCredential !== accessToken) response = await requestWithCredential(sessionCredential);
+  }
+  return response;
+}

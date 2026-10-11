@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { CalendarDays, ClipboardCheck, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { getNeonAccessToken } from "../auth/client";
+import { fetchWithNeonAuth } from "../auth/client";
 import { SchoolShell } from "@/components/school-shell";
 
 export const Route = createFileRoute("/attendance")({
@@ -29,11 +29,10 @@ function Attendance() {
     setLoading(true);
     setError("");
     void (async () => {
-      const token = await getNeonAccessToken();
       const params = new URLSearchParams({ date });
       const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
       if (tenant) params.set("tenant", tenant);
-      const response = await fetch(`/api/school/attendance?${params}`, { headers: { authorization: `Bearer ${token}` } });
+      const response = await fetchWithNeonAuth(`/api/school/attendance?${params}`);
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string" ? payload.error : "Could not load attendance";

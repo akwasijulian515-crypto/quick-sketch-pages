@@ -2,7 +2,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { BookOpen, ChevronLeft, ChevronRight, FileText, Link2, Plus, Search, ShieldCheck, UsersRound } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 
-import { getNeonAccessToken } from "../auth/client";
+import { fetchWithNeonAuth } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -52,14 +52,12 @@ type AcademicYear = {
 };
 
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getNeonAccessToken();
   const url = new URL(path, window.location.origin);
   const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
   if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
   const headers = new Headers(init?.headers);
-  headers.set("authorization", `Bearer ${token}`);
   if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const response = await fetchWithNeonAuth(`${url.pathname}${url.search}`, { ...init, headers });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const error = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"

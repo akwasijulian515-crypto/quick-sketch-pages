@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight, CreditCard, GraduationCap, School, UserCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { getNeonAccessToken } from "../auth/client";
+import { fetchWithNeonAuth } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
 
@@ -38,11 +38,10 @@ type DashboardData = {
 };
 
 async function dashboardApi<T>(path: string): Promise<T> {
-  const token = await getNeonAccessToken();
   const url = new URL(path, window.location.origin);
   const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
   if (tenant) url.searchParams.set("tenant", tenant);
-  const response = await fetch(`${url.pathname}${url.search}`, { headers: { authorization: `Bearer ${token}` } });
+  const response = await fetchWithNeonAuth(`${url.pathname}${url.search}`);
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
