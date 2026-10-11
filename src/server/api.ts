@@ -763,31 +763,38 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       if (url.pathname === "/api/school/admin-summary") {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const [rows, activationRows] = await Promise.all([
+          withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
             select
               (select count(distinct m.user_id)::int from memberships m
                where m.school_id = ${school.schoolId}::uuid and m.role <> 'super_admin') as active_users,
-              (select count(*)::int
-               from memberships m join users u on u.id = m.user_id
-               where m.school_id = ${school.schoolId}::uuid and m.role <> 'super_admin'
-                 and not exists (
-                   select 1 from neon_auth.user au
-                   where lower(au.email) = lower(u.email) and au."emailVerified" = true
-                 )) as pending_activations,
               (select count(*)::int from terminal_reports r
                where r.school_id = ${school.schoolId}::uuid) as terminal_reports,
               (select count(*)::int from students st
                where st.school_id = ${school.schoolId}::uuid and st.user_id is not null) as linked_student_accounts,
               (select count(*)::int from guardians g
                where g.school_id = ${school.schoolId}::uuid and g.user_id is not null) as linked_parent_accounts
+            `,
+          ),
+          sql`
+            select count(*)::int as pending_activations
+            from memberships m
+            join users u on u.id = m.user_id
+            where m.school_id = ${school.schoolId}::uuid
+              and m.role <> 'super_admin'
+              and not exists (
+                select 1
+                from neon_auth.user au
+                where lower(au.email) = lower(u.email) and au."emailVerified" = true
+              )
           `,
-        );
+        ]);
         const summary = rows[0];
         if (!summary) throw new Error("School administration summary query returned no result");
         return json({
           active_users: Number(summary["active_users"] ?? 0),
-          pending_activations: Number(summary["pending_activations"] ?? 0),
+          pending_activations: Number(activationRows[0]?.["pending_activations"] ?? 0),
           terminal_reports: Number(summary["terminal_reports"] ?? 0),
           linked_student_accounts: Number(summary["linked_student_accounts"] ?? 0),
           linked_parent_accounts: Number(summary["linked_parent_accounts"] ?? 0),
