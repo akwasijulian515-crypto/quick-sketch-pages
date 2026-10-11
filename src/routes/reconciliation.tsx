@@ -138,7 +138,7 @@ function ReconciliationPage() {
       </article>
       <article className="glass-panel rounded-lg p-5 lg:col-span-2">
         <div className="flex items-center justify-between"><div><h2 className="font-display text-lg font-bold">Reconciliation notes</h2><p className="mt-1 text-xs text-muted-foreground">Use daily attendance to calculate expected amounts; recorded receipts remain separate by fee category.</p></div><CircleAlert className="size-5 text-primary" /></div>
-        <div className={cn("mt-5 rounded-md px-3 py-3 text-sm", variance > 0 ? "bg-amber-500/10 text-amber-800" : "bg-emerald-500/10 text-emerald-800")}>
+        <div className={cn("mt-5 rounded-md px-3 py-3 text-sm", varianceOpen ? "bg-amber-500/10 text-amber-800" : "bg-emerald-500/10 text-emerald-800")}>
           {loading ? "Calculating the day’s totals..." : outstanding.length
             ? `${totals(outstanding, "variance")} of expected daily fees remain uncollected. School-fee instalments are excluded from this variance.`
             : excess.length
