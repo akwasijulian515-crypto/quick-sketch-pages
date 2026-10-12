@@ -252,11 +252,11 @@ function LoginPage() {
         <div className="pointer-events-none absolute -right-24 -top-24 size-96 rounded-full bg-background/10" />
         <div className="pointer-events-none absolute -bottom-32 -left-20 size-[28rem] rounded-full bg-background/5" />
         <div className="relative flex items-center gap-3">
-          <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-background/15 font-display text-xl font-bold ring-1 ring-background/30">
+          <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-background/15 ring-1 ring-background/30">
             {crestUrl ? (
               <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" />
             ) : (
-              (schoolName[0] ?? "H")
+              <img src="/brand/klasora-icon.png" alt="Klasora" className="size-full object-contain" />
             )}
           </div>
           <p className="font-display text-lg font-bold">{schoolName}</p>
@@ -280,7 +280,7 @@ function LoginPage() {
         >
           <div className="flex items-center gap-2.5">
             <div
-              className="grid size-9 place-items-center overflow-hidden rounded-md text-base font-bold text-primary-foreground"
+              className="grid size-9 place-items-center overflow-hidden rounded-md"
               style={{ backgroundColor: primaryColor }}
             >
               {crestUrl ? (
@@ -290,7 +290,11 @@ function LoginPage() {
                   className="size-full object-cover"
                 />
               ) : (
-                (schoolName[0] ?? "H")
+                <img
+                  src="/brand/klasora-icon.png"
+                  alt="Klasora"
+                  className="size-full object-contain"
+                />
               )}
             </div>
             <div className="leading-tight">
