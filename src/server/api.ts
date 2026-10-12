@@ -559,6 +559,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/dashboard": { GET: ["school_admin"] },
     "/api/school/admin-summary": { GET: ["school_admin"] },
     "/api/school/portal-accounts": { GET: ["school_admin"], POST: ["school_admin"] },
+    "/api/school/guardians": { POST: ["school_admin"] },
     "/api/school/portal-data": { GET: ["parent", "student"] },
     "/api/school/classes": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
     "/api/school/students": { GET: ["school_admin", "teacher", "finance"] },
@@ -620,6 +621,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       || url.pathname === "/api/school/dashboard"
       || url.pathname === "/api/school/admin-summary"
       || url.pathname === "/api/school/portal-accounts"
+      || url.pathname === "/api/school/guardians"
       || url.pathname === "/api/school/portal-data"
     ) {
       if (studentHistoryMatch) {
@@ -953,6 +955,81 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         }
 
         return badRequest("Choose a student or parent account");
+      }
+
+      if (url.pathname === "/api/school/guardians" && request.method === "POST") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const studentId = body["student_id"];
+        const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+        const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
+        const phone = typeof body["phone"] === "string" ? body["phone"].trim() : "";
+        if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
+        if (name.length < 2 || name.length > 160) return badRequest("Guardian name must be 2–160 characters");
+        if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid guardian email");
+        if (!phone || phone.length > 40) return badRequest("Enter a phone number of 1–40 characters");
+
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with selected_student as materialized (
+              select id, school_id
+              from students
+              where id = ${studentId}::uuid and school_id = ${school.schoolId}::uuid and active
+              for update
+            ),
+            saved_guardian as (
+              insert into guardians (school_id, full_name, phone, email)
+              select school_id, ${name}, ${phone}, ${email}
+              from selected_student
+              on conflict (school_id, email) do update
+                set full_name = excluded.full_name,
+                    phone = excluded.phone,
+                    active = true
+                where guardians.user_id is null
+                  or exists (
+                    select 1 from users linked_user
+                    where linked_user.id = guardians.user_id
+                      and lower(linked_user.email) = excluded.email
+                  )
+              returning id, school_id, user_id
+            ),
+            linked_guardian as (
+              insert into student_guardians (school_id, student_id, guardian_id, relationship, is_primary)
+              select student.school_id, student.id, guardian.id, 'parent',
+                     not exists (
+                       select 1 from student_guardians existing
+                       where existing.school_id = student.school_id
+                         and existing.student_id = student.id
+                         and existing.is_primary
+                     )
+              from selected_student student
+              join saved_guardian guardian on guardian.school_id = student.school_id
+              on conflict (student_id, guardian_id) do update
+                set relationship = excluded.relationship,
+                    is_primary = student_guardians.is_primary or excluded.is_primary
+              returning guardian_id
+            ),
+            restored_membership as (
+              update memberships membership
+              set active = true
+              from saved_guardian guardian
+              where guardian.user_id is not null
+                and membership.user_id = guardian.user_id
+                and membership.school_id = guardian.school_id
+                and membership.role = 'parent'
+              returning membership.user_id
+            )
+            select guardian.id, guardian.full_name as name, guardian.email, guardian.phone,
+                   (guardian.user_id is not null) as linked
+            from saved_guardian guardian
+            join linked_guardian on linked_guardian.guardian_id = guardian.id
+          `,
+        );
+        if (!rows[0]) {
+          return json({ error: "Could not add guardian. Check that the student is active and the email is not linked to a different parent account." }, 409);
+        }
+        return json({ guardian: rows[0] }, 201);
       }
 
       if (url.pathname === "/api/school/portal-data") {

@@ -42,6 +42,7 @@ export function PortalAccountSetup() {
   const [students, setStudents] = useState<PortalStudent[]>([]);
   const [guardians, setGuardians] = useState<PortalGuardian[]>([]);
   const [studentId, setStudentId] = useState("");
+  const [guardianStudentId, setGuardianStudentId] = useState("");
   const [guardianId, setGuardianId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -61,6 +62,9 @@ export function PortalAccountSetup() {
       setStudentId((current) => result.students.some((student) => student.id === current && !student.linked)
         ? current
         : result.students.find((student) => !student.linked)?.id || "");
+      setGuardianStudentId((current) => result.students.some((student) => student.id === current)
+        ? current
+        : result.students[0]?.id || "");
       setGuardianId((current) => result.guardians.some((guardian) => guardian.id === current && guardian.active && !guardian.linked)
         ? current
         : result.guardians.find((guardian) => guardian.active && !guardian.linked)?.id || "");
@@ -72,6 +76,53 @@ export function PortalAccountSetup() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  async function addGuardian(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    setError("");
+    setNotice("");
+    setActivationUrl("");
+    try {
+      const result = await portalAccountsApi<{ guardian: Pick<PortalGuardian, "id" | "email" | "linked"> }>("/api/school/guardians", {
+        method: "POST",
+        body: JSON.stringify({
+          student_id: guardianStudentId,
+          name: form.get("guardianName"),
+          email: form.get("guardianEmail"),
+          phone: form.get("guardianPhone"),
+        }),
+      });
+
+      let portalLinkError = "";
+      if (result.guardian.linked) {
+        setNotice("Guardian added and linked to the student. Their existing parent portal access is active.");
+      } else {
+        try {
+          const account = await portalAccountsApi<{ activation_url: string }>("/api/school/portal-accounts", {
+            method: "POST",
+            body: JSON.stringify({
+              account_type: "parent",
+              guardian_id: result.guardian.id,
+              email: result.guardian.email,
+            }),
+          });
+          setActivationUrl(account.activation_url);
+          setNotice("Guardian added and linked to the student. Share this activation link with the parent.");
+        } catch (linkError) {
+          const message = linkError instanceof Error ? linkError.message : "Could not link parent portal access";
+          portalLinkError = `Guardian was added and linked to the student, but portal access could not be linked: ${message}`;
+        }
+      }
+      await load();
+      if (portalLinkError) setError(portalLinkError);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not add guardian");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function createPortalAccount(event: FormEvent<HTMLFormElement>, accountType: "student" | "parent") {
     event.preventDefault();
@@ -135,50 +186,74 @@ export function PortalAccountSetup() {
       <div>
         <h2 className="font-display text-xl font-bold">Parent and student portal access</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Link verified sign-in accounts to school records. Parent access uses the guardian&apos;s stored email; student access is linked to the selected learner.
+          Add a guardian to an existing student or link verified sign-in accounts to school records. Parent access uses the guardian&apos;s email.
         </p>
       </div>
       {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
       {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
       {activationUrl && <p className="mt-2 break-all text-sm text-secondary-foreground">Activation link: <a className="underline" href={activationUrl}>{activationUrl}</a></p>}
       {loading ? <p className="py-5 text-sm text-muted-foreground">Loading portal accounts...</p> : (
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
-          <form onSubmit={(event) => void createPortalAccount(event, "student")} className="space-y-3 rounded-md border border-border p-4">
-            <h3 className="font-semibold">Link a student account</h3>
-            <label className="block space-y-1 text-xs font-medium text-muted-foreground">Student
-              <select required value={studentId} onChange={(event) => setStudentId(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
-                <option value="">Choose a learner</option>
-                {availableStudents.map((student) => <option key={student.id} value={student.id}>{student.name} · {student.admission_number}{student.class_name ? ` · ${student.class_name}` : ""}</option>)}
-              </select>
-            </label>
-            <label className="block space-y-1 text-xs font-medium text-muted-foreground">Student sign-in email
-              <Input required name="email" type="email" maxLength={254} />
-            </label>
-            <Button type="submit" disabled={saving || !studentId || availableStudents.length === 0}>{saving ? "Linking..." : "Link student account"}</Button>
-            {availableStudents.length === 0 && <p className="text-xs text-muted-foreground">Every active student is already linked.</p>}
+        <div className="mt-5 space-y-5">
+          <form onSubmit={(event) => void addGuardian(event)} className="space-y-3 rounded-md border border-border p-4">
+            <h3 className="font-semibold">Add guardian to an existing student</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block space-y-1 text-xs font-medium text-muted-foreground">Student
+                <select required value={guardianStudentId} onChange={(event) => setGuardianStudentId(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                  <option value="">Choose a learner</option>
+                  {students.map((student) => <option key={student.id} value={student.id}>{student.name} · {student.admission_number}{student.class_name ? ` · ${student.class_name}` : ""}</option>)}
+                </select>
+              </label>
+              <label className="block space-y-1 text-xs font-medium text-muted-foreground">Guardian name
+                <Input required name="guardianName" minLength={2} maxLength={160} />
+              </label>
+              <label className="block space-y-1 text-xs font-medium text-muted-foreground">Guardian email
+                <Input required name="guardianEmail" type="email" maxLength={254} />
+              </label>
+              <label className="block space-y-1 text-xs font-medium text-muted-foreground">Guardian phone
+                <Input required name="guardianPhone" type="tel" maxLength={40} />
+              </label>
+            </div>
+            <Button type="submit" disabled={saving || !guardianStudentId || students.length === 0}>{saving ? "Adding guardian..." : "Add guardian and link student"}</Button>
+            {students.length === 0 && <p className="text-xs text-muted-foreground">Add a student before adding a guardian.</p>}
           </form>
-          <form onSubmit={(event) => void createPortalAccount(event, "parent")} className="space-y-3 rounded-md border border-border p-4">
-            <h3 className="font-semibold">Link a parent account</h3>
-            <label className="block space-y-1 text-xs font-medium text-muted-foreground">Guardian
-              <select required value={guardianId} onChange={(event) => setGuardianId(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
-                <option value="">Choose a guardian</option>
-                {availableGuardians.map((guardian) => <option key={guardian.id} value={guardian.id}>{guardian.name}{guardian.students ? ` · ${guardian.students}` : ""}</option>)}
-              </select>
-            </label>
-            {selectedGuardian && (
-              <dl className="grid gap-2 rounded-md bg-muted/40 p-3 text-sm sm:grid-cols-2">
-                <div><dt className="text-xs text-muted-foreground">Name</dt><dd>{selectedGuardian.name}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Email</dt><dd>{selectedGuardian.email || "Not provided"}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Phone</dt><dd>{selectedGuardian.phone || "Not provided"}</dd></div>
-                <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Linked wards</dt><dd>{selectedGuardian.students || "No linked students"}</dd></div>
-              </dl>
-            )}
-            <label className="block space-y-1 text-xs font-medium text-muted-foreground">Guardian email (must match the stored email)
-              <Input required name="email" type="email" maxLength={254} defaultValue={guardians.find((guardian) => guardian.id === guardianId)?.email ?? ""} key={guardianId} />
-            </label>
-            <Button type="submit" disabled={saving || !guardianId || availableGuardians.length === 0}>{saving ? "Linking..." : "Link parent account"}</Button>
-            {availableGuardians.length === 0 && <p className="text-xs text-muted-foreground">Every guardian record is already linked.</p>}
-          </form>
+          <div className="grid gap-5 lg:grid-cols-2">
+            <form onSubmit={(event) => void createPortalAccount(event, "student")} className="space-y-3 rounded-md border border-border p-4">
+              <h3 className="font-semibold">Link a student account</h3>
+              <label className="block space-y-1 text-xs font-medium text-muted-foreground">Student
+                <select required value={studentId} onChange={(event) => setStudentId(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                  <option value="">Choose a learner</option>
+                  {availableStudents.map((student) => <option key={student.id} value={student.id}>{student.name} · {student.admission_number}{student.class_name ? ` · ${student.class_name}` : ""}</option>)}
+                </select>
+              </label>
+              <label className="block space-y-1 text-xs font-medium text-muted-foreground">Student sign-in email
+                <Input required name="email" type="email" maxLength={254} />
+              </label>
+              <Button type="submit" disabled={saving || !studentId || availableStudents.length === 0}>{saving ? "Linking..." : "Link student account"}</Button>
+              {availableStudents.length === 0 && <p className="text-xs text-muted-foreground">Every active student is already linked.</p>}
+            </form>
+            <form onSubmit={(event) => void createPortalAccount(event, "parent")} className="space-y-3 rounded-md border border-border p-4">
+              <h3 className="font-semibold">Link a parent account</h3>
+              <label className="block space-y-1 text-xs font-medium text-muted-foreground">Guardian
+                <select required value={guardianId} onChange={(event) => setGuardianId(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                  <option value="">Choose a guardian</option>
+                  {availableGuardians.map((guardian) => <option key={guardian.id} value={guardian.id}>{guardian.name}{guardian.students ? ` · ${guardian.students}` : ""}</option>)}
+                </select>
+              </label>
+              {selectedGuardian && (
+                <dl className="grid gap-2 rounded-md bg-muted/40 p-3 text-sm sm:grid-cols-2">
+                  <div><dt className="text-xs text-muted-foreground">Name</dt><dd>{selectedGuardian.name}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Email</dt><dd>{selectedGuardian.email || "Not provided"}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Phone</dt><dd>{selectedGuardian.phone || "Not provided"}</dd></div>
+                  <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Linked wards</dt><dd>{selectedGuardian.students || "No linked students"}</dd></div>
+                </dl>
+              )}
+              <label className="block space-y-1 text-xs font-medium text-muted-foreground">Guardian email (must match the stored email)
+                <Input required name="email" type="email" maxLength={254} defaultValue={guardians.find((guardian) => guardian.id === guardianId)?.email ?? ""} key={guardianId} />
+              </label>
+              <Button type="submit" disabled={saving || !guardianId || availableGuardians.length === 0}>{saving ? "Linking..." : "Link parent account"}</Button>
+              {availableGuardians.length === 0 && <p className="text-xs text-muted-foreground">Every guardian record is already linked.</p>}
+            </form>
+          </div>
         </div>
       )}
       {!loading && guardians.length > 0 && (
