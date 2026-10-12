@@ -220,6 +220,43 @@
   background-clip: padding-box;
 }
 
+/* Glossy shadcn cards everywhere */
+[data-slot="card"] {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--card) 96%, white) 0%, color-mix(in oklab, var(--card) 80%, transparent) 100%);
+  border-color: color-mix(in oklab, var(--primary) 12%, transparent);
+  box-shadow: inset 0 1px 0 0 color-mix(in oklab, white 70%, transparent), 0 18px 40px -30px color-mix(in oklab, var(--primary) 50%, transparent);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+
+/* Phones: tables become stacked glossy cards (no sideways scrolling) */
+@media (max-width: 767px) {
+  .mobile-cards table, .mobile-cards tbody, .mobile-cards tr, .mobile-cards td { display: block; width: 100%; }
+  .mobile-cards table { min-width: 0 !important; }
+  .mobile-cards thead { display: none; }
+  .mobile-cards :has(> table) { overflow-x: visible !important; }
+  .mobile-cards tbody tr {
+    margin: 0 0 0.75rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: 0.9rem;
+    border: 1px solid color-mix(in oklab, var(--primary) 14%, transparent);
+    background: linear-gradient(180deg, color-mix(in oklab, var(--card) 97%, white), color-mix(in oklab, var(--card) 82%, transparent));
+    box-shadow: inset 0 1px 0 0 color-mix(in oklab, white 70%, transparent), 0 12px 28px -22px color-mix(in oklab, var(--primary) 55%, transparent);
+  }
+  .mobile-cards td {
+    display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+    padding: 0.35rem 0 !important; border: 0 !important; text-align: right; white-space: normal !important;
+  }
+  .mobile-cards td > * { min-width: 0; }
+  .mobile-cards td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0; text-align: left;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .mobile-cards td:first-child { font-weight: 600; }
+  .mobile-cards td[colspan] { justify-content: center; text-align: center; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
   .rise { animation: none; }

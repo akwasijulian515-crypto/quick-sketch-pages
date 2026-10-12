@@ -149,6 +149,24 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
   const { schoolName, crestUrl } = useTenantBranding();
 
   useEffect(() => {
+    // Copy table header text onto cells so phones can show tables as labelled cards.
+    const label = () => {
+      document.querySelectorAll(".mobile-cards table").forEach((table) => {
+        const heads = Array.from(table.querySelectorAll("thead th")).map((th) => th.textContent?.trim() ?? "");
+        table.querySelectorAll("tbody tr").forEach((tr) => {
+          Array.from(tr.children).forEach((td, i) => {
+            if (heads[i] && td.getAttribute("data-label") !== heads[i]) td.setAttribute("data-label", heads[i]);
+          });
+        });
+      });
+    };
+    label();
+    const observer = new MutationObserver(label);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const role = sessionStorage.getItem("hg-role");
     setAdminView(schoolAdminOrTeacher ? schoolAdmin : role ? role === "school_admin" : schoolAdmin);
   }, [schoolAdmin, schoolAdminOrTeacher]);
