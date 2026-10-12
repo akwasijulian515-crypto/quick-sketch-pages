@@ -239,7 +239,7 @@ async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
     const memberships = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
       tx`
         select 1 from users u join memberships m on m.user_id = u.id
-        where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null
+        where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null and m.active
         limit 1
       `,
     );
@@ -459,7 +459,7 @@ async function requireSchoolContext(
       from users u
       join memberships m on m.user_id = u.id
       join schools s on s.id = m.school_id
-      where lower(u.email) = ${email}
+      where lower(u.email) = ${email} and m.active
     `,
   );
   const querySubdomain = new URL(request.url).searchParams.get("tenant")?.trim().toLowerCase() ?? null;
@@ -551,6 +551,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
   const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
+  const guardianLifecycleMatch = url.pathname.match(/^\/api\/school\/guardians\/([0-9a-f-]+)$/i);
+  const teacherLifecycleMatch = url.pathname.match(/^\/api\/school\/team\/teachers\/([0-9a-f-]+)$/i);
   const studentHistoryMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)\/history\/(attendance|grades)$/i);
   const paymentReviewMatch = url.pathname.match(/^\/api\/school\/payments\/([0-9a-f-]+)\/review$/i);
   const workflowRoles: Record<string, Record<string, readonly string[]>> = {
@@ -578,7 +580,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/teaching-setup": { GET: ["school_admin"], POST: ["school_admin"] },
   };
   const workflowMethodRoles = workflowRoles[url.pathname]?.[request.method]
+    ?? (guardianLifecycleMatch && ["PATCH", "DELETE"].includes(request.method) ? ["school_admin"] : undefined)
+    ?? (teacherLifecycleMatch && ["PATCH", "DELETE"].includes(request.method) ? ["school_admin"] : undefined)
     ?? (studentProfileMatch && ["GET", "PATCH"].includes(request.method) ? ["school_admin"] : undefined)
+    ?? (studentProfileMatch && request.method === "DELETE" ? ["school_admin"] : undefined)
     ?? (studentHistoryMatch && request.method === "GET" ? ["school_admin"] : undefined)
     ?? (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined)
     ?? (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined)
@@ -590,6 +595,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     || url.pathname === "/api/school/student-financial-records"
     || url.pathname === "/api/school/team"
     || url.pathname === "/api/school/teaching-setup"
+    || guardianLifecycleMatch !== null
+    || teacherLifecycleMatch !== null
     || studentProfileMatch !== null
     || studentHistoryMatch !== null
     || paymentReviewMatch !== null
@@ -769,13 +776,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             tx`
             select
               (select count(distinct m.user_id)::int from memberships m
-               where m.school_id = ${school.schoolId}::uuid and m.role <> 'super_admin') as active_users,
+               where m.school_id = ${school.schoolId}::uuid and m.role <> 'super_admin' and m.active) as active_users,
               (select count(*)::int from terminal_reports r
                where r.school_id = ${school.schoolId}::uuid) as terminal_reports,
               (select count(*)::int from students st
                where st.school_id = ${school.schoolId}::uuid and st.user_id is not null) as linked_student_accounts,
               (select count(*)::int from guardians g
-               where g.school_id = ${school.schoolId}::uuid and g.user_id is not null) as linked_parent_accounts
+               where g.school_id = ${school.schoolId}::uuid and g.user_id is not null and g.active) as linked_parent_accounts
             `,
           ),
           sql`
@@ -824,8 +831,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               ), '[]'::jsonb) as students,
               coalesce((
                 select jsonb_agg(jsonb_build_object(
-                  'id', g.id, 'name', g.full_name, 'email', g.email,
-                  'linked', g.user_id is not null,
+                  'id', g.id, 'name', g.full_name, 'email', g.email, 'phone', g.phone,
+                  'linked', g.user_id is not null, 'active', g.active,
                   'students', coalesce((
                     select string_agg(st.first_name || ' ' || st.last_name, ', ' order by st.last_name, st.first_name)
                     from student_guardians sg
@@ -904,6 +911,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 select id, school_id, full_name, email, user_id
                 from guardians
                 where id = ${guardianId}::uuid and school_id = ${school.schoolId}::uuid
+                  and active
                   and (
                     user_id is null
                     or exists (
@@ -923,7 +931,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               member as (
                 insert into memberships (user_id, school_id, role)
                 select id, ${school.schoolId}::uuid, 'parent'::membership_role from app_user
-                on conflict (user_id, school_id, role) do update set role = excluded.role
+                on conflict (user_id, school_id, role) do update set active = true
                 returning user_id
               ),
               linked_guardian as (
@@ -974,6 +982,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                   order by t.starts_on desc limit 1
                 ) t on true
                 where g.school_id = ${school.schoolId}::uuid and g.user_id = ${school.userId}::uuid
+                  and g.active
                   and st.active
               ),
               child_data as (
@@ -1017,6 +1026,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                     join student_guardians sg on sg.student_id = p.student_id and sg.school_id = p.school_id
                     join guardians g on g.id = sg.guardian_id and g.school_id = sg.school_id
                     where p.school_id = ${school.schoolId}::uuid and g.user_id = ${school.userId}::uuid
+                      and g.active
                     order by p.paid_at desc limit 20
                   ) p
                   join students st on st.id = p.student_id and st.school_id = p.school_id
@@ -1166,6 +1176,54 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (studentProfileMatch) {
       if (!uuidOrNull(studentProfileMatch[1])) return badRequest("Invalid student ID");
+      if (request.method === "DELETE") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          [
+            tx`
+              select id from students
+              where id = ${studentProfileMatch[1]}::uuid
+                and school_id = ${school.schoolId}::uuid
+              for update
+            `,
+            tx`
+              delete from students st
+              where st.id = ${studentProfileMatch[1]}::uuid
+                and st.school_id = ${school.schoolId}::uuid
+                and not exists (
+                  select 1 from attendance_records ar
+                  where ar.school_id = st.school_id and ar.student_id = st.id
+                )
+                and not exists (
+                  select 1 from grade_entries ge
+                  where ge.school_id = st.school_id and ge.student_id = st.id
+                )
+                and not exists (
+                  select 1 from subject_term_marks marks
+                  where marks.school_id = st.school_id and marks.student_id = st.id
+                )
+                and not exists (
+                  select 1 from terminal_reports reports
+                  where reports.school_id = st.school_id and reports.student_id = st.id
+                )
+                and not exists (
+                  select 1 from invoices i
+                  where i.school_id = st.school_id and i.student_id = st.id
+                )
+                and not exists (
+                  select 1 from payments p
+                  where p.school_id = st.school_id and p.student_id = st.id
+                )
+              returning st.id
+            `,
+          ],
+        );
+        if (!rows[0]) {
+          return json({
+            error: "Student not found, or permanent deletion is blocked because this student has attendance, grades, reports, invoices, or payment history. Deactivate the record to preserve history.",
+          }, 409);
+        }
+        return json({ deleted: true, student_id: rows[0]["id"] });
+      }
       if (request.method === "PATCH") {
         const payload = ( await request.json().catch(() => null)) as Record<string, unknown> | null;
         if (!payload || typeof payload !== "object" || typeof payload["active"] !== "boolean") {
@@ -1212,6 +1270,163 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       );
       if (!rows[0]) return json({ error: "Student not found" }, 404);
       return json({ student: rows[0] });
+    }
+
+    if (guardianLifecycleMatch) {
+      if (!uuidOrNull(guardianLifecycleMatch[1])) return badRequest("Invalid guardian ID");
+      if (request.method === "PATCH") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object" || typeof (payload as Record<string, unknown>)["active"] !== "boolean") {
+          return badRequest("Choose whether the parent record should be active");
+        }
+        const active = (payload as Record<string, unknown>)["active"] as boolean;
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          [
+            tx`
+              select id from guardians
+              where id = ${guardianLifecycleMatch[1]}::uuid
+                and school_id = ${school.schoolId}::uuid
+              for update
+            `,
+            tx`
+              select id from memberships
+              where school_id = ${school.schoolId}::uuid
+                and role = 'parent'
+                and user_id = (
+                  select user_id from guardians
+                  where id = ${guardianLifecycleMatch[1]}::uuid
+                    and school_id = ${school.schoolId}::uuid
+                )
+              for update
+            `,
+            tx`
+              with updated_guardian as (
+                update guardians
+                set active = ${active}
+                where id = ${guardianLifecycleMatch[1]}::uuid
+                  and school_id = ${school.schoolId}::uuid
+                returning id, user_id, active
+              ),
+              updated_membership as (
+                update memberships m
+                set active = exists (
+                  select 1 from guardians g
+                  where g.school_id = m.school_id
+                    and g.user_id = m.user_id
+                    and g.id <> updated.id
+                    and g.active
+                ) or updated.active
+                from updated_guardian updated
+                where m.school_id = ${school.schoolId}::uuid
+                  and m.user_id = updated.user_id
+                  and m.role = 'parent'
+                returning m.user_id
+              )
+              select id, active from updated_guardian
+            `,
+          ],
+        );
+        if (!rows[0]) return json({ error: "Parent record not found" }, 404);
+        return json({ guardian: rows[0] });
+      }
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        [
+          tx`
+            select id from guardians
+            where id = ${guardianLifecycleMatch[1]}::uuid
+              and school_id = ${school.schoolId}::uuid
+            for update
+          `,
+          tx`
+            select id from memberships
+            where school_id = ${school.schoolId}::uuid
+              and role = 'parent'
+              and user_id = (
+                select user_id from guardians
+                where id = ${guardianLifecycleMatch[1]}::uuid
+                  and school_id = ${school.schoolId}::uuid
+              )
+            for update
+          `,
+          tx`
+            with removed_guardian as (
+              delete from guardians
+              where id = ${guardianLifecycleMatch[1]}::uuid
+                and school_id = ${school.schoolId}::uuid
+              returning id, user_id
+            ),
+            updated_membership as (
+              update memberships m
+              set active = exists (
+                select 1 from guardians g
+                where g.school_id = m.school_id
+                  and g.user_id = m.user_id
+                  and g.id <> removed_guardian.id
+                  and g.active
+              )
+              from removed_guardian
+              where m.school_id = ${school.schoolId}::uuid
+                and m.user_id = removed_guardian.user_id
+                and m.role = 'parent'
+              returning m.user_id
+            )
+            select id from removed_guardian
+          `,
+        ],
+      );
+      if (!rows[0]) return json({ error: "Parent record not found" }, 404);
+      return json({ deleted: true, guardian_id: rows[0]["id"] });
+    }
+
+    if (teacherLifecycleMatch) {
+      if (!uuidOrNull(teacherLifecycleMatch[1])) return badRequest("Invalid teacher ID");
+      if (request.method === "PATCH") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object" || typeof (payload as Record<string, unknown>)["active"] !== "boolean") {
+          return badRequest("Choose whether the teacher should be active");
+        }
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            update memberships
+            set active = ${(payload as Record<string, unknown>)["active"] as boolean}
+            where user_id = ${teacherLifecycleMatch[1]}::uuid
+              and school_id = ${school.schoolId}::uuid
+              and role = 'teacher'
+            returning user_id, active
+          `,
+        );
+        if (!rows[0]) return json({ error: "Teacher not found" }, 404);
+        return json({ teacher: rows[0] });
+      }
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with removed_profile as (
+            delete from staff_profiles sp
+            where sp.user_id = ${teacherLifecycleMatch[1]}::uuid
+              and sp.school_id = ${school.schoolId}::uuid
+              and exists (
+                select 1 from memberships m
+                where m.user_id = sp.user_id
+                  and m.school_id = sp.school_id
+                  and m.role = 'teacher'
+              )
+            returning sp.user_id
+          ),
+          removed_membership as (
+            delete from memberships m
+            using removed_profile p
+            where m.user_id = p.user_id
+              and m.school_id = ${school.schoolId}::uuid
+              and m.role = 'teacher'
+            returning m.user_id
+          )
+          select user_id from removed_membership
+        `,
+      );
+      if (!rows[0]) return json({ error: "Teacher not found" }, 404);
+      return json({ deleted: true, teacher_id: rows[0]["user_id"] });
     }
 
     if (termCloseMatch) {
@@ -2892,7 +3107,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (request.method === "GET") {
         const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
           tx`
-            select u.id as user_id, u.email, u.display_name, m.role, sp.id as staff_profile_id
+            select u.id as user_id, u.email, u.display_name, m.role, m.active, sp.id as staff_profile_id
             from memberships m join users u on u.id = m.user_id
             left join staff_profiles sp on sp.user_id = u.id and sp.school_id = m.school_id
             where m.school_id = ${school.schoolId}::uuid and m.role in ('school_admin', 'teacher', 'finance')
@@ -2921,7 +3136,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           member as (
             insert into memberships (user_id, school_id, role)
             select id, ${school.schoolId}::uuid, ${role}::membership_role from app_user
-            on conflict (user_id, school_id, role) do nothing
+            on conflict (user_id, school_id, role) do update set active = true
             returning user_id
           ),
           staff as (
@@ -2968,7 +3183,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             select u.id as user_id, u.email, u.display_name, sp.id as staff_profile_id
             from memberships m join users u on u.id = m.user_id
             join staff_profiles sp on sp.user_id = u.id and sp.school_id = m.school_id
-            where m.school_id = ${school.schoolId}::uuid and m.role = 'teacher'
+            where m.school_id = ${school.schoolId}::uuid and m.role = 'teacher' and m.active
             order by u.display_name
           `,
         );
@@ -3026,6 +3241,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               where u.id = ${teacherId}::uuid
                 and m.school_id = ${school.schoolId}::uuid
                 and m.role = 'teacher'
+                and m.active
             ),
             saved_staff as (
               insert into staff_profiles (school_id, user_id, job_title)
@@ -3078,7 +3294,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           ),
           selected_teacher as materialized (
             select u.id from users u join memberships m on m.user_id = u.id
-            where u.id = ${teacherId}::uuid and m.school_id = ${school.schoolId}::uuid and m.role = 'teacher'
+            where u.id = ${teacherId}::uuid and m.school_id = ${school.schoolId}::uuid and m.role = 'teacher' and m.active
           ),
           saved_class_subject as (
             insert into class_subjects (school_id, class_id, subject_id)
@@ -3641,7 +3857,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         from users u
         join memberships m on m.user_id = u.id
         left join schools s on s.id = m.school_id
-        where lower(u.email) = ${email}
+        where lower(u.email) = ${email} and m.active
       `,
     );
     const eligible = rows.some((row) => row["role"] === "super_admin" || row["school_status"] === "trial" || row["school_status"] === "active");
@@ -3688,7 +3904,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         from users u
         join memberships m on m.user_id = u.id
         left join schools s on s.id = m.school_id
-        where lower(u.email) = ${tokenEmail}
+        where lower(u.email) = ${tokenEmail} and m.active
       `,
     );
     const platformAdmin = memberships.find((row) => row["role"] === "super_admin" && row["school_id"] == null);
@@ -3718,7 +3934,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         from users u
         join memberships m on m.user_id = u.id
         join schools s on s.id = m.school_id
-        where lower(u.email) = ${tokenEmail} and m.school_id = ${schoolId}::uuid
+        where lower(u.email) = ${tokenEmail} and m.school_id = ${schoolId}::uuid and m.active
         limit 1
       `,
     );

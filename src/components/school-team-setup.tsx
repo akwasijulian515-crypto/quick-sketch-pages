@@ -4,7 +4,7 @@ import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-type TeamMember = { user_id: string; email: string; display_name: string; role: string };
+type TeamMember = { user_id: string; email: string; display_name: string; role: string; active: boolean };
 type TeachingRow = {
   class_id: string;
   class_name: string;
@@ -115,6 +115,31 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
     }
   }
 
+  async function updateTeacher(member: TeamMember, action: "archive" | "restore" | "delete") {
+    const message = action === "delete"
+      ? `Permanently remove ${member.display_name} from this school? Their teacher membership and school teaching profile/assignments will be removed. Their global login and student academic records will remain.`
+      : action === "archive"
+        ? `Archive ${member.display_name}? Their access to this school's teacher portal will be revoked, while their profile and assignments are retained.`
+        : `Restore ${member.display_name}'s teacher access to this school?`;
+    if (!window.confirm(message)) return;
+
+    setSaving(true);
+    setError("");
+    try {
+      const deleting = action === "delete";
+      await schoolApi(`/api/school/team/teachers/${encodeURIComponent(member.user_id)}`, {
+        method: deleting ? "DELETE" : "PATCH",
+        ...(!deleting ? { body: JSON.stringify({ active: action === "restore" }) } : {}),
+      });
+      await load();
+      onDataChanged?.();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update teacher access");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function assignTeacher(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -200,6 +225,35 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
               {classes.filter((item) => item.class_subject_id || item.class_teacher_name).map((item) => <tr key={item.class_subject_id ?? item.class_id}><td className="px-3 py-3">{item.teacher_name ?? item.class_teacher_name ?? "Unassigned"}</td><td className="px-3 py-3">Teacher</td><td className="px-3 py-3">{item.class_name}</td><td className="px-3 py-3">{item.subject_name ?? "—"}</td><td className="px-3 py-3">{item.class_teacher_name ?? "Unassigned"}</td></tr>)}
               {classes.filter((item) => item.class_subject_id || item.class_teacher_name).length === 0 && members.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">No staff or subject assignments yet.</td></tr>}
               {members.map((member) => <tr key={member.user_id}><td className="px-3 py-3">{member.display_name}<p className="text-xs text-muted-foreground">{member.email}</p></td><td className="px-3 py-3 capitalize">{member.role.replace("_", " ")}</td><td className="px-3 py-3">—</td><td className="px-3 py-3">—</td><td className="px-3 py-3">—</td></tr>)}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {!loading && members.some((member) => member.role === "teacher") && (
+        <div className="mt-6 overflow-x-auto">
+          <h3 className="mb-2 text-sm font-semibold">Teacher accounts</h3>
+          <table className="w-full min-w-[620px] text-left text-sm">
+            <thead className="border-b text-xs text-muted-foreground">
+              <tr>{["Teacher", "Email", "Status", "Actions"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-border/70">
+              {members.filter((member) => member.role === "teacher").map((member) => (
+                <tr key={`teacher-${member.user_id}`}>
+                  <td className="px-3 py-3">{member.display_name}</td>
+                  <td className="px-3 py-3">{member.email}</td>
+                  <td className="px-3 py-3">{member.active ? "Active" : "Archived"}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateTeacher(member, member.active ? "archive" : "restore")}>
+                        {member.active ? "Archive" : "Restore"}
+                      </Button>
+                      <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => void updateTeacher(member, "delete")}>
+                        Permanently delete
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

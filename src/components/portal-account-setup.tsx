@@ -15,7 +15,9 @@ type PortalGuardian = {
   id: string;
   name: string;
   email: string | null;
+  phone: string | null;
   linked: boolean;
+  active: boolean;
   students: string;
 };
 
@@ -56,8 +58,12 @@ export function PortalAccountSetup() {
       );
       setStudents(result.students);
       setGuardians(result.guardians);
-      setStudentId((current) => current || result.students.find((student) => !student.linked)?.id || "");
-      setGuardianId((current) => current || result.guardians.find((guardian) => !guardian.linked)?.id || "");
+      setStudentId((current) => result.students.some((student) => student.id === current && !student.linked)
+        ? current
+        : result.students.find((student) => !student.linked)?.id || "");
+      setGuardianId((current) => result.guardians.some((guardian) => guardian.id === current && guardian.active && !guardian.linked)
+        ? current
+        : result.guardians.find((guardian) => guardian.active && !guardian.linked)?.id || "");
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load portal accounts");
     } finally {
@@ -94,8 +100,35 @@ export function PortalAccountSetup() {
     }
   }
 
+  async function updateGuardian(guardian: PortalGuardian, action: "archive" | "restore" | "delete") {
+    const message = action === "delete"
+      ? `Permanently delete ${guardian.name} from this school? Their guardian contact and parent-student links will be removed. Student records and the global login account will remain.`
+      : action === "archive"
+        ? `Archive ${guardian.name}? Their access to this school's parent portal will be revoked, but the contact and linked history will be retained.`
+        : `Restore ${guardian.name}'s parent access for this school?`;
+    if (!window.confirm(message)) return;
+
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const deleting = action === "delete";
+      await portalAccountsApi(`/api/school/guardians/${encodeURIComponent(guardian.id)}`, {
+        method: deleting ? "DELETE" : "PATCH",
+        ...(!deleting ? { body: JSON.stringify({ active: action === "restore" }) } : {}),
+      });
+      setNotice(deleting ? "Parent contact permanently deleted." : action === "archive" ? "Parent contact archived." : "Parent contact restored.");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update parent contact");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const availableStudents = students.filter((student) => !student.linked);
-  const availableGuardians = guardians.filter((guardian) => !guardian.linked);
+  const availableGuardians = guardians.filter((guardian) => guardian.active && !guardian.linked);
+  const selectedGuardian = guardians.find((guardian) => guardian.id === guardianId);
 
   return (
     <section id="portal-account-setup" className="glass-panel mt-4 rounded-lg p-5">
@@ -132,12 +165,50 @@ export function PortalAccountSetup() {
                 {availableGuardians.map((guardian) => <option key={guardian.id} value={guardian.id}>{guardian.name}{guardian.students ? ` · ${guardian.students}` : ""}</option>)}
               </select>
             </label>
+            {selectedGuardian && (
+              <dl className="grid gap-2 rounded-md bg-muted/40 p-3 text-sm sm:grid-cols-2">
+                <div><dt className="text-xs text-muted-foreground">Name</dt><dd>{selectedGuardian.name}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Email</dt><dd>{selectedGuardian.email || "Not provided"}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">Phone</dt><dd>{selectedGuardian.phone || "Not provided"}</dd></div>
+                <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Linked wards</dt><dd>{selectedGuardian.students || "No linked students"}</dd></div>
+              </dl>
+            )}
             <label className="block space-y-1 text-xs font-medium text-muted-foreground">Guardian email (must match the stored email)
               <Input required name="email" type="email" maxLength={254} defaultValue={guardians.find((guardian) => guardian.id === guardianId)?.email ?? ""} key={guardianId} />
             </label>
             <Button type="submit" disabled={saving || !guardianId || availableGuardians.length === 0}>{saving ? "Linking..." : "Link parent account"}</Button>
             {availableGuardians.length === 0 && <p className="text-xs text-muted-foreground">Every guardian record is already linked.</p>}
           </form>
+        </div>
+      )}
+      {!loading && guardians.length > 0 && (
+        <div className="mt-6 overflow-x-auto">
+          <h3 className="mb-2 text-sm font-semibold">Parent contacts</h3>
+          <table className="w-full min-w-[680px] text-left text-sm">
+            <thead className="border-b text-xs text-muted-foreground">
+              <tr>{["Parent", "Contact", "Linked wards", "Status", "Actions"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-border/70">
+              {guardians.map((guardian) => (
+                <tr key={guardian.id}>
+                  <td className="px-3 py-3">{guardian.name}</td>
+                  <td className="px-3 py-3">{guardian.email || "No email"}<p className="text-xs text-muted-foreground">{guardian.phone || "No phone"}</p></td>
+                  <td className="px-3 py-3">{guardian.students || "None"}</td>
+                  <td className="px-3 py-3">{guardian.active ? (guardian.linked ? "Active · linked" : "Active") : "Archived"}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateGuardian(guardian, guardian.active ? "archive" : "restore")}>
+                        {guardian.active ? "Archive" : "Restore"}
+                      </Button>
+                      <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => void updateGuardian(guardian, "delete")}>
+                        Permanently delete
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>

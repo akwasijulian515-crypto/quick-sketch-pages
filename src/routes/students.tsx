@@ -203,11 +203,11 @@ function parseCsv(text: string): string[][] {
 
 function parseBulkAdmissionRows(text: string): { rows: BulkAdmissionRow[]; errors: string[] } {
   const parsed = parseCsv(text.replace(/^\uFEFF/, ""));
-  if (!parsed.length) throw new Error("The CSV file is empty.");
+  if (!parsed.length) throw new Error("The spreadsheet is empty.");
 
   const headers = parsed[0]!.map((header) => header.trim().toLowerCase());
   if (new Set(headers).size !== headers.length)
-    throw new Error("The CSV contains duplicate column names.");
+    throw new Error("The spreadsheet contains duplicate column names.");
   const requiredHeaders = ["first_name", "last_name"];
   const missingHeaders = requiredHeaders.filter((header) => !headers.includes(header));
   if (missingHeaders.length)
@@ -217,7 +217,7 @@ function parseBulkAdmissionRows(text: string): { rows: BulkAdmissionRow[]; error
   const rows: BulkAdmissionRow[] = [];
   const errors: string[] = [];
 
-  if (parsed.length - 1 > 200) throw new Error("A CSV can contain at most 200 student rows.");
+  if (parsed.length - 1 > 200) throw new Error("A spreadsheet can contain at most 200 student rows.");
 
   parsed.slice(1).forEach((values, index) => {
     const rowNumber = index + 2;
@@ -451,7 +451,7 @@ export default function StudentsPage() {
               onClick={() => setShowBulkAdmission(true)}
               className="admin-btn-secondary flex items-center gap-2"
             >
-              <Upload className="w-4 h-4" /> Import CSV
+              <Upload className="w-4 h-4" />               Import file
             </button>
           )}
         </div>
@@ -795,6 +795,10 @@ export default function StudentsPage() {
                 current?.id === studentId ? { ...current, status } : current,
               );
             }}
+            onDelete={(studentId) => {
+              setStudents((current) => current.filter((item) => item.id !== studentId));
+              setSelectedStudent(null);
+            }}
             onClose={() => setSelectedStudent(null)}
           />
         )}
@@ -856,6 +860,7 @@ function AdmissionModal({
     setSaving(true);
     const data = new FormData(event.currentTarget);
     const guardianPhone = String(data.get("guardianPhone") ?? "").trim();
+    const guardianEmail = String(data.get("guardianEmail") ?? "").trim();
     try {
       await onSubmit({
         full_name: String(data.get("name") ?? "").trim(),
@@ -865,7 +870,11 @@ function AdmissionModal({
         address: String(data.get("address") ?? "").trim(),
         emergency_contact: String(data.get("emergency") ?? "").trim(),
         medical_notes: String(data.get("medical") ?? "").trim(),
-        guardian: { full_name: String(data.get("guardian") ?? "").trim(), phone: guardianPhone },
+        guardian: {
+          full_name: String(data.get("guardian") ?? "").trim(),
+          phone: guardianPhone,
+          ...(guardianEmail ? { email: guardianEmail } : {}),
+        },
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save this student");
@@ -944,6 +953,17 @@ function AdmissionModal({
               <input name="guardianPhone" className="admin-input" placeholder="024 000 0000" />
             </div>
             <div className="col-span-2">
+              <label className="admin-label">Guardian Email (optional)</label>
+              <input
+                name="guardianEmail"
+                type="email"
+                maxLength={254}
+                autoComplete="email"
+                className="admin-input"
+                placeholder="parent@example.com"
+              />
+            </div>
+            <div className="col-span-2">
               <label className="admin-label">Address</label>
               <input name="address" className="admin-input" placeholder="Residential address" />
             </div>
@@ -1015,16 +1035,38 @@ function BulkAdmissionModal({
     setError("");
     setFileName(file?.name ?? "");
     if (!file) return;
+    if (!/\.(csv|xls|xlsx)$/i.test(file.name)) {
+      setError("Choose a CSV, .xls, or .xlsx file.");
+      return;
+    }
     if (file.size > 2_000_000) {
-      setError("Choose a CSV file smaller than 2 MB.");
+      setError("Choose a spreadsheet smaller than 2 MB.");
       return;
     }
     try {
-      const parsed = parseBulkAdmissionRows(await file.text());
+      const isCsv = /\.csv$/i.test(file.name);
+      let source: string;
+      if (isCsv) {
+        source = await file.text();
+      } else {
+        const XLSX = await import("@e965/xlsx");
+        const workbook = XLSX.read(await file.arrayBuffer(), {
+          type: "array",
+          cellFormula: false,
+          cellHTML: false,
+          cellStyles: false,
+        });
+        const firstSheetName = workbook.SheetNames[0];
+        if (!firstSheetName || !workbook.Sheets[firstSheetName]) {
+          throw new Error("The workbook does not contain a worksheet.");
+        }
+        source = XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheetName]!);
+      }
+      const parsed = parseBulkAdmissionRows(source);
       setRows(parsed.rows);
       setParseErrors(parsed.errors);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not read this CSV file.");
+      setError(cause instanceof Error ? cause.message : "Could not read this spreadsheet.");
     }
   }
 
@@ -1069,7 +1111,7 @@ function BulkAdmissionModal({
         <div className="p-6 border-b border-border flex items-center justify-between">
           <div>
             <h2 className="font-display text-lg font-bold text-foreground">
-              Import Students from CSV
+              Import Students from Spreadsheet
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Upload names only; student IDs are generated automatically.
@@ -1088,7 +1130,7 @@ function BulkAdmissionModal({
         <div className="p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              Use a two-column CSV with first_name and last_name.
+              Use a spreadsheet with first_name and last_name columns. CSV, Excel .xls, and .xlsx are supported.
             </p>
             <button
               type="button"
@@ -1101,12 +1143,12 @@ function BulkAdmissionModal({
 
           <div>
             <label className="admin-label" htmlFor="student-csv">
-              CSV file
+              Spreadsheet file
             </label>
             <input
               id="student-csv"
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               onChange={selectFile}
               disabled={importing}
               className="admin-input file:mr-3 file:rounded file:border-0 file:bg-primary/10 file:px-3 file:py-1 file:text-sm"
@@ -1230,12 +1272,14 @@ function StudentProfile({
   initialTab,
   canManageStudents,
   onStatusChange,
+  onDelete,
   onClose,
 }: {
   student: Student;
   initialTab: "Overview" | "Fees" | "Attendance";
   canManageStudents: boolean;
   onStatusChange: (studentId: string, status: StudentStatus) => void;
+  onDelete: (studentId: string) => void;
   onClose: () => void;
 }) {
   const { schoolName, primaryColor } = useTenantBranding();
@@ -1244,6 +1288,7 @@ function StudentProfile({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingStatus, setSavingStatus] = useState(false);
+  const [deletingStudent, setDeletingStudent] = useState(false);
   const [statusNotice, setStatusNotice] = useState("");
   const [exportingRecord, setExportingRecord] = useState(false);
   const [exportError, setExportError] = useState("");
@@ -1304,6 +1349,25 @@ function StudentProfile({
       setError(cause instanceof Error ? cause.message : "Could not update student status");
     } finally {
       setSavingStatus(false);
+    }
+  }
+
+  async function permanentlyDeleteStudent() {
+    const confirmation = window.prompt(
+      `Permanent deletion cannot be undone and is blocked for students with academic or financial history.\nType ${profile.studentId} to continue.`,
+    );
+    if (confirmation !== profile.studentId) return;
+
+    setDeletingStudent(true);
+    setError("");
+    setStatusNotice("");
+    try {
+      await schoolApi(`/api/school/students/${encodeURIComponent(student.id)}`, { method: "DELETE" });
+      onDelete(student.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not permanently delete this student");
+    } finally {
+      setDeletingStudent(false);
     }
   }
 
@@ -1461,26 +1525,36 @@ function StudentProfile({
           )}
           {canManageStudents && (
             <div className="mt-6 border-t border-border pt-4">
-              <button
-                type="button"
-                onClick={() => void toggleStudentStatus()}
-                disabled={savingStatus || loading}
-                className={
-                  profile.status === "Active"
-                    ? "admin-btn-secondary text-destructive"
-                    : "admin-btn-primary"
-                }
-              >
-                {savingStatus
-                  ? "Saving…"
-                  : profile.status === "Active"
-                    ? "Deactivate student"
-                    : "Reactivate student"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void toggleStudentStatus()}
+                  disabled={savingStatus || deletingStudent || loading}
+                  className={
+                    profile.status === "Active"
+                      ? "admin-btn-secondary text-destructive"
+                      : "admin-btn-primary"
+                  }
+                >
+                  {savingStatus
+                    ? "Saving…"
+                    : profile.status === "Active"
+                      ? "Deactivate student"
+                      : "Reactivate student"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void permanentlyDeleteStudent()}
+                  disabled={savingStatus || deletingStudent || loading}
+                  className="admin-btn-secondary text-destructive"
+                >
+                  {deletingStudent ? "Deleting…" : "Permanently delete student"}
+                </button>
+              </div>
               <p className="mt-2 text-xs text-muted-foreground">
                 {profile.status === "Active"
                   ? "Deactivation keeps this student’s record and history but removes them from active school workflows."
-                  : "Reactivation restores this student to active school workflows."}
+                  : "Reactivation restores this student to active school workflows."} Permanent deletion requires typing the student ID and is blocked when history exists.
               </p>
             </div>
           )}
