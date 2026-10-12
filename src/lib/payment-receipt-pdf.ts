@@ -9,7 +9,7 @@ export type PaymentReceiptData = {
   className: string;
   feeDescription: string;
   amount: number;
-  balanceDue?: number;
+  balanceDue?: number | undefined;
   currency: string;
   method: string;
   paidAt: string;

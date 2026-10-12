@@ -265,7 +265,7 @@ function PaymentsPage() {
       ? window.prompt(`Why are you rejecting receipt ${payment.receipt_number}?`)
       : null;
     if (action === "reject" && reason === null) return;
-    if (action === "reject" && !reason.trim()) {
+    if (action === "reject" && !reason?.trim()) {
       setError("A rejection reason is required.");
       return;
     }

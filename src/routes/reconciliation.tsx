@@ -178,6 +178,6 @@ function totals(rows: CurrencyTotals[], field: "expected_daily" | "daily_receive
     : "—";
 }
 
-function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "warning" }) {
+function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "warning" | undefined }) {
   return <article className={cn("glass-panel rounded-lg p-5", tone === "warning" && "ring-1 ring-amber-500/25")}><p className="text-xs font-medium text-muted-foreground">{label}</p><p className={cn("mt-2 font-display text-2xl font-bold", tone === "warning" && "text-amber-700")}>{value}</p><p className="mt-1 text-xs text-muted-foreground">{note}</p></article>;
 }
