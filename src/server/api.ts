@@ -1180,40 +1180,55 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
           [
             tx`
-              select id from students
-              where id = ${studentProfileMatch[1]}::uuid
-                and school_id = ${school.schoolId}::uuid
-              for update
-            `,
-            tx`
-              delete from students st
-              where st.id = ${studentProfileMatch[1]}::uuid
-                and st.school_id = ${school.schoolId}::uuid
-                and not exists (
-                  select 1 from attendance_records ar
-                  where ar.school_id = st.school_id and ar.student_id = st.id
-                )
-                and not exists (
-                  select 1 from grade_entries ge
-                  where ge.school_id = st.school_id and ge.student_id = st.id
-                )
-                and not exists (
-                  select 1 from subject_term_marks marks
-                  where marks.school_id = st.school_id and marks.student_id = st.id
-                )
-                and not exists (
-                  select 1 from terminal_reports reports
-                  where reports.school_id = st.school_id and reports.student_id = st.id
-                )
-                and not exists (
-                  select 1 from invoices i
-                  where i.school_id = st.school_id and i.student_id = st.id
-                )
-                and not exists (
-                  select 1 from payments p
-                  where p.school_id = st.school_id and p.student_id = st.id
-                )
-              returning st.id
+              with locked_student as materialized (
+                select id, school_id, user_id
+                from students
+                where id = ${studentProfileMatch[1]}::uuid
+                  and school_id = ${school.schoolId}::uuid
+                for update
+              ),
+              deleted_student as (
+                delete from students st
+                using locked_student selected
+                where st.id = selected.id
+                  and st.school_id = selected.school_id
+                  and not exists (
+                    select 1 from attendance_records ar
+                    where ar.school_id = st.school_id and ar.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from grade_entries ge
+                    where ge.school_id = st.school_id and ge.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from subject_term_marks marks
+                    where marks.school_id = st.school_id and marks.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from terminal_reports reports
+                    where reports.school_id = st.school_id and reports.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from invoices i
+                    where i.school_id = st.school_id and i.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from payments p
+                    where p.school_id = st.school_id and p.student_id = st.id
+                  )
+                returning st.id
+              ),
+              disabled_membership as (
+                update memberships m
+                set active = false
+                from deleted_student deleted
+                join locked_student selected on selected.id = deleted.id
+                where m.user_id = selected.user_id
+                  and m.school_id = ${school.schoolId}::uuid
+                  and m.role = 'student'
+                returning m.user_id
+              )
+              select id from deleted_student
             `,
           ],
         );
