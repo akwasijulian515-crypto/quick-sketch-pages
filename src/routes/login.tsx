@@ -497,6 +497,21 @@ function LoginPage() {
           <p className="mt-4 text-center text-[11px] text-muted-foreground">
             Access is granted only to an approved school membership.
           </p>
+          <p className="mt-3 text-center text-xs text-muted-foreground">
+            Need help?{" "}
+            <a href="tel:+233542184131" className="font-medium text-primary hover:underline">
+              +233 54 218 4131
+            </a>
+            {" · "}
+            <a href="tel:+233241203364" className="font-medium text-primary hover:underline">
+              +233 24 120 3364
+            </a>
+          </p>
+          <p className="mt-1 text-center text-xs text-muted-foreground">
+            <a href="mailto:akwasiJulian515@gmail.com" className="hover:text-foreground">
+              akwasiJulian515@gmail.com
+            </a>
+          </p>
         </div>
       </div>
     </div>
