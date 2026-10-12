@@ -65,10 +65,7 @@ function HomePage() {
           className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8"
         >
           <Link to="/" className="flex items-center gap-2.5" aria-label="Klasora home">
-            <span className="grid size-9 place-items-center rounded-md bg-primary font-display text-lg font-bold text-primary-foreground">
-              K
-            </span>
-            <span className="font-display text-lg font-bold tracking-tight">Klasora</span>
+            <img src="/brand/klasora-logo-horizontal.png" alt="Klasora" className="h-9 w-auto object-contain" />
           </Link>
           <div className="hidden items-center gap-7 text-sm text-muted-foreground md:flex">
             <a href="#features" className="transition-colors hover:text-foreground">Features</a>
@@ -207,11 +204,10 @@ function HomePage() {
         </div>
       </section>
 
-      <footer className="border-t border-border/70 bg-primary text-primary-foreground">
+      <footer className="border-t border-border/70 bg-[var(--brand-deep)] text-primary-foreground">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
-          <Link to="/" className="flex items-center gap-2.5 font-display font-bold" aria-label="Klasora home">
-            <span className="grid size-8 place-items-center rounded-md bg-primary-foreground/10">K</span>
-            Klasora
+          <Link to="/" className="flex items-center" aria-label="Klasora home">
+            <img src="/brand/klasora-logo-reversed.png" alt="Klasora" className="h-8 w-auto object-contain" />
           </Link>
           <p className="text-xs text-primary-foreground/65">A clearer workspace for school communities.</p>
           <div className="flex items-center gap-4 text-sm">

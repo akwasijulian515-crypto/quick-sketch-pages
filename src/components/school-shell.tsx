@@ -80,7 +80,7 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
     <aside className="sidebar-gloss flex h-dvh w-60 shrink-0 flex-col overflow-hidden px-3 py-5 text-primary-foreground">
       <div className="flex shrink-0 items-center gap-2.5 px-2 py-1.5">
         <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-highlight font-display text-base font-bold text-highlight-foreground shadow-sm">
-          {platform ? <ShieldCheck className="size-4" /> : crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
+        {platform ? <img src="/brand/klasora-icon.png" alt="" className="size-full object-contain" /> : crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
         </div>
         <div className="leading-tight">
           <p className="font-display text-[15px] font-bold">{platform ? "Klasora" : schoolName}</p>
@@ -116,7 +116,7 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
       </nav>
       <div className="mt-4 shrink-0 rounded-md bg-primary-foreground/5 px-2 py-3 ring-1 ring-primary-foreground/10">
         <div className="flex items-center gap-2.5">
-          {platform ? <div className="grid size-9 place-items-center rounded-md bg-highlight/20 text-highlight"><ShieldCheck className="size-4" /></div> : <img src={headTeacher} alt="Dr. Adaeze Okafor" width={512} height={512} loading="lazy" className="size-9 rounded-md object-cover ring-1 ring-primary-foreground/15" />}
+          {platform ? <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-highlight/20"><img src="/brand/klasora-icon.png" alt="" className="size-full object-contain" /></div> : <img src={headTeacher} alt="Dr. Adaeze Okafor" width={512} height={512} loading="lazy" className="size-9 rounded-md object-cover ring-1 ring-primary-foreground/15" />}
           <div className="min-w-0 leading-tight">
             <p className="truncate text-sm font-medium">{platform ? "Akwasi Julian" : schoolAdmin ? "School Administrator" : parentPortal ? "Mrs. Mensah" : studentPortal ? "Ama Mensah" : finance ? "Finance Officer" : "Dr. Adaeze Okafor"}</p>
             <p className="text-[11px] text-primary-foreground/45">{platform ? "Super Admin" : schoolAdmin ? "School Admin" : parentPortal ? "Parent" : studentPortal ? "Form 1A Student" : finance ? "Finance" : "Head Teacher"}</p>

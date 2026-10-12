@@ -84,6 +84,21 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
     for (const [property, value] of Object.entries(themeStyle(nextBranding.primaryColor))) {
       document.documentElement.style.setProperty(property, value);
     }
+    document
+      .querySelectorAll<HTMLLinkElement>('link[rel~="icon"], link[rel="apple-touch-icon"]')
+      .forEach((link) => {
+        if (nextBranding.crestUrl) {
+          link.href = nextBranding.crestUrl;
+          link.removeAttribute("type");
+          link.removeAttribute("sizes");
+          return;
+        }
+
+        const isAppleTouchIcon = link.rel === "apple-touch-icon";
+        link.href = isAppleTouchIcon ? "/brand/klasora-icon-192.png" : "/favicon-32.png";
+        link.type = "image/png";
+        link.sizes = isAppleTouchIcon ? "192x192" : "32x32";
+      });
     document.title = `${nextBranding.schoolName} | Klasora`;
   }, []);
 
