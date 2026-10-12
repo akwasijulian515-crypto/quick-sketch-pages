@@ -202,7 +202,7 @@ function StudentFinancesPage() {
       do {
         const params = new URLSearchParams({
           student_id: selectedStudent.id,
-          types: typesByExport[exportType] ?? typesByExport.financial!,
+          types: typesByExport[exportType] ?? typesByExport["financial"]!,
           page: String(pageNumber),
           page_size: "100",
         });

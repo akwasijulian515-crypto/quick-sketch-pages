@@ -1283,7 +1283,7 @@ function StudentProfile({
   onClose: () => void;
 }) {
   const { schoolName, primaryColor } = useTenantBranding();
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [details, setDetails] = useState<Student | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
