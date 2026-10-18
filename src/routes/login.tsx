@@ -117,7 +117,19 @@ function LoginPage() {
         if (result.error) throw new Error(result.error.message);
         if (!result.data.user.emailVerified) {
           setMode("verify");
-          setMessage("Enter the verification code sent to your email.");
+          try {
+            const verificationResult = await neonAuthClient.emailOtp.sendVerificationOtp({
+              email: email.trim().toLowerCase(),
+              type: "email-verification",
+            });
+            if (verificationResult.error) throw new Error(verificationResult.error.message);
+            setMessage("A verification code has been sent to your email. Check your spam folder if it does not appear.");
+          } catch (verificationError) {
+            const detail = verificationError instanceof Error
+              ? verificationError.message
+              : "The email provider did not confirm delivery";
+            setError(`Your account was created, but the verification code could not be sent: ${detail}`);
+          }
           return;
         }
         setMode("sign-in");
