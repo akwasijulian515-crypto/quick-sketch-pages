@@ -114,7 +114,26 @@ function LoginPage() {
           email: email.trim().toLowerCase(),
           password,
         });
-        if (result.error) throw new Error(result.error.message);
+        if (result.error) {
+          if (/already exist|already registered|already in use/i.test(result.error.message)) {
+            setMode("verify");
+            try {
+              const verificationResult = await neonAuthClient.emailOtp.sendVerificationOtp({
+                email: email.trim().toLowerCase(),
+                type: "email-verification",
+              });
+              if (verificationResult.error) throw new Error(verificationResult.error.message);
+              setMessage("This account already exists. A fresh verification code has been sent to your email.");
+            } catch (verificationError) {
+              const detail = verificationError instanceof Error
+                ? verificationError.message
+                : "The email provider did not confirm delivery";
+              setError(`This account already exists, but a verification code could not be sent: ${detail} You can try Resend verification code again.`);
+            }
+            return;
+          }
+          throw new Error(result.error.message);
+        }
         if (!result.data.user.emailVerified) {
           setMode("verify");
           try {
