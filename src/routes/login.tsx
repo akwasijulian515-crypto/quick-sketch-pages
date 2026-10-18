@@ -45,6 +45,72 @@ function LoginPage() {
     }
   }, []);
 
+  async function checkActivationEligibility(emailAddress: string) {
+    const response = await fetch("/api/auth/eligibility", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: emailAddress }),
+    });
+    const eligibility = (await response.json().catch(() => null)) as {
+      error?: string;
+      eligible?: boolean;
+    } | null;
+    if (!response.ok) throw new Error(eligibility?.error ?? "Could not check account eligibility");
+    if (!eligibility?.eligible)
+      throw new Error("This email is not attached to an approved school account yet");
+  }
+
+  async function sendEmailVerificationCode(emailAddress: string) {
+    const neonAuthClient = await ensureNeonAuthClient();
+    if (!neonAuthClient) throw new Error("Neon Auth is not configured for this environment");
+    const result = await neonAuthClient.emailOtp.sendVerificationOtp({
+      email: emailAddress,
+      type: "email-verification",
+    });
+    if (result.error) throw new Error(result.error.message);
+  }
+
+  function showVerificationRequestError(requestError: unknown) {
+    const detail =
+      requestError instanceof Error
+        ? requestError.message
+        : "Could not request a verification code";
+    if (/already verified/i.test(detail)) {
+      setMode("reset-request");
+      setMessage(
+        "This email is already verified. If you cannot sign in, request a password reset.",
+      );
+    } else if (/user.*not found|no user|user does not exist/i.test(detail)) {
+      setError(
+        "This email is approved, but a portal login has not been created yet. Use Create account to set up the login first.",
+      );
+    } else {
+      setError(`Could not request a verification code: ${detail}`);
+    }
+  }
+
+  async function requestActivationVerificationCode() {
+    const emailAddress = email.trim().toLowerCase();
+    if (!emailAddress) {
+      setError("Enter your approved school account email first");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await checkActivationEligibility(emailAddress);
+      await sendEmailVerificationCode(emailAddress);
+      setPassword("");
+      setMode("verify");
+      setMessage("A verification-code request was accepted. Check your inbox and spam folder.");
+    } catch (requestError) {
+      showVerificationRequestError(requestError);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     const neonAuthClient = await ensureNeonAuthClient();
@@ -96,39 +162,23 @@ function LoginPage() {
       }
 
       if (mode === "activate") {
-        const eligibilityResponse = await fetch("/api/auth/eligibility", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: email.trim().toLowerCase() }),
-        });
-        const eligibility = (await eligibilityResponse.json().catch(() => null)) as {
-          error?: string;
-          eligible?: boolean;
-        } | null;
-        if (!eligibilityResponse.ok)
-          throw new Error(eligibility?.error ?? "Could not check account eligibility");
-        if (!eligibility?.eligible)
-          throw new Error("This email is not attached to an approved school account yet");
+        const emailAddress = email.trim().toLowerCase();
+        await checkActivationEligibility(emailAddress);
         const result = await neonAuthClient.signUp.email({
           name: name.trim(),
-          email: email.trim().toLowerCase(),
+          email: emailAddress,
           password,
         });
         if (result.error) {
           if (/already exist|already registered|already in use/i.test(result.error.message)) {
             setMode("verify");
             try {
-              const verificationResult = await neonAuthClient.emailOtp.sendVerificationOtp({
-                email: email.trim().toLowerCase(),
-                type: "email-verification",
-              });
-              if (verificationResult.error) throw new Error(verificationResult.error.message);
-              setMessage("This account already exists. A fresh verification code has been sent to your email.");
+              await sendEmailVerificationCode(emailAddress);
+              setMessage(
+                "A verification-code request was accepted. Check your inbox and spam folder.",
+              );
             } catch (verificationError) {
-              const detail = verificationError instanceof Error
-                ? verificationError.message
-                : "The email provider did not confirm delivery";
-              setError(`This account already exists, but a verification code could not be sent: ${detail} You can try Resend verification code again.`);
+              showVerificationRequestError(verificationError);
             }
             return;
           }
@@ -136,23 +186,13 @@ function LoginPage() {
         }
         if (!result.data.user.emailVerified) {
           setMode("verify");
-          try {
-            const verificationResult = await neonAuthClient.emailOtp.sendVerificationOtp({
-              email: email.trim().toLowerCase(),
-              type: "email-verification",
-            });
-            if (verificationResult.error) throw new Error(verificationResult.error.message);
-            setMessage("A verification code has been sent to your email. Check your spam folder if it does not appear.");
-          } catch (verificationError) {
-            const detail = verificationError instanceof Error
-              ? verificationError.message
-              : "The email provider did not confirm delivery";
-            setError(`Your account was created, but the verification code could not be sent: ${detail}`);
-          }
+          setMessage(
+            "Neon Auth will email your verification code. Check your inbox and spam folder.",
+          );
           return;
         }
         setMode("sign-in");
-        setMessage("Account created. Check your email to verify it, then sign in to continue.");
+        setMessage("Account created and email verified. Sign in with your password to continue.");
         return;
       }
 
@@ -250,24 +290,19 @@ function LoginPage() {
   }
 
   async function resendVerificationCode() {
-    const neonAuthClient = await ensureNeonAuthClient();
-    if (!neonAuthClient || !email.trim()) return;
+    const emailAddress = email.trim().toLowerCase();
+    if (!emailAddress) {
+      setError("Enter your approved school account email first");
+      return;
+    }
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      const result = await neonAuthClient.emailOtp.sendVerificationOtp({
-        email: email.trim().toLowerCase(),
-        type: "email-verification",
-      });
-      if (result.error) throw new Error(result.error.message);
-      setMessage("A new verification code has been sent.");
+      await sendEmailVerificationCode(emailAddress);
+      setMessage("A new verification-code request was accepted. Check your inbox and spam folder.");
     } catch (resendError) {
-      setError(
-        resendError instanceof Error
-          ? resendError.message
-          : "Could not resend the verification code",
-      );
+      showVerificationRequestError(resendError);
     } finally {
       setBusy(false);
     }
@@ -287,7 +322,11 @@ function LoginPage() {
             {crestUrl ? (
               <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" />
             ) : (
-              <img src="/brand/klasora-icon.png" alt="Klasora" className="size-full object-contain" />
+              <img
+                src="/brand/klasora-icon.png"
+                alt="Klasora"
+                className="size-full object-contain"
+              />
             )}
           </div>
           <p className="font-display text-lg font-bold">{schoolName}</p>
@@ -490,6 +529,16 @@ function LoginPage() {
                         : "Reset password"}
             </Button>
           </form>
+          {mode === "activate" && (
+            <Button
+              variant="outline"
+              className="mt-3 w-full"
+              disabled={busy}
+              onClick={() => void requestActivationVerificationCode()}
+            >
+              I already have an account — send a verification code
+            </Button>
+          )}
           {mode === "verify" ? (
             <Button
               variant="outline"
