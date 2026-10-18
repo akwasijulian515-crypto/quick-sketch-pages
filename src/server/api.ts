@@ -528,7 +528,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     const tenant = resolveTenant(request, env.ROOT_DOMAIN);
     const querySubdomain = url.searchParams.get("tenant")?.trim().toLowerCase() ?? null;
     if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
-    const requestedSubdomain = tenant.subdomain ?? querySubdomain ?? (env.ROOT_DOMAIN === "localhost" ? "harrowgreen" : null);
+    const requestedSubdomain = tenant.subdomain ?? querySubdomain;
     if (!requestedSubdomain) return json({ school: null });
 
     const sql = database(env);

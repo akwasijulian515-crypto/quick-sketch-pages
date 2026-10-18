@@ -202,7 +202,9 @@ function LoginPage() {
       });
       if (result.error) throw new Error(result.error.message);
       const token = await getNeonAccessToken();
-      const previewTenant = new URLSearchParams(window.location.search).get("tenant");
+      const previewTenant =
+        new URLSearchParams(window.location.search).get("tenant") ??
+        sessionStorage.getItem("hg-school");
       const contextUrl = previewTenant
         ? `/api/auth/context?tenant=${encodeURIComponent(previewTenant)}`
         : "/api/auth/context";
@@ -224,6 +226,7 @@ function LoginPage() {
       const membership = payload.membership;
       sessionStorage.setItem("hg-role", String(membership.role));
       if (membership.role === "super_admin") {
+        sessionStorage.removeItem("hg-school");
         navigate({ to: "/admin" });
         return;
       }
@@ -271,7 +274,8 @@ function LoginPage() {
       const resetUrl = new URL("/login", window.location.origin);
       const tenant =
         new URLSearchParams(window.location.search).get("tenant") ??
-        sessionStorage.getItem("hg-school");
+        sessionStorage.getItem("hg-school") ??
+        (subdomain !== "school" ? subdomain : null);
       if (tenant) resetUrl.searchParams.set("tenant", tenant);
       resetUrl.searchParams.set("mode", "reset");
       const result = await neonAuthClient.requestPasswordReset({
@@ -321,12 +325,16 @@ function LoginPage() {
           <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg bg-background/15 ring-1 ring-background/30">
             {crestUrl ? (
               <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" />
-            ) : (
+            ) : schoolName === "Klasora" ? (
               <img
                 src="/brand/klasora-icon.png"
                 alt="Klasora"
                 className="size-full object-contain"
               />
+            ) : (
+              <span aria-hidden="true" className="font-display text-lg font-bold text-white">
+                {schoolName[0]?.toUpperCase() ?? "S"}
+              </span>
             )}
           </div>
           <p className="font-display text-lg font-bold">{schoolName}</p>
@@ -341,7 +349,9 @@ function LoginPage() {
             <li>— Administrators keep the school running</li>
           </ul>
         </div>
-        <p className="relative text-xs opacity-70">{subdomain} school portal</p>
+        <p className="relative text-xs opacity-70">
+          {subdomain === "school" ? "Klasora school portal" : `${subdomain} school portal`}
+        </p>
       </aside>
       <div className="relative flex min-h-screen items-center justify-center px-4 py-8">
         <div
@@ -359,12 +369,16 @@ function LoginPage() {
                   alt={`${schoolName} crest`}
                   className="size-full object-cover"
                 />
-              ) : (
+              ) : schoolName === "Klasora" ? (
                 <img
                   src="/brand/klasora-icon.png"
                   alt="Klasora"
                   className="size-full object-contain"
                 />
+              ) : (
+                <span aria-hidden="true" className="font-display text-base font-bold text-white">
+                  {schoolName[0]?.toUpperCase() ?? "S"}
+                </span>
               )}
             </div>
             <div className="leading-tight">
@@ -420,7 +434,7 @@ function LoginPage() {
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   autoComplete="email"
-                  placeholder={`you@${subdomain}.edu`}
+                  placeholder={subdomain === "school" ? "you@example.com" : `you@${subdomain}.edu`}
                   className="h-10 w-full rounded-md border border-input bg-background/70 px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
                 />
               </label>

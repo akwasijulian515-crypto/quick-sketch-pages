@@ -68,8 +68,22 @@ const financeNavigation = [
   { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck },
 ] as const;
 
+function prepareSignedOutContext(platform: boolean, subdomain: string) {
+  sessionStorage.removeItem("hg-role");
+  if (platform) {
+    sessionStorage.removeItem("hg-school");
+    return;
+  }
 
-function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { onNavigate?: () => void; schoolName: string; crestUrl: string | null; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
+  const tenant =
+    new URLSearchParams(window.location.search).get("tenant") ??
+    (subdomain !== "school" ? subdomain : null);
+  if (tenant) sessionStorage.setItem("hg-school", tenant);
+  else sessionStorage.removeItem("hg-school");
+}
+
+
+function Sidebar({ onNavigate, schoolName, subdomain, crestUrl, platform = false, schoolAdmin = false, parentPortal = false, studentPortal = false, finance = false }: { onNavigate?: () => void; schoolName: string; subdomain: string; crestUrl: string | null; platform?: boolean; schoolAdmin?: boolean; parentPortal?: boolean; studentPortal?: boolean; finance?: boolean }) {
   const location = useRouterState({ select: (state) => state.location });
   const pathname = location.pathname;
   const viewingSubjects = pathname === "/teachers" && "view" in location.search && location.search["view"] === "subjects";
@@ -125,8 +139,7 @@ function Sidebar({ onNavigate, schoolName, crestUrl, platform = false, schoolAdm
         <button
           type="button"
           onClick={async () => {
-            sessionStorage.removeItem("hg-role");
-            sessionStorage.removeItem("hg-school");
+            prepareSignedOutContext(platform, subdomain);
             if (platform) await fetch("/api/platform/session", { method: "DELETE" });
             await fetch("/api/auth/session", { method: "DELETE" });
             await neonAuthClient?.signOut().catch(() => undefined);
@@ -146,7 +159,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminView, setAdminView] = useState(schoolAdmin);
   const navigate = useNavigate();
-  const { schoolName, crestUrl } = useTenantBranding();
+  const { schoolName, subdomain, crestUrl } = useTenantBranding();
 
   useEffect(() => {
     // Copy table header text onto cells so phones can show tables as labelled cards.
@@ -185,8 +198,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
           <div className="flex items-center gap-2">
             <Button asChild size="sm" variant="outline"><Link to="/teacher">Back to teacher workspace</Link></Button>
             <Button variant="outline" size="sm" onClick={async () => {
-              sessionStorage.removeItem("hg-role");
-              sessionStorage.removeItem("hg-school");
+              prepareSignedOutContext(false, subdomain);
               await fetch("/api/auth/session", { method: "DELETE" });
               await neonAuthClient?.signOut().catch(() => undefined);
               navigate({ to: "/login" });
@@ -202,11 +214,11 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
     <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
       <div className="fixed inset-y-0 left-0 z-40 hidden h-dvh lg:block">
-        <Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} />
+        <Sidebar schoolName={schoolName} subdomain={subdomain} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} />
       </div>
       {menuOpen ? (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative z-10 h-full"><Sidebar schoolName={schoolName} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
+          <div className="relative z-10 h-full"><Sidebar schoolName={schoolName} subdomain={subdomain} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
           <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25" onClick={() => setMenuOpen(false)} />
         </div>
       ) : null}
@@ -228,9 +240,9 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
               variant="outline"
               size="sm"
               onClick={async () => {
-                sessionStorage.removeItem("hg-role");
-                sessionStorage.removeItem("hg-school");
+                prepareSignedOutContext(platform, subdomain);
                 if (platform) await fetch("/api/platform/session", { method: "DELETE" });
+                await fetch("/api/auth/session", { method: "DELETE" });
                 await neonAuthClient?.signOut().catch(() => undefined);
                 navigate({ to: platform ? "/" : "/login" });
               }}

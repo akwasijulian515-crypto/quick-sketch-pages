@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useState,
+  useRef,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -77,9 +78,14 @@ export function useTenantBranding() {
 
 export function TenantBrandingProvider({ children }: { children: ReactNode }) {
   const [branding, setBranding] = useState(defaultBranding);
-  const locationHref = useRouterState({ select: (state) => state.location.href });
+  const { href: locationHref, pathname } = useRouterState({
+    select: (state) => state.location,
+  });
+  const activeContext = useRef("");
+  const brandingRef = useRef(defaultBranding);
 
   const updateTenantBranding = useCallback((nextBranding: TenantBranding) => {
+    brandingRef.current = nextBranding;
     setBranding(nextBranding);
     for (const [property, value] of Object.entries(themeStyle(nextBranding.primaryColor))) {
       document.documentElement.style.setProperty(property, value);
@@ -99,20 +105,44 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
         link.type = "image/png";
         link.sizes = isAppleTouchIcon ? "192x192" : "32x32";
       });
-    document.title = `${nextBranding.schoolName} | Klasora`;
   }, []);
 
   useEffect(() => {
+    const title =
+      branding.schoolName === "Klasora"
+        ? pathname === "/login"
+          ? "Sign in — Klasora"
+          : pathname === "/admin"
+            ? "Super Admin — Klasora"
+            : "Klasora | School operations"
+        : `${branding.schoolName} | Klasora`;
+    document.title = title;
+  }, [branding.schoolName, pathname]);
+
+  useEffect(() => {
     let cancelled = false;
-    const previewTenant =
-      new URLSearchParams(window.location.search).get("tenant") ??
-      sessionStorage.getItem("hg-school");
-    const endpoint = previewTenant
-      ? `/api/school?tenant=${encodeURIComponent(previewTenant)}`
-      : "/api/school";
+    const isPlatformRoute = pathname === "/admin";
+    const queryTenant = new URLSearchParams(window.location.search).get("tenant")?.trim() ?? "";
+    const storedTenant = sessionStorage.getItem("hg-school")?.trim() ?? "";
+    const selectedTenant = queryTenant || storedTenant;
+    const context = isPlatformRoute ? "platform" : selectedTenant || window.location.host;
+
+    if (activeContext.current !== context) {
+      activeContext.current = context;
+      const alreadyMatches = isPlatformRoute
+        ? brandingRef.current.schoolName === defaultBranding.schoolName
+        : selectedTenant
+          ? brandingRef.current.subdomain === selectedTenant
+          : false;
+      if (!alreadyMatches) updateTenantBranding(defaultBranding);
+    }
+    if (isPlatformRoute) return;
 
     async function loadBranding() {
       try {
+        const endpoint = selectedTenant
+          ? `/api/school?tenant=${encodeURIComponent(selectedTenant)}`
+          : "/api/school";
         const response = await fetch(endpoint);
         if (!response.ok) return;
         const payload = (await response.json()) as {
@@ -120,6 +150,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
         };
         const school = payload.school;
         if (cancelled || !school?.name || !school.subdomain) return;
+        if (selectedTenant && school.subdomain !== selectedTenant) return;
 
         const primaryColor =
           typeof school.primaryColor === "string" && /^#[0-9a-f]{6}$/i.test(school.primaryColor)
@@ -142,7 +173,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [locationHref, updateTenantBranding]);
+  }, [locationHref, pathname, updateTenantBranding]);
 
   return (
     <TenantBrandingContext.Provider value={{ ...branding, updateTenantBranding }}>
