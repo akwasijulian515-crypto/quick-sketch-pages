@@ -93,11 +93,11 @@ function Sidebar({ onNavigate, schoolName, subdomain, crestUrl, platform = false
   return (
     <aside className="sidebar-gloss flex h-dvh w-60 shrink-0 flex-col overflow-hidden px-3 py-5 text-primary-foreground">
       <div className="flex shrink-0 items-center gap-2.5 px-2 py-1.5">
-        <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-highlight font-display text-base font-bold text-highlight-foreground shadow-sm">
+        <div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-highlight font-display text-base font-bold text-highlight-foreground shadow-sm">
         {platform ? <img src="/brand/klasora-icon.png" alt="" className="size-full object-contain" /> : crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
         </div>
-        <div className="leading-tight">
-          <p className="font-display text-[15px] font-bold">{platform ? "Klasora" : schoolName}</p>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate font-display text-[15px] font-bold">{platform ? "Klasora" : schoolName}</p>
           <p className="text-[11px] text-primary-foreground/50">{platform ? "Klasora Platform" : schoolAdmin ? "School Admin Console" : parentPortal ? "Family Portal" : studentPortal ? "Student Portal" : finance ? "Finance Workspace" : "School Operations"}</p>
         </div>
       </div>
@@ -115,14 +115,14 @@ function Sidebar({ onNavigate, schoolName, subdomain, crestUrl, platform = false
               to={item.to}
               onClick={onNavigate}
               className={cn(
-                "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
+                "flex min-h-10 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-highlight/70",
                 active
                   ? "bg-highlight/20 text-primary-foreground ring-1 ring-highlight/30"
                   : "text-primary-foreground/65 hover:bg-primary-foreground/10 hover:text-primary-foreground",
               )}
             >
-              <Icon className={cn("size-4", active ? "text-highlight" : "text-primary-foreground/40")} />
-              {item.label}
+              <Icon className={cn("size-4 shrink-0", active ? "text-highlight" : "text-primary-foreground/40")} />
+              <span className="truncate">{item.label}</span>
             </Link>
           );
         })}
@@ -130,7 +130,7 @@ function Sidebar({ onNavigate, schoolName, subdomain, crestUrl, platform = false
       </nav>
       <div className="mt-4 shrink-0 rounded-md bg-primary-foreground/5 px-2 py-3 ring-1 ring-primary-foreground/10">
         <div className="flex items-center gap-2.5">
-          {platform ? <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-highlight/20"><img src="/brand/klasora-icon.png" alt="" className="size-full object-contain" /></div> : <img src={headTeacher} alt="Dr. Adaeze Okafor" width={512} height={512} loading="lazy" className="size-9 rounded-md object-cover ring-1 ring-primary-foreground/15" />}
+          {platform ? <div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-highlight/20"><img src="/brand/klasora-icon.png" alt="" className="size-full object-contain" /></div> : <img src={headTeacher} alt="Dr. Adaeze Okafor" width={512} height={512} loading="lazy" className="size-9 rounded-md object-cover ring-1 ring-primary-foreground/15" />}
           <div className="min-w-0 leading-tight">
             <p className="truncate text-sm font-medium">{platform ? "Akwasi Julian" : schoolAdmin ? "School Administrator" : parentPortal ? "Mrs. Mensah" : studentPortal ? "Ama Mensah" : finance ? "Finance Officer" : "Dr. Adaeze Okafor"}</p>
             <p className="text-[11px] text-primary-foreground/45">{platform ? "Super Admin" : schoolAdmin ? "School Admin" : parentPortal ? "Parent" : studentPortal ? "Form 1A Student" : finance ? "Finance" : "Head Teacher"}</p>
@@ -188,21 +188,21 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
     return (
       <div className="relative min-h-screen bg-background font-body text-foreground">
         <div className="pointer-events-none fixed inset-0 ambient-wash" />
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
-          <div className="flex items-center gap-2.5">
+        <header className="sticky top-0 z-30 grid h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 bg-background/75 px-3 backdrop-blur-xl sm:px-6">
+          <div className="flex min-w-0 items-center gap-2.5">
             <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-primary font-display text-base font-bold text-primary-foreground">
               {crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
             </div>
             <div className="leading-tight"><p className="font-display text-[15px] font-bold">Teacher Portal</p><p className="text-[11px] text-muted-foreground">{title}</p></div>
           </div>
           <div className="flex items-center gap-2">
-            <Button asChild size="sm" variant="outline"><Link to="/teacher">Back to teacher workspace</Link></Button>
+            <Button asChild size="sm" variant="outline"><Link to="/teacher"><span className="sm:hidden">Back</span><span className="hidden sm:inline">Back to teacher workspace</span></Link></Button>
             <Button variant="outline" size="sm" onClick={async () => {
               prepareSignedOutContext(false, subdomain);
               await fetch("/api/auth/session", { method: "DELETE" });
               await neonAuthClient?.signOut().catch(() => undefined);
               navigate({ to: "/login" });
-            }}><LogOut />Sign out</Button>
+            }} aria-label="Sign out"><LogOut /><span className="hidden sm:inline">Sign out</span></Button>
           </div>
         </header>
         <main className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
@@ -218,24 +218,24 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
       </div>
       {menuOpen ? (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative z-10 h-full"><Sidebar schoolName={schoolName} subdomain={subdomain} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
+          <div className="relative z-10 h-full max-w-[85vw] shadow-2xl"><Sidebar schoolName={schoolName} subdomain={subdomain} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
           <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25" onClick={() => setMenuOpen(false)} />
         </div>
       ) : null}
       <div className="relative min-w-0 flex-1 lg:ml-60">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenuOpen(true)} aria-label="Open navigation">
+        <header className="sticky top-0 z-30 grid h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 bg-background/75 px-3 backdrop-blur-xl sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <Button variant="ghost" size="icon" className="size-10 shrink-0 lg:hidden" onClick={() => setMenuOpen(true)} aria-label="Open navigation">
               <Menu />
             </Button>
             <div className="hidden h-8 w-px bg-primary/10 sm:block" />
-            <div>
-              <p className="text-xs text-muted-foreground">Tuesday, 14 May 2024</p>
-              <p className="text-sm font-medium text-secondary-foreground">{title}</p>
+            <div className="min-w-0">
+              <p className="hidden truncate text-xs text-muted-foreground sm:block">Tuesday, 14 May 2024</p>
+              <p className="truncate text-sm font-medium text-secondary-foreground">{title}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="hidden text-xs text-muted-foreground sm:inline">Term II · Week 9</span>
+            <span className="hidden text-xs text-muted-foreground md:inline">Term II · Week 9</span>
             <Button
               variant="outline"
               size="sm"
@@ -247,12 +247,12 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
                 navigate({ to: platform ? "/" : "/login" });
               }}
             >
-              <LogOut />Sign out
+              <LogOut /><span className="hidden sm:inline">Sign out</span>
             </Button>
-            <Button size="sm">{platform ? "Add school" : adminView ? "Add user" : parentPortal ? "Pay fees" : studentPortal ? "View results" : "New entry"}</Button>
+            <Button size="sm" className="hidden sm:inline-flex">{platform ? "Add school" : adminView ? "Add user" : parentPortal ? "Pay fees" : studentPortal ? "View results" : "New entry"}</Button>
           </div>
         </header>
-        <main className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</main>
+        <main className="mx-auto w-full max-w-[1600px] px-3 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</main>
       </div>
     </div>
   );

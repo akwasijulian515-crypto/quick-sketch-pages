@@ -261,3 +261,20 @@
   *, *::before, *::after { scroll-behavior: auto !important; }
   .rise { animation: none; }
 }
+
+/* Responsive polish: no sideways overflow, readable forms, visible focus, comfy touch targets */
+@layer base {
+  html, body { overflow-x: clip; }
+  img, video, canvas, svg { max-width: 100%; }
+  main :where(h1, h2, h3, p, td, th, dd, label) { overflow-wrap: anywhere; }
+  :where(a, button, input, select, textarea, [role="tab"]):focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--ring) 80%, transparent);
+    outline-offset: 2px;
+  }
+}
+@media (max-width: 639px) {
+  main :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { font-size: 16px; min-height: 2.5rem; }
+  main :where(button, [role="tab"]) { min-height: 2.5rem; }
+  main header.flex, main > div > header.flex { align-items: stretch; }
+  [role="dialog"] { max-height: 90dvh; overflow-y: auto; width: calc(100vw - 1.5rem); }
+}
