@@ -406,7 +406,7 @@ async function sendActivationInvitation(
     schoolName: string;
     roleName: string;
     activationUrl: string;
-    primaryColor?: string;
+    primaryColor?: string | undefined;
   },
 ) {
   const smtpValues = [
