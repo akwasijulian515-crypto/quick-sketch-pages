@@ -23,6 +23,7 @@ import { neonAuthClient } from "../auth/client";
 import { useTenantBranding } from "./tenant-branding-provider";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "./theme-toggle";
 
 const navigation = [
   { label: "Overview", to: "/dashboard", icon: LayoutDashboard },
@@ -196,6 +197,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
             <div className="leading-tight"><p className="font-display text-[15px] font-bold">Teacher Portal</p><p className="text-[11px] text-muted-foreground">{title}</p></div>
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <Button asChild size="sm" variant="outline"><Link to="/teacher"><span className="sm:hidden">Back</span><span className="hidden sm:inline">Back to teacher workspace</span></Link></Button>
             <Button variant="outline" size="sm" onClick={async () => {
               prepareSignedOutContext(false, subdomain);
@@ -236,6 +238,7 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
           </div>
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <span className="hidden text-xs text-muted-foreground md:inline">Term II · Week 9</span>
+            <ThemeToggle />
             <Button
               variant="outline"
               size="sm"
