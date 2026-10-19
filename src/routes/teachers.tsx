@@ -502,7 +502,7 @@ function TeachersPage() {
                           {teacherNames.length ? (
                             <span className="inline-flex items-center gap-2">
                               <span className="grid size-7 place-items-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">
-                                {teacherNames[0].slice(0, 1)}
+                                {teacherNames[0]?.slice(0, 1)}
                               </span>
                               {teacherNames.join(", ")}
                             </span>

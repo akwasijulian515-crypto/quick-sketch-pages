@@ -48,27 +48,10 @@ function foregroundFor(color: string) {
 }
 
 function themeStyle(color: string): TenantThemeStyle {
-  const foreground = foregroundFor(color);
-  const tint = (amount: number) => `color-mix(in oklab, ${color} ${amount}%, white)`;
-
+  // Only the raw tenant colour is set inline; styles.css derives light and dark tokens from it.
   return {
-    "--primary": color,
-    // Always-dark version of the tenant colour so glossy surfaces stay legible for any choice.
-    "--brand-deep": `oklch(from ${color} min(l, 0.32) min(c, 0.16) h)`,
-    "--primary-foreground": foreground,
-    "--secondary": tint(12),
-    "--secondary-foreground": color,
-    "--accent": tint(10),
-    "--accent-foreground": color,
-    "--ring": color,
-    "--border": `color-mix(in oklab, ${color} 14%, transparent)`,
-    "--input": `color-mix(in oklab, ${color} 20%, transparent)`,
-    "--sidebar-primary": color,
-    "--sidebar-primary-foreground": foreground,
-    "--sidebar-accent": `color-mix(in oklab, ${color} 82%, black)`,
-    "--sidebar-accent-foreground": "#ffffff",
-    "--sidebar-border": `color-mix(in oklab, ${color} 28%, transparent)`,
-    "--sidebar-ring": color,
+    "--tenant": color,
+    "--tenant-foreground": foregroundFor(color),
   } as TenantThemeStyle;
 }
 
