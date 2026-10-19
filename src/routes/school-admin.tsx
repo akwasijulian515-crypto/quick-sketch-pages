@@ -201,12 +201,11 @@ function DirectoryManager() {
     setNotice("");
     const form = new FormData(event.currentTarget);
     try {
-      await schoolApi("/api/school/students", {
+      const result = await schoolApi<{ student: Student }>("/api/school/students", {
         method: "POST",
         body: JSON.stringify({
           first_name: form.get("first_name"),
           last_name: form.get("last_name"),
-          student_id_number: form.get("student_id_number"),
           class_id: form.get("class_id") || null,
           guardian: {
             full_name: form.get("guardian_name"),
@@ -217,7 +216,7 @@ function DirectoryManager() {
       });
       setStudentDialogOpen(false);
       setPage(1);
-      setNotice("Student added.");
+      setNotice(`Student added. Generated ID: ${result.student.student_id_number}.`);
       await Promise.all([loadClasses(), loadStudents()]);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not add student");
@@ -301,10 +300,9 @@ function DirectoryManager() {
 
     <Dialog open={studentDialogOpen} onOpenChange={setStudentDialogOpen}>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Add student</DialogTitle><DialogDescription>Add a student record and optionally assign a class and guardian contact.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Add student</DialogTitle><DialogDescription>Add a student record and optionally assign a class and guardian contact. The student ID is generated from your school&apos;s initials.</DialogDescription></DialogHeader>
         <form onSubmit={(event) => void submitStudent(event)} className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2"><FormField label="First name"><Input name="first_name" required maxLength={100} autoComplete="given-name" /></FormField><FormField label="Last name"><Input name="last_name" required maxLength={100} autoComplete="family-name" /></FormField></div>
-          <FormField label="Student ID / Index number"><Input name="student_id_number" required maxLength={64} /></FormField>
           <FormField label="Class assignment"><select name="class_id" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="">Unassigned</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>
           <div className="border-t border-border/70 pt-3"><h3 className="text-sm font-medium">Guardian contact (optional)</h3><div className="mt-3 space-y-3"><FormField label="Guardian name"><Input name="guardian_name" maxLength={160} autoComplete="name" /></FormField><div className="grid gap-3 sm:grid-cols-2"><FormField label="Phone"><Input name="guardian_phone" maxLength={40} type="tel" autoComplete="tel" /></FormField><FormField label="Email"><Input name="guardian_email" maxLength={254} type="email" autoComplete="email" /></FormField></div></div></div>
           <DialogFooter><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Add student"}</Button></DialogFooter>

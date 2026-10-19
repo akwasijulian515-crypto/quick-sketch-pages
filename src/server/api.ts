@@ -3901,11 +3901,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const nameParts = fullName.split(/\s+/).filter(Boolean);
       const firstName = typeof body["first_name"] === "string" ? body["first_name"].trim() : nameParts[0] ?? "";
       const lastName = typeof body["last_name"] === "string" ? body["last_name"].trim() : nameParts.slice(1).join(" ");
-      const studentIdNumber = typeof body["student_id_number"] === "string" ? body["student_id_number"].trim() : "";
       const classId = body["class_id"] == null ? null : body["class_id"];
       if (firstName.length < 1 || firstName.length > 100) return badRequest("First name must be 1–100 characters");
       if (lastName.length < 1 || lastName.length > 100) return badRequest("Enter both a first and last name");
-      if (studentIdNumber.length > 64) return badRequest("Student ID must be at most 64 characters");
       if (!uuidOrNull(classId)) return badRequest("Invalid class ID");
 
       const dateOfBirth = typeof body["date_of_birth"] === "string" ? body["date_of_birth"].trim() : "";
@@ -3945,7 +3943,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 date_of_birth, gender, address, emergency_contact, medical_notes
               )
               select ${school.schoolId}::uuid,
-                     coalesce(nullif(${studentIdNumber}, ''), 'KLS-' || upper(substr(gen_random_uuid()::text, 1, 12))),
+                     '',
                      ${firstName}, ${lastName}, nullif(${dateOfBirth}, '')::date,
                      nullif(${gender}, ''), nullif(${address}, ''),
                      nullif(${emergencyContact}, ''), nullif(${medicalNotes}, '')

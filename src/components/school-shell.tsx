@@ -188,21 +188,21 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
     return (
       <div className="relative min-h-screen bg-background font-body text-foreground">
         <div className="pointer-events-none fixed inset-0 ambient-wash" />
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
+        <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-3 border-b border-border/70 bg-background/75 px-4 py-2 backdrop-blur-xl sm:px-6">
           <div className="flex items-center gap-2.5">
             <div className="grid size-9 place-items-center overflow-hidden rounded-md bg-primary font-display text-base font-bold text-primary-foreground">
               {crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}
             </div>
             <div className="leading-tight"><p className="font-display text-[15px] font-bold">Teacher Portal</p><p className="text-[11px] text-muted-foreground">{title}</p></div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button asChild size="sm" variant="outline"><Link to="/teacher">Back to teacher workspace</Link></Button>
-            <Button variant="outline" size="sm" onClick={async () => {
+          <div className="flex shrink-0 items-center gap-2">
+            <Button asChild size="sm" variant="outline" className="max-[420px]:px-2"><Link to="/teacher"><span className="hidden sm:inline">Back to teacher workspace</span><span className="sm:hidden">Back</span></Link></Button>
+            <Button variant="outline" size="sm" className="max-[420px]:size-9 max-[420px]:px-0" aria-label="Sign out" onClick={async () => {
               prepareSignedOutContext(false, subdomain);
               await fetch("/api/auth/session", { method: "DELETE" });
               await neonAuthClient?.signOut().catch(() => undefined);
               navigate({ to: "/login" });
-            }}><LogOut />Sign out</Button>
+            }}><LogOut /><span className="max-[420px]:sr-only">Sign out</span></Button>
           </div>
         </header>
         <main className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6">{children}</main>
@@ -223,22 +223,24 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
         </div>
       ) : null}
       <div className="relative min-w-0 flex-1 lg:ml-60">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-30 flex min-h-16 items-center justify-between gap-2 border-b border-border/70 bg-background/75 px-3 py-2 backdrop-blur-xl sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMenuOpen(true)} aria-label="Open navigation">
               <Menu />
             </Button>
             <div className="hidden h-8 w-px bg-primary/10 sm:block" />
-            <div>
-              <p className="text-xs text-muted-foreground">Tuesday, 14 May 2024</p>
-              <p className="text-sm font-medium text-secondary-foreground">{title}</p>
+            <div className="min-w-0">
+              <p className="hidden text-xs text-muted-foreground sm:block">Tuesday, 14 May 2024</p>
+              <p className="truncate text-sm font-medium text-secondary-foreground">{title}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <span className="hidden text-xs text-muted-foreground sm:inline">Term II · Week 9</span>
             <Button
               variant="outline"
               size="sm"
+              className="max-[420px]:size-9 max-[420px]:px-0"
+              aria-label="Sign out"
               onClick={async () => {
                 prepareSignedOutContext(platform, subdomain);
                 if (platform) await fetch("/api/platform/session", { method: "DELETE" });
@@ -247,9 +249,9 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
                 navigate({ to: platform ? "/" : "/login" });
               }}
             >
-              <LogOut />Sign out
+              <LogOut /><span className="max-[420px]:sr-only">Sign out</span>
             </Button>
-            <Button size="sm">{platform ? "Add school" : adminView ? "Add user" : parentPortal ? "Pay fees" : studentPortal ? "View results" : "New entry"}</Button>
+            <Button size="sm" className="max-[420px]:px-2 max-[420px]:text-xs">{platform ? "Add school" : adminView ? "Add user" : parentPortal ? "Pay fees" : studentPortal ? "View results" : "New entry"}</Button>
           </div>
         </header>
         <main className="px-4 py-5 sm:px-6 lg:px-8 lg:py-7">{children}</main>

@@ -88,7 +88,7 @@ type AdmissionInput = {
 
 type BulkAdmissionRow = {
   rowNumber: number;
-  input: AdmissionInput & { first_name: string; last_name: string; student_id_number: string };
+  input: AdmissionInput & { first_name: string; last_name: string };
 };
 
 type BulkAdmissionOutcome = { rowNumber: number; error?: string };
@@ -241,7 +241,6 @@ function parseBulkAdmissionRows(text: string): { rows: BulkAdmissionRow[]; error
         first_name: firstName,
         last_name: lastName,
         full_name: fullName,
-        student_id_number: "",
         class_id: null,
         date_of_birth: "",
         gender: "",
@@ -393,7 +392,7 @@ export default function StudentsPage() {
     setPage(1);
     setQuery("");
     setFilterClassId("");
-    setNotice(`${created.name} was admitted successfully.`);
+    setNotice(`${created.name} was admitted successfully. Student ID: ${created.studentId}.`);
     setShowAdmission(false);
   }
 
@@ -896,7 +895,7 @@ function AdmissionModal({
           <div>
             <h2 className="font-display text-lg font-bold text-foreground">Admit New Student</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Student and guardian details are saved to this school
+              Student IDs are generated automatically from your school&apos;s initials.
             </p>
           </div>
           <button onClick={onClose} aria-label="Close admission form">
