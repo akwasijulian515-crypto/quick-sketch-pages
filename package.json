@@ -60,7 +60,7 @@
     "jose": "^6.2.12",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.575.0",
-    "nodemailer": "^10.1.7",
+    "nodemailer": "10.1.6",
     "react": "^19.2.0",
     "react-day-picker": "^9.14.0",
     "react-dom": "^19.2.0",
@@ -77,7 +77,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
-    "@lovable.dev/vite-tanstack-config": "2.25.3",
+    "@lovable.dev/vite-tanstack-config": "2.26.5",
     "@neon/config": "^1.8.2",
     "@neon/env": "^1.4.7",
     "@types/node": "^22.16.5",

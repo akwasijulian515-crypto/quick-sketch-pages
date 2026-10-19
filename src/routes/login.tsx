@@ -170,7 +170,7 @@ function LoginPage() {
           password,
         });
         if (result.error) {
-          if (/already exist|already registered|already in use/i.test(result.error.message)) {
+          if (/already exist|already registered|already in use/i.test(result.error.message ?? "")) {
             setMode("verify");
             try {
               await sendEmailVerificationCode(emailAddress);
