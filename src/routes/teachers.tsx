@@ -6,6 +6,7 @@ import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { SchoolTeamSetup } from "@/components/school-team-setup";
 import { SchoolShell } from "@/components/school-shell";
+import { useTenantBranding } from "@/components/tenant-branding-provider";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/teachers")({
@@ -53,6 +54,7 @@ async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
 function TeachersPage() {
   const { view } = Route.useSearch();
   const navigate = useNavigate();
+  const { schoolName, crestUrl } = useTenantBranding();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [assignments, setAssignments] = useState<TeachingRow[]>([]);
@@ -160,7 +162,7 @@ function TeachersPage() {
   }
 
   return <SchoolShell title="Teachers & subjects"><div className="mx-auto max-w-6xl rise">
-    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">{view === "teachers" ? <UsersRound className="size-5" /> : <BookOpen className="size-5" />}</div><h1 className="font-display text-3xl font-bold">Teachers & subjects</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Create subjects and assign each teacher to the right class and teaching load.</p></div>{view === "teachers" ? canManageStaff ? <Button onClick={() => document.getElementById("staff-setup")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Plus />Add a teacher</Button> : null : canManageStaff ? <Button onClick={() => setDialog("subject")}><Plus />Add subject</Button> : null}</div>
+    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 inline-flex items-center gap-2 rounded-full border border-border bg-background/70 px-2.5 py-1.5"><span className="grid size-7 place-items-center overflow-hidden rounded-full bg-secondary text-secondary-foreground">{crestUrl ? <img src={crestUrl} alt={`${schoolName} crest`} className="size-full object-cover" /> : <span className="text-xs font-bold">{schoolName.slice(0, 1)}</span>}</span><span className="text-xs font-semibold text-secondary-foreground">{schoolName}</span></div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">{view === "teachers" ? <UsersRound className="size-5" /> : <BookOpen className="size-5" />}</div><h1 className="font-display text-3xl font-bold">Teachers & subjects</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Create subjects and assign each teacher to the right class and teaching load.</p></div>{view === "teachers" ? canManageStaff ? <Button onClick={() => document.getElementById("staff-setup")?.scrollIntoView({ behavior: "smooth", block: "start" })}><Plus />Add a teacher</Button> : null : canManageStaff ? <Button onClick={() => setDialog("subject")}><Plus />Add subject</Button> : null}</div>
     {canManageStaff && <SchoolTeamSetup onDataChanged={() => void load()} />}
     {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p>}
     {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-4 py-3 text-sm text-emerald-800">{notice}</p>}

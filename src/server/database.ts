@@ -14,6 +14,12 @@ export type RuntimeEnv = {
   NEON_AUTH_JWKS_URL?: string | undefined;
   RESEND_API_KEY?: string | undefined;
   RESEND_FROM_EMAIL?: string | undefined;
+  SMTP_HOST?: string | undefined;
+  SMTP_PORT?: string | undefined;
+  SMTP_USERNAME?: string | undefined;
+  SMTP_PASSWORD?: string | undefined;
+  SMTP_FROM_EMAIL?: string | undefined;
+  SMTP_FROM_NAME?: string | undefined;
 };
 
 export function resolveRuntimeEnv(env: RuntimeEnv): RuntimeEnv {
@@ -34,6 +40,12 @@ export function resolveRuntimeEnv(env: RuntimeEnv): RuntimeEnv {
     NEON_AUTH_JWKS_URL: env.NEON_AUTH_JWKS_URL ?? nodeEnv?.["NEON_AUTH_JWKS_URL"],
     RESEND_API_KEY: env.RESEND_API_KEY ?? nodeEnv?.["RESEND_API_KEY"],
     RESEND_FROM_EMAIL: env.RESEND_FROM_EMAIL ?? nodeEnv?.["RESEND_FROM_EMAIL"],
+    SMTP_HOST: env.SMTP_HOST ?? nodeEnv?.["SMTP_HOST"],
+    SMTP_PORT: env.SMTP_PORT ?? nodeEnv?.["SMTP_PORT"],
+    SMTP_USERNAME: env.SMTP_USERNAME ?? nodeEnv?.["SMTP_USERNAME"],
+    SMTP_PASSWORD: env.SMTP_PASSWORD ?? nodeEnv?.["SMTP_PASSWORD"],
+    SMTP_FROM_EMAIL: env.SMTP_FROM_EMAIL ?? nodeEnv?.["SMTP_FROM_EMAIL"],
+    SMTP_FROM_NAME: env.SMTP_FROM_NAME ?? nodeEnv?.["SMTP_FROM_NAME"],
   };
 }
 

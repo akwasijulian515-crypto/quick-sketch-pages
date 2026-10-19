@@ -1,6 +1,7 @@
 import { database, resolveRuntimeEnv, withDatabaseContext, type RuntimeEnv } from "./database";
 import { resolveTenant } from "./tenant";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createTransport } from "nodemailer";
 
 type SchoolRecord = { id: string; name: string; subdomain: string; status: "trial" | "active" | "suspended"; createdAt: string; primaryColor?: string; students?: number; admins?: number };
 
@@ -385,14 +386,81 @@ async function sendSchoolAdminInvitation(
   contactName: string,
   schoolName: string,
   activationUrl: string,
+  primaryColor?: string,
 ) {
-  if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
-    return { sent: false, error: "Resend is not configured. Set RESEND_API_KEY and RESEND_FROM_EMAIL." };
+  return sendActivationInvitation(env, {
+    recipient,
+    contactName,
+    schoolName,
+    roleName: "School Admin",
+    activationUrl,
+    primaryColor,
+  });
+}
+
+async function sendActivationInvitation(
+  env: RuntimeEnv,
+  invitation: {
+    recipient: string;
+    contactName: string;
+    schoolName: string;
+    roleName: string;
+    activationUrl: string;
+    primaryColor?: string;
+  },
+) {
+  const smtpValues = [
+    env.SMTP_HOST,
+    env.SMTP_PORT,
+    env.SMTP_USERNAME,
+    env.SMTP_PASSWORD,
+    env.SMTP_FROM_EMAIL,
+  ];
+  const hasSmtpConfiguration = smtpValues.some((value) => value !== undefined && value !== "");
+  const smtpConfigured = smtpValues.every((value) => typeof value === "string" && value.trim().length > 0);
+  const smtpFromEmail = env.SMTP_FROM_EMAIL?.trim();
+  const accent = invitation.primaryColor && /^#[0-9a-f]{6}$/i.test(invitation.primaryColor)
+    ? invitation.primaryColor
+    : "#1f5c3b";
+  const safeName = escapeHtml(invitation.contactName);
+  const safeSchool = escapeHtml(invitation.schoolName);
+  const safeRole = escapeHtml(invitation.roleName);
+  const safeUrl = escapeHtml(invitation.activationUrl);
+  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#183237"><h1 style="color:${accent}">Welcome to ${safeSchool}</h1><p>Hello ${safeName},</p><p>Your <strong>${safeRole}</strong> access for <strong>${safeSchool}</strong> is ready.</p><p>Use the button below to activate your account. You will verify your email and choose a password.</p><p style="margin:28px 0"><a href="${safeUrl}" style="background:${accent};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;font-weight:600">Activate your account</a></p><p>If the button does not work, copy this link into your browser:<br><a href="${safeUrl}">${safeUrl}</a></p></div>`;
+  const text = `Hello ${invitation.contactName},\n\nYour ${invitation.roleName} access for ${invitation.schoolName} is ready.\n\nActivate your account, verify your email, and choose a password here:\n${invitation.activationUrl}\n`;
+
+  if (hasSmtpConfiguration) {
+    const port = Number(env.SMTP_PORT);
+    if (!smtpConfigured || !smtpFromEmail || !Number.isInteger(port) || port < 1 || port > 65535) {
+      return { sent: false, error: "SMTP invitation settings are incomplete or invalid. Check SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM_EMAIL." };
+    }
+    try {
+      const transporter = createTransport({
+        host: env.SMTP_HOST,
+        port,
+        secure: port === 465,
+        auth: { user: env.SMTP_USERNAME, pass: env.SMTP_PASSWORD },
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
+      });
+      await transporter.sendMail({
+        from: { name: env.SMTP_FROM_NAME?.trim() || "Klasora", address: smtpFromEmail },
+        to: invitation.recipient,
+        subject: `Activate your ${invitation.schoolName} account`,
+        html,
+        text,
+      });
+      return { sent: true as const };
+    } catch (error) {
+      console.error("SMTP invitation delivery failed", error instanceof Error ? error.name : "UnknownError");
+      return { sent: false, error: "SMTP could not deliver the invitation. Check the SMTP host, credentials, and sender settings." };
+    }
   }
 
-  const safeName = escapeHtml(contactName);
-  const safeSchool = escapeHtml(schoolName);
-  const safeUrl = escapeHtml(activationUrl);
+  if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
+    return { sent: false, error: "Invitation email is not configured. Set SMTP settings in Vercel or configure RESEND_API_KEY and RESEND_FROM_EMAIL." };
+  }
   try {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -402,24 +470,32 @@ async function sendSchoolAdminInvitation(
       },
       body: JSON.stringify({
         from: env.RESEND_FROM_EMAIL,
-        to: [recipient],
-        subject: `Your ${schoolName} workspace is ready on Klasora`,
-        html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#183237"><h1 style="color:#1f5c3b">Welcome to Klasora</h1><p>Hello ${safeName},</p><p>Your school workspace for <strong>${safeSchool}</strong> has been approved.</p><p>Use the button below to activate your School Admin account. You will verify your email and choose a password.</p><p style="margin:28px 0"><a href="${safeUrl}" style="background:#1f5c3b;color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;font-weight:600">Activate your account</a></p><p>If the button does not work, copy this link into your browser:<br><a href="${safeUrl}">${safeUrl}</a></p></div>`,
-        text: `Hello ${contactName},\n\nYour school workspace for ${schoolName} has been approved on Klasora.\n\nActivate your School Admin account, verify your email, and choose a password here:\n${activationUrl}\n`,
+        to: [invitation.recipient],
+        subject: `Activate your ${invitation.schoolName} account`,
+        html,
+        text,
       }),
     });
     if (!response.ok) {
-      console.error("Resend rejected the school-admin invitation", response.status);
-      return { sent: false, error: "Resend could not deliver the invitation. Check your Resend sender configuration." };
+      console.error("Resend rejected an account invitation", response.status);
+      return { sent: false, error: "The email provider could not deliver the invitation. Check the sender configuration." };
     }
     return { sent: true as const };
   } catch (error) {
-    console.error("Could not send school-admin invitation", error);
-    return { sent: false, error: "Could not reach Resend to deliver the invitation." };
+    console.error("Could not reach Resend for an account invitation", error instanceof Error ? error.name : "UnknownError");
+    return { sent: false, error: "Could not reach the email provider to deliver the invitation." };
   }
 }
 
-type SchoolAdminContext = { schoolId: string; subdomain: string; role: string; userId: string; email: string };
+type SchoolAdminContext = {
+  schoolId: string;
+  subdomain: string;
+  role: string;
+  userId: string;
+  email: string;
+  schoolName: string;
+  primaryColor: string;
+};
 
 async function requireSchoolContext(
   request: Request,
@@ -455,7 +531,8 @@ async function requireSchoolContext(
 
   const memberships = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
     tx`
-      select u.id as user_id, m.school_id, m.role, s.subdomain, s.status as school_status
+      select u.id as user_id, m.school_id, m.role, s.subdomain, s.name as school_name,
+             s.primary_color, s.status as school_status
       from users u
       join memberships m on m.user_id = u.id
       join schools s on s.id = m.school_id
@@ -479,6 +556,8 @@ async function requireSchoolContext(
     role: String(membership["role"]),
     userId: String(membership["user_id"]),
     email,
+    schoolName: String(membership["school_name"]),
+    primaryColor: String(membership["primary_color"] ?? "#1f5c3b"),
   };
 }
 
@@ -901,7 +980,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           const activationUrl = new URL("/login", request.url);
           activationUrl.searchParams.set("tenant", school.subdomain);
           activationUrl.searchParams.set("mode", "activate");
-          return json({ account: rows[0], activation_url: activationUrl.toString() }, 201);
+          const invitation = await sendActivationInvitation(env, {
+            recipient: String(rows[0]["email"]),
+            contactName: `${String(rows[0]["first_name"])} ${String(rows[0]["last_name"])}`,
+            schoolName: school.schoolName,
+            roleName: "Student",
+            activationUrl: activationUrl.toString(),
+            primaryColor: school.primaryColor,
+          });
+          return json({ account: rows[0], activation_url: activationUrl.toString(), invitation }, 201);
         }
 
         if (accountType === "parent") {
@@ -951,7 +1038,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           const activationUrl = new URL("/login", request.url);
           activationUrl.searchParams.set("tenant", school.subdomain);
           activationUrl.searchParams.set("mode", "activate");
-          return json({ account: rows[0], activation_url: activationUrl.toString() }, 201);
+          const invitation = await sendActivationInvitation(env, {
+            recipient: String(rows[0]["email"]),
+            contactName: String(rows[0]["full_name"]),
+            schoolName: school.schoolName,
+            roleName: "Parent",
+            activationUrl: activationUrl.toString(),
+            primaryColor: school.primaryColor,
+          });
+          return json({ account: rows[0], activation_url: activationUrl.toString(), invitation }, 201);
         }
 
         return badRequest("Choose a student or parent account");
@@ -3245,7 +3340,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const activationUrl = new URL("/login", request.url);
       activationUrl.searchParams.set("tenant", school.subdomain);
       activationUrl.searchParams.set("mode", "activate");
-      return json({ member: rows[0], activation_url: activationUrl.toString() }, 201);
+      const invitation = await sendActivationInvitation(env, {
+        recipient: String(rows[0]["email"]),
+        contactName: String(rows[0]["display_name"]),
+        schoolName: school.schoolName,
+        roleName: role === "teacher" ? "Teacher" : "Finance",
+        activationUrl: activationUrl.toString(),
+        primaryColor: school.primaryColor,
+      });
+      return json({ member: rows[0], activation_url: activationUrl.toString(), invitation }, 201);
     }
 
     if (url.pathname === "/api/school/teaching-setup") {
@@ -4183,6 +4286,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           String(rows[0]["contact_name"]),
           String(school["name"]),
           tenantLoginUrl,
+          String(school["primary_color"] ?? "#1f5c3b"),
         )
         : { sent: false, error: "The approved application has no contact email, so the invitation cannot be sent." };
       return json({ school: {

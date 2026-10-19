@@ -47,6 +47,7 @@ export function PortalAccountSetup() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [activationUrl, setActivationUrl] = useState("");
+  const [invitationEmail, setInvitationEmail] = useState<{ sent: boolean; error?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -84,6 +85,7 @@ export function PortalAccountSetup() {
     setError("");
     setNotice("");
     setActivationUrl("");
+    setInvitationEmail(null);
     try {
       const result = await portalAccountsApi<{ guardian: Pick<PortalGuardian, "id" | "email" | "linked"> }>("/api/school/guardians", {
         method: "POST",
@@ -100,7 +102,7 @@ export function PortalAccountSetup() {
         setNotice("Guardian added and linked to the student. Their existing parent portal access is active.");
       } else {
         try {
-          const account = await portalAccountsApi<{ activation_url: string }>("/api/school/portal-accounts", {
+          const account = await portalAccountsApi<{ activation_url: string; invitation: { sent: boolean; error?: string } }>("/api/school/portal-accounts", {
             method: "POST",
             body: JSON.stringify({
               account_type: "parent",
@@ -109,7 +111,10 @@ export function PortalAccountSetup() {
             }),
           });
           setActivationUrl(account.activation_url);
-          setNotice("Guardian added and linked to the student. Share this activation link with the parent.");
+          setInvitationEmail(account.invitation);
+          setNotice(account.invitation.sent
+            ? "Guardian added and linked to the student. An activation email was sent to the parent."
+            : "Guardian added and linked to the student. The activation email could not be sent; share the link below.");
         } catch (linkError) {
           const message = linkError instanceof Error ? linkError.message : "Could not link parent portal access";
           portalLinkError = `Guardian was added and linked to the student, but portal access could not be linked: ${message}`;
@@ -131,8 +136,9 @@ export function PortalAccountSetup() {
     setError("");
     setNotice("");
     setActivationUrl("");
+    setInvitationEmail(null);
     try {
-      const result = await portalAccountsApi<{ activation_url: string }>("/api/school/portal-accounts", {
+      const result = await portalAccountsApi<{ activation_url: string; invitation: { sent: boolean; error?: string } }>("/api/school/portal-accounts", {
         method: "POST",
         body: JSON.stringify({
           account_type: accountType,
@@ -142,7 +148,10 @@ export function PortalAccountSetup() {
         }),
       });
       setActivationUrl(result.activation_url);
-      setNotice(`${accountType === "student" ? "Student" : "Parent"} portal access is linked. Share the activation link with the account holder.`);
+      setInvitationEmail(result.invitation);
+      setNotice(result.invitation.sent
+        ? `${accountType === "student" ? "Student" : "Parent"} portal access is linked. An activation email was sent.`
+        : `${accountType === "student" ? "Student" : "Parent"} portal access is linked. The activation email could not be sent; share the link below.`);
       await load();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not link portal account");
@@ -190,8 +199,8 @@ export function PortalAccountSetup() {
         </p>
       </div>
       {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
-      {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
-      {activationUrl && <p className="mt-2 break-all text-sm text-secondary-foreground">Activation link: <a className="underline" href={activationUrl}>{activationUrl}</a></p>}
+      {notice && <p role={invitationEmail?.sent === false ? "alert" : "status"} className={`mt-4 rounded-md border px-3 py-2 text-sm ${invitationEmail?.sent === false ? "border-amber-600/30 bg-amber-600/5 text-amber-900" : "border-emerald-600/20 bg-emerald-600/5 text-emerald-800"}`}>{notice}</p>}
+      {activationUrl && <p className={`mt-2 break-all text-sm ${invitationEmail?.sent ? "text-secondary-foreground" : "text-amber-900"}`}>{invitationEmail?.sent ? "Activation link (email sent; share manually if needed): " : `Activation link (email failed${invitationEmail?.error ? `: ${invitationEmail.error}` : ""}): `}<a className="underline" href={activationUrl}>{activationUrl}</a></p>}
       {loading ? <p className="py-5 text-sm text-muted-foreground">Loading portal accounts...</p> : (
         <div className="mt-5 space-y-5">
           <form onSubmit={(event) => void addGuardian(event)} className="space-y-3 rounded-md border border-border p-4">

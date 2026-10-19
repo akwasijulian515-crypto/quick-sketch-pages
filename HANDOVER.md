@@ -112,10 +112,14 @@ print, or share its values.
 4. **Tenant application workflows:** Test create school, approval, first
    School Admin activation, staff creation, student creation, attendance,
    grades, fees, and sign-out/session expiry on the deployed app.
-5. **Invitation email delivery:** Production Resend configuration and actual
-   delivery were not confirmed. Set `RESEND_API_KEY` and
-   `RESEND_FROM_EMAIL` in Vercel only if invitation email is required, verify
-   the sender domain with Resend, then test delivery.
+5. **Invitation email delivery:** Configure Vercel production (and preview, if
+   needed) with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and
+   `SMTP_FROM_EMAIL`; optionally set `SMTP_FROM_NAME`. Keep credentials in
+   Vercel only. The app sends school-admin, staff, parent, and student
+   activation invitations through SMTP. When SMTP settings are absent, the app
+   can use Resend if `RESEND_API_KEY` and `RESEND_FROM_EMAIL` are configured.
+   Verify delivery with a test invitation after setting the environment
+   variables.
 6. **Vercel env audit:** Confirm production and preview scopes for
    `DATABASE_URL` (pooled runtime connection), `NEON_AUTH_URL`,
    `VITE_NEON_AUTH_URL`, and a strong `PLATFORM_ADMIN_TOKEN`. Never copy

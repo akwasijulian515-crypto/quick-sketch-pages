@@ -61,6 +61,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
   const [classes, setClasses] = useState<TeachingRow[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [activationUrl, setActivationUrl] = useState("");
+  const [invitationEmail, setInvitationEmail] = useState<{ sent: boolean; error?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -99,12 +100,14 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
     setSaving(true);
     setError("");
     setActivationUrl("");
+    setInvitationEmail(null);
     try {
-      const result = await schoolApi<{ activation_url: string }>("/api/school/team", {
+      const result = await schoolApi<{ activation_url: string; invitation: { sent: boolean; error?: string } }>("/api/school/team", {
         method: "POST",
         body: JSON.stringify({ name: form.get("name"), email: form.get("email"), role: form.get("role") }),
       });
       setActivationUrl(result.activation_url);
+      setInvitationEmail(result.invitation);
       formElement.reset();
       await load();
       onDataChanged?.();
@@ -196,7 +199,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
     <section id="staff-setup" className="glass-panel mt-4 scroll-mt-6 rounded-lg p-5">
       <div><h2 className="font-display text-xl font-bold">Staff and teaching assignments</h2><p className="mt-1 text-sm text-muted-foreground">Add a teacher or Finance user, then assign teachers to class subjects so they can enter marks.</p></div>
       {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
-      {activationUrl && <p role="status" className="mt-4 break-all rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">Account activation link (share with the new member): <a className="underline" href={activationUrl}>{activationUrl}</a></p>}
+      {activationUrl && <div role={invitationEmail?.sent ? "status" : "alert"} className={`mt-4 break-all rounded-md border px-3 py-2 text-sm ${invitationEmail?.sent ? "border-emerald-600/20 bg-emerald-600/5 text-emerald-800" : "border-amber-600/30 bg-amber-600/5 text-amber-900"}`}><p>{invitationEmail?.sent ? "Invitation email sent." : `Invitation email was not sent. ${invitationEmail?.error ?? "Share the activation link manually."}`}</p><p className="mt-1">Account activation link: <a className="underline" href={activationUrl}>{activationUrl}</a></p></div>}
       <form onSubmit={(event) => void addMember(event)} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="space-y-1 text-xs font-medium text-muted-foreground">Full name<Input name="name" required minLength={2} maxLength={160} /></label>
         <label className="space-y-1 text-xs font-medium text-muted-foreground">Work email<Input name="email" required type="email" maxLength={254} /></label>
