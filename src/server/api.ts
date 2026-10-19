@@ -41,7 +41,7 @@ async function ensureTermFeeArrears(sql: ReturnType<typeof database>, schoolId: 
            amount_due, base_amount_due, currency, status)
         select f.school_id, e.student_id, f.id,
                'SF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
-               f.description, f.amount, f.amount, f.currency, 'issued'
+               f.description, f.amount, f.amount, f.currency, 'issued'::invoice_status
         from class_fees f
         join source_term s on s.id = f.term_id
         join class_enrollments e on e.school_id = f.school_id and e.class_id = f.class_id
@@ -123,7 +123,7 @@ async function ensureTermFeeArrears(sql: ReturnType<typeof database>, schoolId: 
         select distinct e.school_id, e.student_id, e.destination_fee_id,
                'SF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
                e.destination_description, e.destination_base_amount,
-               e.destination_base_amount, 0, e.destination_currency, 'issued'
+               e.destination_base_amount, 0, e.destination_currency, 'issued'::invoice_status
         from eligible e
         where e.amount > 0
         on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
