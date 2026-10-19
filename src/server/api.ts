@@ -53,16 +53,16 @@ async function ensureTermFeeArrears(sql: ReturnType<typeof database>, schoolId: 
               and existing.class_fee_id = f.id and existing.status <> 'void'
           )
         on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
-        returning id, school_id, student_id, class_fee_id, amount_due, currency
+        returning id, school_id, student_id, class_fee_id, amount_due, currency, rolled_forward_at
       ),
       source_invoices as materialized (
-        select i.id, i.school_id, i.student_id, i.class_fee_id, i.amount_due, i.currency
+        select i.id, i.school_id, i.student_id, i.class_fee_id, i.amount_due, i.currency, i.rolled_forward_at
         from invoices i
         join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
         join source_term s on s.id = f.term_id
         where i.school_id = ${schoolId}::uuid and i.status <> 'void'
         union
-        select id, school_id, student_id, class_fee_id, amount_due, currency
+        select id, school_id, student_id, class_fee_id, amount_due, currency, rolled_forward_at
         from source_invoice_insert
       ),
       source_balance as materialized (
