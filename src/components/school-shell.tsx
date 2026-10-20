@@ -26,47 +26,47 @@ import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
 
 const navigation = [
-  { label: "Overview", to: "/dashboard", icon: LayoutDashboard },
-  { label: "Students", to: "/students", icon: GraduationCap },
-  { label: "Payments", to: "/payments", icon: ReceiptText },
-  { label: "Grades", to: "/grades", icon: ScrollText },
-  { label: "Teachers", to: "/teachers", icon: UsersRound },
-  { label: "Classes", to: "/classes", icon: School },
-  { label: "Coupons", to: "/coupons", icon: TicketCheck },
+  { label: "Overview", to: "/dashboard", icon: LayoutDashboard, group: "Core" },
+  { label: "Students", to: "/students", icon: GraduationCap, group: "Academics" },
+  { label: "Grades", to: "/grades", icon: ScrollText, group: "Academics" },
+  { label: "Classes", to: "/classes", icon: School, group: "Academics" },
+  { label: "Teachers", to: "/teachers", icon: UsersRound, group: "Academics" },
+  { label: "Payments", to: "/payments", icon: ReceiptText, group: "Finance" },
+  { label: "Coupons", to: "/coupons", icon: TicketCheck, group: "Finance" },
 ] as const;
 
 const platformNavigation = [
-  { label: "School directory", to: "/admin", icon: Building2 },
+  { label: "School directory", to: "/admin", icon: Building2, group: "Platform" },
 ] as const;
 
 const schoolAdminNavigation = [
-  { label: "Overview", to: "/dashboard", icon: LayoutDashboard },
-  { label: "Students", to: "/students", icon: GraduationCap },
-  { label: "Payments", to: "/payments", icon: ReceiptText },
-  { label: "Financial records", to: "/student-finances", icon: FileText },
-  { label: "Attendance", to: "/attendance-overview", icon: UserRoundCheck },
-  { label: "Grades", to: "/grades", icon: ScrollText },
-  { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText },
-  { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck },
-  { label: "Academic setup", to: "/academic-setup", icon: CalendarDays },
-  { label: "Teachers", to: "/teachers", icon: UsersRound },
-  { label: "Classes", to: "/classes", icon: School },
-  { label: "Coupons", to: "/coupons", icon: TicketCheck },
-  { label: "School administration", to: "/school-admin", icon: School },
+  { label: "Overview", to: "/dashboard", icon: LayoutDashboard, group: "Core" },
+  { label: "Students", to: "/students", icon: GraduationCap, group: "Academics" },
+  { label: "Attendance", to: "/attendance-overview", icon: UserRoundCheck, group: "Academics" },
+  { label: "Grades", to: "/grades", icon: ScrollText, group: "Academics" },
+  { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText, group: "Academics" },
+  { label: "Classes", to: "/classes", icon: School, group: "Academics" },
+  { label: "Teachers", to: "/teachers", icon: UsersRound, group: "Academics" },
+  { label: "Academic setup", to: "/academic-setup", icon: CalendarDays, group: "Academics" },
+  { label: "Payments", to: "/payments", icon: ReceiptText, group: "Finance" },
+  { label: "Financial records", to: "/student-finances", icon: FileText, group: "Finance" },
+  { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck, group: "Finance" },
+  { label: "Coupons", to: "/coupons", icon: TicketCheck, group: "Finance" },
+  { label: "School administration", to: "/school-admin", icon: School, group: "Administration" },
 ] as const;
 
 const parentNavigation = [
-  { label: "My children", to: "/parent", icon: GraduationCap },
+  { label: "My children", to: "/parent", icon: GraduationCap, group: "Family" },
 ] as const;
 
 const studentNavigation = [
-  { label: "My learning", to: "/student", icon: GraduationCap },
+  { label: "My learning", to: "/student", icon: GraduationCap, group: "Learning" },
 ] as const;
 
 const financeNavigation = [
-  { label: "Finance desk", to: "/finance", icon: LayoutDashboard },
-  { label: "Daily payments", to: "/daily-payments", icon: Banknote },
-  { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck },
+  { label: "Finance desk", to: "/finance", icon: LayoutDashboard, group: "Core" },
+  { label: "Daily payments", to: "/daily-payments", icon: Banknote, group: "Finance" },
+  { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck, group: "Finance" },
 ] as const;
 
 function prepareSignedOutContext(platform: boolean, subdomain: string) {
@@ -102,17 +102,18 @@ function Sidebar({ onNavigate, schoolName, subdomain, crestUrl, platform = false
           <p className="text-[11px] text-primary-foreground/50">{platform ? "Klasora Platform" : schoolAdmin ? "School Admin Console" : parentPortal ? "Family Portal" : studentPortal ? "Student Portal" : finance ? "Finance Workspace" : "School Operations"}</p>
         </div>
       </div>
-      <p className="shrink-0 px-3 pb-1 pt-5 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35">
-        {platform ? "Platform" : "Workspace"}
-      </p>
-      <nav aria-label="Main navigation" tabIndex={0} className="sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1 outline-none focus-visible:ring-1 focus-visible:ring-highlight/50">
+      <nav aria-label="Main navigation" tabIndex={0} className="sidebar-scroll mt-4 min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain py-1 outline-none focus-visible:ring-1 focus-visible:ring-highlight/50">
         <div className="flex flex-col gap-0.5">
-        {links.map((item) => {
+        {links.map((item, index) => {
           const active = pathname === item.to && !(item.to === "/teachers" && viewingSubjects);
           const Icon = item.icon;
+          const showGroup = index === 0 || links[index - 1]?.group !== item.group;
           return (
+            <div key={item.to} className="contents">
+            {showGroup ? (
+              <p className={cn("px-3 pb-1 text-[10px] uppercase tracking-[0.18em] text-primary-foreground/35", index === 0 ? "pt-1" : "pt-4")}>{item.group}</p>
+            ) : null}
             <Link
-              key={item.to}
               to={item.to}
               onClick={onNavigate}
               className={cn(
@@ -124,7 +125,9 @@ function Sidebar({ onNavigate, schoolName, subdomain, crestUrl, platform = false
             >
               <Icon className={cn("size-4 shrink-0", active ? "text-highlight" : "text-primary-foreground/40")} />
               <span className="truncate">{item.label}</span>
+              {active ? <span aria-hidden className="ml-auto size-1.5 shrink-0 rounded-full bg-highlight" /> : null}
             </Link>
+            </div>
           );
         })}
         </div>
@@ -220,8 +223,8 @@ export function SchoolShell({ children, title = "Overview", platform = false, sc
       </div>
       {menuOpen ? (
         <div className="fixed inset-0 z-40 flex lg:hidden">
-          <div className="relative z-10 h-full max-w-[85vw] shadow-2xl"><Sidebar schoolName={schoolName} subdomain={subdomain} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
-          <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25" onClick={() => setMenuOpen(false)} />
+          <div className="relative z-10 h-full max-w-[85vw] shadow-2xl animate-in slide-in-from-left duration-300"><Sidebar schoolName={schoolName} subdomain={subdomain} crestUrl={crestUrl} platform={platform} schoolAdmin={adminView} parentPortal={parentPortal} studentPortal={studentPortal} finance={finance} onNavigate={() => setMenuOpen(false)} /></div>
+          <button aria-label="Close navigation" className="absolute inset-0 bg-foreground/25 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setMenuOpen(false)} />
         </div>
       ) : null}
       <div className="relative min-w-0 flex-1 lg:ml-60">
