@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -72,11 +73,16 @@ function HomePage() {
             <a href="#how-it-works" className="transition-colors hover:text-foreground">How it works</a>
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <Button asChild variant="ghost" className="hidden sm:inline-flex">
               <Link to="/login">Sign in</Link>
             </Button>
-            <Button asChild>
-              <Link to="/signup">Register your school<ArrowRight /></Link>
+            <Button asChild className="max-[420px]:px-2">
+              <Link to="/signup">
+                <span className="min-[421px]:hidden">Register</span>
+                <span className="hidden min-[421px]:inline">Register your school</span>
+                <ArrowRight />
+              </Link>
             </Button>
           </div>
         </nav>
