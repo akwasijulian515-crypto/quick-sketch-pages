@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Banknote, CheckCircle2, Wallet } from "lucide-react";
+import { Banknote, CheckCircle2, Printer, Receipt, Wallet } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SchoolShell } from "@/components/school-shell";
 
 export const Route = createFileRoute("/daily-payments")({
@@ -60,6 +61,7 @@ function DailyPaymentsPage() {
   const [classFilter, setClassFilter] = useState("all");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [slip, setSlip] = useState<{ student: DailyStudent; date: string; method: string; coupon: string; at: string } | null>(null);
   const activeDate = useRef(date);
   activeDate.current = date;
 
@@ -102,6 +104,7 @@ function DailyPaymentsPage() {
         body: JSON.stringify({ student_id: student.student_id, date: paymentDate, method }),
       });
       setNotice(`${student.first_name} ${student.last_name} marked paid (${student.currency} ${Number(student.fee_amount).toFixed(2)}). Daily clearance ${result.payment.coupon_code}.`);
+      setSlip({ student, date: paymentDate, method: result.payment.method, coupon: result.payment.coupon_code, at: new Date().toISOString() });
       if (activeDate.current === paymentDate) {
         setStudents((current) => current.map((item) => item.student_id === student.student_id
           ? { ...item, payment_id: result.payment.id, method: result.payment.method, coupon_code: result.payment.coupon_code }
@@ -118,7 +121,20 @@ function DailyPaymentsPage() {
     }
   }
 
-  return <SchoolShell title="Daily payments" finance><div className="mx-auto max-w-6xl rise">
+  function StatusChip({ student }: { student: DailyStudent }) {
+    if (student.payment_id) return <span className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-sm ring-1 ring-primary/40"><CheckCircle2 className="size-3.5" />Cleared</span>;
+    const due = student.attendance_status === "present" || student.attendance_status === "late";
+    return due
+      ? <span className="inline-flex items-center rounded-full bg-accent px-3 py-1 text-xs font-semibold text-accent-foreground ring-1 ring-highlight/50">Due {student.currency} {Number(student.fee_amount).toFixed(2)}</span>
+      : <span className="inline-flex items-center rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring-1 ring-border">Not paid</span>;
+  }
+
+  function ActionCell({ student }: { student: DailyStudent }) {
+    if (student.payment_id) return <button type="button" onClick={() => setSlip({ student, date, method: student.method ?? "cash", coupon: student.coupon_code ?? "Recorded", at: student.paid_at ?? new Date().toISOString() })} className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-border bg-background/70 px-3 text-xs font-medium hover:bg-secondary"><Receipt className="size-3.5" />Slip</button>;
+    return <Button size="sm" className="min-h-10 px-4" disabled={recordingStudents.has(student.student_id)} onClick={() => void markPaid(student)}>{recordingStudents.has(student.student_id) ? "Recording..." : "Mark paid"}</Button>;
+  }
+
+  return <SchoolShell title="Daily payments" finance><div className="mx-auto max-w-6xl rise pb-24">
     <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
       <div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><Wallet className="size-5" /></div><h1 className="font-display text-3xl font-bold">Daily payments</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Mark each learner’s configured daily fee as paid. Recorded collections and attendance feed directly into Daily Reconciliation.</p></div>
       <label className="space-y-1 text-xs font-medium text-muted-foreground">Payment date<input type="date" max={localDateString(new Date())} value={date} onChange={(event) => event.target.value && setDate(event.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" /></label>
@@ -154,23 +170,43 @@ function DailyPaymentsPage() {
           : <>
             <div className="divide-y divide-border/70 md:hidden">
               {visible.map((student) => <article key={student.student_id} className="flex items-center justify-between gap-3 p-4">
-                <div className="min-w-0"><p className="truncate text-sm font-medium">{student.first_name} {student.last_name}</p><p className="text-xs text-muted-foreground">{student.admission_number} · {student.class_name}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{student.attendance_status ?? "Attendance not marked"} · {student.currency} {Number(student.fee_amount).toFixed(2)}</p></div>
-                {student.payment_id ? <span className="inline-flex shrink-0 items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="size-4" />Paid</span> : <Button size="sm" disabled={recordingStudents.has(student.student_id)} onClick={() => void markPaid(student)}>{recordingStudents.has(student.student_id) ? "Recording..." : "Mark paid"}</Button>}
+                <div className="min-w-0"><p className="truncate text-sm font-medium">{student.first_name} {student.last_name}</p><p className="text-xs text-muted-foreground">{student.admission_number} · {student.class_name}</p><p className="mt-1 text-xs capitalize text-muted-foreground">{student.attendance_status ?? "Attendance not marked"}</p><div className="mt-2"><StatusChip student={student} /></div></div>
+                <ActionCell student={student} />
               </article>)}
             </div>
             <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[820px] text-left text-sm">
-              <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Class", "Attendance", "Daily fee", "Collection status", ""].map((heading) => <th key={heading} className="px-5 py-3 font-medium">{heading}</th>)}</tr></thead>
+              <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Class", "Attendance", "Daily fee", "Status", ""].map((heading) => <th key={heading} className="px-5 py-3 font-medium">{heading}</th>)}</tr></thead>
               <tbody className="divide-y divide-border/70">{visible.map((student) => <tr key={student.student_id}>
                 <td className="px-5 py-3 font-medium">{student.first_name} {student.last_name}<p className="font-mono text-xs text-muted-foreground">{student.admission_number}</p></td>
                 <td className="px-5 py-3">{student.class_name}</td>
                 <td className="px-5 py-3 capitalize">{student.attendance_status ?? "Not marked"}</td>
                 <td className="px-5 py-3">{student.currency} {Number(student.fee_amount).toFixed(2)}</td>
-                <td className="px-5 py-3">{student.payment_id ? <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="size-4" />Paid · {student.method?.replaceAll("_", " ")}</span> : "Not paid"}</td>
-                <td className="px-5 py-3">{student.payment_id ? <span className="font-mono text-xs text-muted-foreground">{student.coupon_code ?? "Recorded"}</span> : <Button size="sm" disabled={recordingStudents.has(student.student_id)} onClick={() => void markPaid(student)}>{recordingStudents.has(student.student_id) ? "Recording..." : "Mark paid"}</Button>}</td>
+                <td className="px-5 py-3"><StatusChip student={student} /></td>
+                <td className="px-5 py-3 text-right"><ActionCell student={student} /></td>
               </tr>)}</tbody>
             </table></div>
           </>}
     </section>
+    {!loading && visible.length > 0 && <div className="sticky bottom-3 z-30 mt-4">
+      <div className="glass-panel flex flex-wrap items-center justify-between gap-3 rounded-full px-5 py-3 shadow-lg">
+        <span className="text-xs font-medium text-muted-foreground">Collected {date === localDateString(new Date()) ? "today" : date}</span>
+        <span className="font-display text-lg font-bold text-primary">{formatDailyTotals(paidStudents)}</span>
+        <span className="text-xs text-muted-foreground">{paidCount}/{visible.length} cleared</span>
+      </div>
+    </div>}
+    <Dialog open={!!slip} onOpenChange={(open) => { if (!open) setSlip(null); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle className="font-display">Daily clearance slip</DialogTitle></DialogHeader>
+        {slip && <div id="daily-slip" className="rounded-lg border border-dashed border-border bg-card p-5 font-mono text-sm">
+          <p className="text-center text-xs uppercase tracking-widest text-muted-foreground">Daily fee · not an official receipt</p>
+          <p className="mt-4 text-center font-display text-3xl font-bold text-primary">{slip.student.currency} {Number(slip.student.fee_amount).toFixed(2)}</p>
+          <dl className="mt-4 space-y-1.5 text-xs">
+            {([["Student", `${slip.student.first_name} ${slip.student.last_name}`], ["Admission", slip.student.admission_number], ["Class", slip.student.class_name], ["Fee date", slip.date], ["Method", slip.method.replaceAll("_", " ")], ["Clearance", slip.coupon], ["Recorded", new Date(slip.at).toLocaleTimeString()]] as const).map(([k, v]) => <div key={k} className="flex justify-between gap-3"><dt className="text-muted-foreground">{k}</dt><dd className="text-right capitalize">{v}</dd></div>)}
+          </dl>
+        </div>}
+        <DialogFooter className="gap-2"><Button variant="outline" onClick={() => setSlip(null)}>Close</Button><Button onClick={() => window.print()}><Printer className="size-4" />Print slip</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div></SchoolShell>;
 }
 
