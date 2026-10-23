@@ -60,7 +60,7 @@ function TeacherPortal() {
           {([
             ["register", "Register", UserRoundCheck],
             ["grades", "Grades", BookOpenCheck],
-            ["coupons", "Coupons", TicketCheck],
+            ["coupons", "Daily fees", TicketCheck],
           ] as const).map(([id, label, Icon]) => <Button key={id} variant={tab === id ? "default" : "outline"} size="sm" onClick={() => setTab(id)}><Icon />{label}</Button>)}
           <Button asChild size="sm" variant="outline"><Link to="/terminal-reports"><FileText />Reports</Link></Button>
           <Button asChild size="sm" variant="outline"><Link to="/teacher/promotion"><ArrowUpRight />Promotion</Link></Button>
@@ -170,6 +170,9 @@ function TeacherDailyPayments() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const [method, setMethod] = useState("cash");
+  const [savingStudentId, setSavingStudentId] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -207,13 +210,41 @@ function TeacherDailyPayments() {
   );
   const paidCount = visible.filter((student) => student.payment_id).length;
 
+  async function recordDailyFee(student: TeacherDailyPayment) {
+    setSavingStudentId(student.student_id);
+    setError("");
+    setNotice("");
+    try {
+      const result = await teacherApi<{ payment: { id: string; method: string; coupon_code: string } }>(
+        "/api/school/daily-payments",
+        {
+          method: "POST",
+          body: JSON.stringify({ student_id: student.student_id, date, method }),
+        },
+      );
+      setStudents((current) => current.map((item) => item.student_id === student.student_id
+        ? {
+          ...item,
+          payment_id: result.payment.id,
+          method: result.payment.method,
+          coupon_code: result.payment.coupon_code,
+        }
+        : item));
+      setNotice(`Daily fee recorded for ${student.first_name} ${student.last_name}.`);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not record daily fee");
+    } finally {
+      setSavingStudentId("");
+    }
+  }
+
   return <section className="glass-panel mt-5 overflow-hidden rounded-lg">
     <div className="flex flex-col gap-4 border-b border-border p-4 sm:flex-row sm:items-end sm:justify-between sm:p-5">
       <div>
         <div className="mb-2 grid size-9 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><Banknote className="size-4" /></div>
         <h2 className="font-display text-xl font-bold">Daily fees and coupons</h2>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Read-only daily payment status for your assigned classes. Record and reconcile payments in Finance.
+          Record the configured daily fee for learners in your assigned class. Each collection is saved as a verified payment and appears in Finance.
         </p>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row">
@@ -247,6 +278,20 @@ function TeacherDailyPayments() {
       <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">{loading ? "—" : `${visible.length - paidCount} unpaid`}</span>
       <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">{date}</span>
     </div>
+    <div className="flex flex-col gap-3 px-4 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+    <p className="text-xs text-muted-foreground">Confirm only after receiving the configured amount. This records a payment and daily clearance coupon, not an official receipt.</p>
+    <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+      Payment method
+      <select value={method} onChange={(event) => setMethod(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground">
+        <option value="cash">Cash</option>
+        <option value="mobile_money">Mobile money</option>
+        <option value="bank_transfer">Bank transfer</option>
+        <option value="card">Card</option>
+        <option value="other">Other</option>
+      </select>
+    </label>
+    </div>
+    {notice && <p role="status" className="mx-4 mt-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800 sm:mx-5">{notice}</p>}
     {error ? (
       <div role="alert" className="p-8 text-center">
         <p className="text-sm text-destructive">{error}</p>
@@ -281,13 +326,14 @@ function TeacherDailyPayments() {
                 <span>{student.currency} {Number(student.fee_amount).toFixed(2)}</span>
               </div>
               {student.payment_id && <p className="font-mono text-xs text-primary">Coupon: {student.coupon_code ?? "—"}</p>}
+              {!student.payment_id && <Button size="sm" className="mt-1" disabled={savingStudentId !== ""} onClick={() => void recordDailyFee(student)}>{savingStudentId === student.student_id ? "Recording..." : "Confirm fee received"}</Button>}
             </article>
           ))}
         </div>
         <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="bg-muted/60 text-xs text-muted-foreground">
-              <tr>{["Student", "Class", "Attendance", "Daily fee", "Payment", "Coupon"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr>
+              <tr>{["Student", "Class", "Attendance", "Daily fee", "Payment", "Coupon", "Action"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-border/70">
               {visible.map((student) => (
@@ -298,6 +344,7 @@ function TeacherDailyPayments() {
                   <td className="px-5 py-3">{student.currency} {Number(student.fee_amount).toFixed(2)}</td>
                   <td className="px-5 py-3">{student.payment_id ? <span className="text-emerald-700">Paid</span> : <span className="text-muted-foreground">Unpaid</span>}</td>
                   <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{student.coupon_code ?? "—"}</td>
+                  <td className="px-5 py-3">{student.payment_id ? "—" : <Button size="sm" disabled={savingStudentId !== ""} onClick={() => void recordDailyFee(student)}>{savingStudentId === student.student_id ? "Recording..." : "Confirm received"}</Button>}</td>
                 </tr>
               ))}
             </tbody>

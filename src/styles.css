@@ -371,3 +371,44 @@
   main header.flex, main > div > header.flex { align-items: stretch; }
   [role="dialog"] { max-height: 90dvh; overflow-y: auto; width: calc(100vw - 1.5rem); }
 }
+
+.attendance-print-root { display: none; }
+
+@media print {
+  @page { size: A4 portrait; margin: 12mm; }
+  html, body, main, .relative.flex.min-h-screen { overflow: visible !important; height: auto !important; min-height: 0 !important; }
+  .relative.flex.min-h-screen { position: static !important; }
+  body * { visibility: hidden !important; }
+  .attendance-print-root,
+  .attendance-print-root * { visibility: visible !important; }
+  .attendance-print-root {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 99999;
+    width: 100%;
+    overflow: visible !important;
+    color: #111;
+    background: #fff;
+    font: 10pt Arial, sans-serif;
+  }
+  .attendance-print-page {
+    break-after: page;
+    page-break-after: always;
+  }
+  .attendance-print-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  .attendance-print-page h1 { margin: 0 0 10px; font-size: 18pt; }
+  .attendance-print-page p { margin: 5px 0; }
+  .attendance-print-page table { width: 100%; margin-top: 12px; border-collapse: collapse; }
+  .attendance-print-page th,
+  .attendance-print-page td { border: 1px solid #444; padding: 5px 6px; text-align: left; }
+  .attendance-print-page .print-mark { width: 50px; text-align: center; font-size: 14pt; font-weight: 700; }
+  .attendance-print-page .print-spacer { display: inline-block; width: 24px; }
+  .attendance-print-page .print-legend,
+  .attendance-print-page .print-footnote { font-size: 9pt; }
+  .attendance-print-page .print-totals { display: flex; gap: 24px; margin-top: 12px; font-weight: 700; }
+}

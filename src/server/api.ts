@@ -647,7 +647,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/other-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/student-financial-records": { GET: ["school_admin"] },
-    "/api/school/daily-payments": { GET: ["school_admin", "finance", "teacher"], POST: ["school_admin", "finance"] },
+    "/api/school/daily-payments": { GET: ["school_admin", "finance", "teacher"], POST: ["school_admin", "finance", "teacher"] },
+    "/api/school/workflow-settings": { GET: ["school_admin", "teacher"], PUT: ["school_admin"] },
     "/api/school/student-attendance": { GET: ["school_admin"] },
     "/api/school/reconciliation": { GET: ["school_admin", "finance"] },
     "/api/school/coupons": { GET: ["school_admin", "teacher", "finance"] },
@@ -694,6 +695,57 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       : await requireSchoolAdminContext(request, env);
     if (school instanceof Response) return school;
     const sql = database(env);
+
+    if (url.pathname === "/api/school/workflow-settings") {
+      if (request.method === "GET") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select class_teachers_can_record_daily_fees, attendance_print_format
+            from school_workflow_settings
+            where school_id = ${school.schoolId}::uuid
+          `,
+        );
+        return json({
+          class_teachers_can_record_daily_fees:
+            rows[0]?.["class_teachers_can_record_daily_fees"] === true,
+          attendance_print_format: String(rows[0]?.["attendance_print_format"] ?? "ges_weekly"),
+        });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const allowClassTeacherFees = body["class_teachers_can_record_daily_fees"];
+      const printFormat = body["attendance_print_format"];
+      if (typeof allowClassTeacherFees !== "boolean") {
+        return badRequest("Choose whether class teachers may record daily fees");
+      }
+      if (printFormat !== "daily_register" && printFormat !== "ges_weekly") {
+        return badRequest("Choose a supported attendance print format");
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          insert into school_workflow_settings
+            (school_id, class_teachers_can_record_daily_fees, attendance_print_format,
+             updated_by_user_id, updated_at)
+          values (
+            ${school.schoolId}::uuid, ${allowClassTeacherFees}, ${printFormat},
+            ${school.userId}::uuid, now()
+          )
+          on conflict (school_id) do update set
+            class_teachers_can_record_daily_fees = excluded.class_teachers_can_record_daily_fees,
+            attendance_print_format = excluded.attendance_print_format,
+            updated_by_user_id = excluded.updated_by_user_id,
+            updated_at = now()
+          returning class_teachers_can_record_daily_fees, attendance_print_format
+        `,
+      );
+      if (!rows[0]) throw new Error("School workflow settings were not saved");
+      return json({
+        class_teachers_can_record_daily_fees: rows[0]["class_teachers_can_record_daily_fees"] === true,
+        attendance_print_format: String(rows[0]["attendance_print_format"]),
+      });
+    }
 
     if (
       studentHistoryMatch
@@ -1824,7 +1876,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 )
             )
             select s.id as session_id, st.id as student_id,
-                   st.first_name, st.last_name, st.admission_number,
+                   st.first_name, st.last_name, st.admission_number, st.gender,
                    r.status, r.note
             from authorized_class c
             join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
@@ -1845,6 +1897,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             first_name: String(row["first_name"]),
             last_name: String(row["last_name"]),
             admission_number: String(row["admission_number"]),
+            gender: row["gender"] == null ? "" : String(row["gender"]),
             status: row["status"] == null ? null : String(row["status"]),
             note: row["note"] == null ? "" : String(row["note"]),
           })),
@@ -2410,6 +2463,17 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const paymentDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
       if (!validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
       if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee register dates cannot be in the future");
+      if (school.role === "teacher") {
+        const settings = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select class_teachers_can_record_daily_fees
+            from school_workflow_settings where school_id = ${school.schoolId}::uuid
+          `,
+        );
+        if (settings[0]?.["class_teachers_can_record_daily_fees"] !== true) {
+          return json({ error: "Your School Admin has not enabled daily-fee recording for class teachers." }, 403);
+        }
+      }
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           select distinct on (st.id)
@@ -2449,16 +2513,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 select sp.id from staff_profiles sp
                 where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
               )
-              or exists (
-                select 1
-                from teaching_assignments ta
-                join class_subjects cs
-                  on cs.id = ta.class_subject_id and cs.school_id = ta.school_id
-                join staff_profiles sp
-                  on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
-                where ta.school_id = c.school_id and ta.academic_year_id = ay.id
-                  and cs.class_id = c.id and sp.user_id = ${school.userId}::uuid
-              )
             )
           order by st.id, e.starts_on desc
         `,
@@ -2477,6 +2531,34 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (typeof paymentDate !== "string" || !validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
       if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee payments cannot be recorded for a future date");
       if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
+      if (school.role === "teacher") {
+        const authorization = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select
+              coalesce((
+                select class_teachers_can_record_daily_fees
+                from school_workflow_settings where school_id = ${school.schoolId}::uuid
+              ), false) as enabled,
+              exists (
+                select 1
+                from class_enrollments e
+                join classes c on c.id = e.class_id and c.school_id = e.school_id
+                join staff_profiles sp on sp.id = c.class_teacher_id and sp.school_id = c.school_id
+                where e.school_id = ${school.schoolId}::uuid
+                  and e.student_id = ${studentId}::uuid
+                  and e.starts_on <= ${paymentDate}::date
+                  and (e.ends_on is null or e.ends_on >= ${paymentDate}::date)
+                  and sp.user_id = ${school.userId}::uuid
+              ) as is_assigned_class_teacher
+          `,
+        );
+        if (authorization[0]?.["enabled"] !== true) {
+          return json({ error: "Your School Admin has not enabled daily-fee recording for class teachers." }, 403);
+        }
+        if (authorization[0]?.["is_assigned_class_teacher"] !== true) {
+          return json({ error: "You can record daily fees only for students in your assigned class." }, 403);
+        }
+      }
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           with eligible as (
@@ -2492,6 +2574,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             join class_fees f on f.class_id = c.id and f.school_id = c.school_id
               and f.academic_year_id = ay.id and f.fee_type = 'daily' and f.term_id is null and f.is_active
             where st.id = ${studentId}::uuid and st.school_id = ${school.schoolId}::uuid and st.active
+              and (
+                ${school.role !== "teacher"}
+                or c.class_teacher_id in (
+                  select id from staff_profiles
+                  where school_id = c.school_id and user_id = ${school.userId}::uuid
+                )
+              )
             order by e.starts_on desc
             limit 1
           ),

@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { BookOpen, ChevronLeft, ChevronRight, FileText, Link2, Plus, Search, ShieldCheck, UsersRound } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, FileText, Link2, Plus, Search, Settings2, ShieldCheck, UsersRound } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { fetchWithNeonAuth } from "../auth/client";
@@ -94,10 +94,99 @@ function SchoolAdminPage() {
     <section className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><Card label="School accounts" value={summary ? String(summary.active_users) : "—"} note={summary ? `${summary.linked_student_accounts} student and ${summary.linked_parent_accounts} parent portals linked` : "Loading saved accounts"} /><Card label="Pending activations" value={summary ? String(summary.pending_activations) : "—"} note="Accounts awaiting email verification" /><Card label="Terminal reports" value={summary ? String(summary.terminal_reports) : "—"} note="Saved report records" /></section>
     <DirectoryManager />
     <PortalAccountSetup />
+    <SchoolWorkflowSettings />
     <SchoolFeeRules />
     <SchoolPromotionReview />
     <section className="mt-4 grid gap-4 lg:grid-cols-3"><article className="glass-panel rounded-lg p-5"><Link2 className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Portal account access</h2><p className="mt-1 text-sm text-muted-foreground">Link parent and student sign-ins to their school records and share the generated activation link.</p><Button className="mt-5" variant="outline" asChild><a href="#portal-account-setup"><Link2 />Manage portal accounts</a></Button></article><article className="glass-panel rounded-lg p-5"><FileText className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Terminal reports</h2><p className="mt-1 text-sm text-muted-foreground">Generate, review, and publish student terminal reports for the current term.</p><Button className="mt-5" variant="outline" asChild><Link to="/terminal-reports"><FileText />Open report centre</Link></Button></article><article className="glass-panel rounded-lg p-5"><ShieldCheck className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Daily reconciliation</h2><p className="mt-1 text-sm text-muted-foreground">Review gateway-verified payments, attendance exceptions, and close the collection day.</p><Button className="mt-5" variant="outline" asChild><Link to="/reconciliation"><ShieldCheck />Open controls</Link></Button></article></section>
   </div></SchoolShell>;
+}
+
+type WorkflowSettings = {
+  class_teachers_can_record_daily_fees: boolean;
+  attendance_print_format: "daily_register" | "ges_weekly";
+};
+
+function SchoolWorkflowSettings() {
+  const [settings, setSettings] = useState<WorkflowSettings>({
+    class_teachers_can_record_daily_fees: false,
+    attendance_print_format: "ges_weekly",
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void schoolApi<WorkflowSettings>("/api/school/workflow-settings")
+      .then((result) => { if (!cancelled) setSettings(result); })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load school workflow settings");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function saveSettings() {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await schoolApi<WorkflowSettings>("/api/school/workflow-settings", {
+        method: "PUT",
+        body: JSON.stringify(settings),
+      });
+      setSettings(result);
+      setNotice("School workflow settings saved.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save school workflow settings");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <section className="glass-panel mt-4 rounded-lg p-5">
+    <div className="flex items-center gap-2">
+      <Settings2 className="size-5 text-primary" />
+      <h2 className="font-display text-xl font-bold">School workflow settings</h2>
+    </div>
+    <p className="mt-1 text-sm text-muted-foreground">These settings apply only to this school.</p>
+    {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+    {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
+    {loading ? <p className="py-5 text-sm text-muted-foreground">Loading workflow settings...</p> : <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <label className="flex items-start gap-3 rounded-md border border-border p-4">
+        <input
+          type="checkbox"
+          checked={settings.class_teachers_can_record_daily_fees}
+          onChange={(event) => setSettings((current) => ({
+            ...current,
+            class_teachers_can_record_daily_fees: event.target.checked,
+          }))}
+          className="mt-1 size-4 accent-primary"
+        />
+        <span>
+          <span className="block text-sm font-semibold">Allow assigned class teachers to record daily fees</span>
+          <span className="mt-1 block text-xs text-muted-foreground">Teachers can confirm the configured daily amount and payment method for learners in their assigned class. Recorded collections appear in Finance.</span>
+        </span>
+      </label>
+      <label className="space-y-2 text-sm font-medium">
+        Default attendance print format
+        <select
+          value={settings.attendance_print_format}
+          onChange={(event) => setSettings((current) => ({
+            ...current,
+            attendance_print_format: event.target.value as WorkflowSettings["attendance_print_format"],
+          }))}
+          className="block h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="daily_register">Daily class register</option>
+          <option value="ges_weekly">Weekly GES-style register</option>
+        </select>
+        <span className="block text-xs font-normal text-muted-foreground">The weekly format follows the requested / and O marks. It is not verified against the official GES form until you share its reference photo.</span>
+      </label>
+    </div>}
+    {!loading && <Button className="mt-4" onClick={() => void saveSettings()} disabled={saving}>{saving ? "Saving..." : "Save settings"}</Button>}
+  </section>;
 }
 
 function DirectoryManager() {
