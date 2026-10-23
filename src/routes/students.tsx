@@ -560,7 +560,88 @@ export default function StudentsPage() {
               </div>
             ) : (
               <>
-                <div className="overflow-x-auto">
+                <div className="space-y-3 p-3 md:hidden">
+                  {students.map((student) => (
+                    <article
+                      key={student.id}
+                      className="rounded-xl border border-border bg-card p-4 shadow-sm"
+                    >
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                          {student.name
+                            .split(" ")
+                            .map((part) => part[0])
+                            .slice(0, 2)
+                            .join("")}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            className="min-h-8 text-left font-semibold text-foreground hover:underline"
+                            onClick={() => {
+                              setSelectedProfileTab("Overview");
+                              setSelectedStudent(student);
+                            }}
+                          >
+                            {student.name}
+                          </button>
+                          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                            {student.studentId}
+                          </p>
+                        </div>
+                        <StatusBadge status={student.status} />
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+                        <div className="min-w-0">
+                          <p className="text-xs text-muted-foreground">Class</p>
+                          <p className="mt-1 break-words text-sm font-medium text-foreground">
+                            {student.className}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs text-muted-foreground">Attendance</p>
+                          <button
+                            type="button"
+                            className="mt-1 min-h-8 text-left text-sm font-medium text-primary hover:underline"
+                            onClick={() => {
+                              setSelectedProfileTab("Attendance");
+                              setSelectedStudent(student);
+                            }}
+                          >
+                            View records
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex justify-end border-t border-border/60 pt-2">
+                        <button
+                          type="button"
+                          aria-label={`Open fees for ${student.name}`}
+                          className="inline-flex min-h-10 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                          onClick={() => {
+                            setSelectedProfileTab("Fees");
+                            setSelectedStudent(student);
+                          }}
+                        >
+                          <MoreHorizontal className="size-4" />
+                          View fee history
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                  {!loading && students.length === 0 && (
+                    <p className="rounded-xl border border-border p-6 text-center text-sm text-muted-foreground">
+                      {query.trim() || filterClassId
+                        ? "No students match these filters."
+                        : "No student records yet. Admit a student to get started."}
+                    </p>
+                  )}
+                  {loading && students.length === 0 && (
+                    <p className="rounded-xl border border-border p-6 text-center text-sm text-muted-foreground">
+                      Loading student records…
+                    </p>
+                  )}
+                </div>
+                <div className="hidden overflow-x-auto md:block">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/30">
@@ -718,7 +799,55 @@ export default function StudentsPage() {
               </div>
             ) : (
               <>
-                <div className="overflow-x-auto">
+                <div className="space-y-3 p-3 md:hidden">
+                  {attendanceRecords.map((record) => (
+                    <article
+                      key={record.student_id}
+                      className="rounded-xl border border-border bg-card p-4 shadow-sm"
+                    >
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="break-words font-semibold text-foreground">
+                            {record.first_name} {record.last_name}
+                          </p>
+                          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                            {record.admission_number}
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium capitalize text-primary">
+                          {record.attendance_status}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-3 border-t border-border/60 pt-3 text-sm">
+                        <div className="min-w-0">
+                          <p className="text-xs text-muted-foreground">Class</p>
+                          <p className="mt-1 break-words font-medium text-foreground">
+                            {record.class_name}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs text-muted-foreground">Note</p>
+                          <p className="mt-1 break-words text-muted-foreground">
+                            {record.note || "—"}
+                          </p>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                  {!attendanceLoading && attendanceRecords.length === 0 && (
+                    <p className="rounded-xl border border-border p-6 text-center text-sm text-muted-foreground">
+                      {query.trim() || filterClassId
+                        ? "No enrolled students match these filters."
+                        : "No students were enrolled on this date."}
+                    </p>
+                  )}
+                  {attendanceLoading && attendanceRecords.length === 0 && (
+                    <p className="rounded-xl border border-border p-6 text-center text-sm text-muted-foreground">
+                      Loading attendance records…
+                    </p>
+                  )}
+                </div>
+                <div className="hidden overflow-x-auto md:block">
                   <table className="w-full min-w-[680px] text-sm">
                     <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
                       <tr>
