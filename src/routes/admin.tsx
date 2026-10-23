@@ -12,7 +12,7 @@ export const Route = createFileRoute("/admin")({ head: () => ({ meta: [{ title: 
 
 type SchoolStatus = "Active" | "Trial" | "Suspended";
 type School = { id: string; name: string; subdomain: string; students: number | null; admins: number | null; status: SchoolStatus; color: string };
-type Application = { id: string; schoolName: string; subdomain: string; applicant: string; email: string; submitted: string; color: string; status: "Pending" | "Approved" };
+type Application = { id: string; schoolName: string; subdomain: string; applicant: string; email: string; phone: string | null; submitted: string; reviewedAt: string | null; color: string; status: "Pending" | "Approved" | "Rejected" | "Cancelled" };
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
 function tenantLoginUrl(subdomain: string, rootDomain: string | null) {
@@ -262,10 +262,11 @@ function Onboarding({ applications, approve, openSignup, rootDomain }: { applica
     setError("");
     try {
       const response = await fetch("/api/platform/applications", { headers: await platformAuthHeaders() });
-      const payload = await response.json().catch(() => null) as { error?: string; applications?: Array<{ id: string; schoolName: string; subdomain: string; applicant: string; email: string; submitted: string; color: string }> } | null;
+      const payload = await response.json().catch(() => null) as { error?: string; applications?: Array<{ id: string; schoolName: string; subdomain: string; applicant: string; email: string; phone: string | null; submitted: string; reviewedAt: string | null; color: string; status: "pending" | "approved" | "rejected" | "cancelled" }> } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not load applications");
       for (const item of payload?.applications ?? []) {
-        approve({ ...item, submitted: new Date(item.submitted).toLocaleString(), status: "Pending" });
+        const statuses = { pending: "Pending", approved: "Approved", rejected: "Rejected", cancelled: "Cancelled" } as const;
+        approve({ ...item, submitted: new Date(item.submitted).toLocaleString(), status: statuses[item.status] });
       }
       setLoaded(true);
     } catch (loadError) {
@@ -324,12 +325,12 @@ function Onboarding({ applications, approve, openSignup, rootDomain }: { applica
 
   return <div>
     <div className="flex items-center justify-between border-b border-border px-5 py-4">
-      <div><h2 className="font-display text-lg font-bold">School applications</h2><p className="mt-1 text-xs text-muted-foreground">Approval creates a trial tenant and first School Admin workspace.</p></div>
+      <div><h2 className="font-display text-lg font-bold">School sign-ups</h2><p className="mt-1 text-xs text-muted-foreground">Review contact and registration details for pending and previously reviewed applications.</p></div>
       <Button size="sm" variant="outline" onClick={openSignup}><Mail />Open onboarding</Button>
     </div>
     {session.checkingSession ? <p className="border-b border-border px-5 py-4 text-sm text-muted-foreground">Checking Super Admin session...</p> : session.authenticated ? (
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
-        <p className="text-xs text-muted-foreground">{loaded ? `${applications.filter((application) => application.status === "Pending").length} pending applications` : "Loading applications..."}</p>
+        <p className="text-xs text-muted-foreground">{loaded ? `${applications.filter((application) => application.status === "Pending").length} pending · ${applications.length} total sign-ups` : "Loading applications..."}</p>
         <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void loadApplications()} disabled={loading}>{loading ? "Loading..." : "Refresh queue"}</Button><Button size="sm" variant="ghost" onClick={() => void session.signOut()}>Sign out</Button></div>
       </div>
     ) : (
@@ -347,8 +348,8 @@ function Onboarding({ applications, approve, openSignup, rootDomain }: { applica
     {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
     {invitationNotice && <div role="status" className={cn("flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between", invitationSent ? "border-emerald-500/20 bg-emerald-500/5" : "border-amber-500/20 bg-amber-500/5")}><div><p className={cn("text-sm font-medium", invitationSent ? "text-emerald-800" : "text-amber-800")}>{invitationNotice}</p>{approvedLoginUrl && <a href={approvedLoginUrl} className="mt-1 block break-all text-sm text-secondary-foreground underline">{approvedLoginUrl}</a>}</div>{approvedLoginUrl && <Button size="sm" variant="outline" onClick={() => void copyApprovedLoginUrl()}>{copiedLoginUrl ? <Check /> : <Copy />}{copiedLoginUrl ? "Copied" : "Copy link"}</Button>}</div>}
     <div className="divide-y divide-border/70">
-      {session.authenticated && applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md text-white" style={{ backgroundColor: application.color }}><Building2 className="size-4" /></div><div><p className="font-medium">{application.schoolName}</p><p className="mt-0.5 text-xs text-muted-foreground"><a href={tenantLoginUrl(application.subdomain, rootDomain)} target="_blank" rel="noreferrer" className="underline">{tenantLoginUrl(application.subdomain, rootDomain)}</a> · {application.submitted}</p><p className="mt-1 text-xs text-secondary-foreground">{application.applicant} · {application.email}</p></div></div>{application.status === "Pending" ? <Button size="sm" disabled={approvingId === application.id} onClick={() => void approveApplication(application)}><CheckCircle2 />{approvingId === application.id ? "Approving..." : "Approve tenant"}</Button> : <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"><CheckCircle2 className="size-4" />Tenant created</span>}</article>)}
-      {session.authenticated && loaded && applications.every((application) => application.status !== "Pending") && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No pending applications.</p>}
+      {session.authenticated && applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md text-white" style={{ backgroundColor: application.color }}><Building2 className="size-4" /></div><div><p className="font-medium">{application.schoolName} <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{application.status}</span></p><p className="mt-0.5 text-xs text-muted-foreground"><a href={tenantLoginUrl(application.subdomain, rootDomain)} target="_blank" rel="noreferrer" className="underline">{application.subdomain}</a> · Submitted {application.submitted}{application.reviewedAt && ` · Reviewed ${new Date(application.reviewedAt).toLocaleString()}`}</p><p className="mt-1 text-xs text-secondary-foreground">Contact: {application.applicant} · <a href={`mailto:${application.email}`} className="underline">{application.email}</a>{application.phone && <> · <a href={`tel:${application.phone}`} className="underline">{application.phone}</a></>}</p></div></div>{application.status === "Pending" ? <Button size="sm" disabled={approvingId === application.id} onClick={() => void approveApplication(application)}><CheckCircle2 />{approvingId === application.id ? "Approving..." : "Approve tenant"}</Button> : application.status === "Approved" ? <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"><CheckCircle2 className="size-4" />Tenant created</span> : null}</article>)}
+      {session.authenticated && loaded && applications.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No school sign-ups have been received.</p>}
     </div>
   </div>;
 }

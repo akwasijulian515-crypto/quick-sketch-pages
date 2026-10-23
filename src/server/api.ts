@@ -487,6 +487,77 @@ async function sendActivationInvitation(
   }
 }
 
+async function sendPlatformSignupNotification(
+  env: RuntimeEnv,
+  recipients: string[],
+  application: { schoolName: string; subdomain: string; contactName: string; email: string; phone: string },
+) {
+  if (!recipients.length) return { sent: false as const, error: "No active Super Admin email addresses are configured." };
+  const subject = `New school signup: ${application.schoolName}`;
+  const safeSchool = escapeHtml(application.schoolName);
+  const safeSubdomain = escapeHtml(application.subdomain);
+  const safeName = escapeHtml(application.contactName);
+  const safeEmail = escapeHtml(application.email);
+  const safePhone = escapeHtml(application.phone || "Not provided");
+  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#183237"><h1>New school signup</h1><p><strong>School:</strong> ${safeSchool}</p><p><strong>Requested workspace:</strong> ${safeSubdomain}</p><p><strong>Contact:</strong> ${safeName}</p><p><strong>Email:</strong> ${safeEmail}</p><p><strong>Phone:</strong> ${safePhone}</p><p>Review this application in the Klasora Super Admin dashboard.</p></div>`;
+  const text = `New school signup\n\nSchool: ${application.schoolName}\nRequested workspace: ${application.subdomain}\nContact: ${application.contactName}\nEmail: ${application.email}\nPhone: ${application.phone || "Not provided"}\n\nReview this application in the Klasora Super Admin dashboard.`;
+  const smtpValues = [env.SMTP_HOST, env.SMTP_PORT, env.SMTP_USERNAME, env.SMTP_PASSWORD, env.SMTP_FROM_EMAIL];
+  const hasSmtpConfiguration = smtpValues.some((value) => value !== undefined && value !== "");
+  const smtpConfigured = smtpValues.every((value) => typeof value === "string" && value.trim().length > 0);
+  const smtpFromEmail = env.SMTP_FROM_EMAIL?.trim();
+
+  if (hasSmtpConfiguration) {
+    const port = Number(env.SMTP_PORT);
+    if (!smtpConfigured || !smtpFromEmail || !Number.isInteger(port) || port < 1 || port > 65535) {
+      return { sent: false as const, error: "SMTP notification settings are incomplete or invalid." };
+    }
+    try {
+      const transporter = createTransport({
+        host: env.SMTP_HOST,
+        port,
+        secure: port === 465,
+        auth: { user: env.SMTP_USERNAME, pass: env.SMTP_PASSWORD },
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
+      });
+      await transporter.sendMail({
+        from: { name: env.SMTP_FROM_NAME?.trim() || "Klasora", address: smtpFromEmail },
+        to: recipients,
+        subject,
+        html,
+        text,
+      });
+      return { sent: true as const };
+    } catch (error) {
+      console.error("SMTP platform signup notification failed", error instanceof Error ? error.name : "UnknownError");
+      return { sent: false as const, error: "SMTP could not deliver the Super Admin notification." };
+    }
+  }
+
+  if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
+    return { sent: false as const, error: "Email is not configured. Set SMTP settings or configure RESEND_API_KEY and RESEND_FROM_EMAIL." };
+  }
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ from: env.RESEND_FROM_EMAIL, to: recipients, subject, html, text }),
+    });
+    if (!response.ok) {
+      console.error("Resend rejected a platform signup notification", response.status);
+      return { sent: false as const, error: "The email provider could not deliver the Super Admin notification." };
+    }
+    return { sent: true as const };
+  } catch (error) {
+    console.error("Could not reach Resend for a platform signup notification", error instanceof Error ? error.name : "UnknownError");
+    return { sent: false as const, error: "Could not reach the email provider to deliver the Super Admin notification." };
+  }
+}
+
 type SchoolAdminContext = {
   schoolId: string;
   subdomain: string;
@@ -628,6 +699,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
 
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
+  const classLifecycleMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)$/i);
   const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
   const guardianLifecycleMatch = url.pathname.match(/^\/api\/school\/guardians\/([0-9a-f-]+)$/i);
@@ -668,6 +740,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     ?? (studentHistoryMatch && request.method === "GET" ? ["school_admin"] : undefined)
     ?? (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined)
     ?? (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined)
+    ?? (classLifecycleMatch && request.method === "PATCH" ? ["school_admin"] : undefined)
     ?? (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
   const schoolDataRoute = url.pathname === "/api/school/classes"
     || url.pathname === "/api/school/students"
@@ -682,6 +755,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     || studentHistoryMatch !== null
     || paymentReviewMatch !== null
     || classRosterMatch !== null
+    || classLifecycleMatch !== null
     || termCloseMatch !== null
     || workflowMethodRoles !== undefined;
   if (schoolDataRoute) {
@@ -1761,6 +1835,148 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (classId && !uuidOrNull(classId)) return badRequest("Invalid class ID");
 
       if (request.method === "GET") {
+        if (url.searchParams.get("school_report") === "true") {
+          if (school.role !== "school_admin") return json({ error: "Only a School Admin can print the whole-school attendance report." }, 403);
+          const asOfDate = url.searchParams.get("as_of")?.trim() || new Date().toISOString().slice(0, 10);
+          if (!validIsoDate(asOfDate)) return badRequest("Enter a valid report date");
+          if (asOfDate > new Date().toISOString().slice(0, 10)) return badRequest("Attendance reports cannot include future dates");
+
+          const periodRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              select c.id as class_id, c.name as class_name, ay.name as academic_year_name,
+                     t.id as term_id, t.name as term_name,
+                     t.starts_on::text as term_starts_on,
+                     least(t.ends_on, ${asOfDate}::date)::text as report_ends_on
+              from classes c
+              join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              left join lateral (
+                select candidate.id, candidate.name, candidate.starts_on, candidate.ends_on
+                from terms candidate
+                where candidate.school_id = c.school_id
+                  and candidate.academic_year_id = c.academic_year_id
+                  and (candidate.id = c.term_id or (c.term_id is null and candidate.starts_on <= ${asOfDate}::date))
+                order by
+                  case
+                    when candidate.id = c.term_id then 0
+                    when ${asOfDate}::date between candidate.starts_on and candidate.ends_on then 1
+                    else 2
+                  end,
+                  candidate.starts_on desc
+                limit 1
+              ) t on true
+              where c.school_id = ${school.schoolId}::uuid
+                and c.academic_year_id = (
+                  select current_year.id
+                  from academic_years current_year
+                  where current_year.school_id = c.school_id
+                  order by current_year.is_current desc, current_year.starts_on desc
+                  limit 1
+                )
+              order by ay.is_current desc, ay.starts_on desc, c.name
+            `,
+          );
+          if (!periodRows.length) return json({ school_name: school.schoolName, classes: [] });
+          const missingTermClasses = periodRows
+            .filter((row) => !row["term_id"] || asOfDate < String(row["term_starts_on"]))
+            .map((row) => String(row["class_name"]));
+          if (missingTermClasses.length) {
+            return json({
+              error: `Configure a term starting on or before the report date for every class before exporting. Missing: ${missingTermClasses.join(", ")}`,
+            }, 409);
+          }
+
+          const attendanceRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              with class_periods as (
+                select c.id as class_id, t.starts_on, least(t.ends_on, ${asOfDate}::date) as report_ends_on
+                from classes c
+                join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+                left join lateral (
+                  select candidate.id, candidate.starts_on, candidate.ends_on
+                  from terms candidate
+                  where candidate.school_id = c.school_id
+                    and candidate.academic_year_id = c.academic_year_id
+                    and (candidate.id = c.term_id or (c.term_id is null and candidate.starts_on <= ${asOfDate}::date))
+                  order by
+                    case
+                      when candidate.id = c.term_id then 0
+                      when ${asOfDate}::date between candidate.starts_on and candidate.ends_on then 1
+                      else 2
+                    end,
+                    candidate.starts_on desc
+                  limit 1
+                ) t on true
+                where c.school_id = ${school.schoolId}::uuid
+                  and c.academic_year_id = (
+                    select current_year.id
+                    from academic_years current_year
+                    where current_year.school_id = c.school_id
+                    order by current_year.is_current desc, current_year.starts_on desc
+                    limit 1
+                  )
+              )
+              select cp.class_id, s.attendance_date::text as attendance_date,
+                     st.id as student_id, st.first_name, st.last_name,
+                     st.admission_number, st.gender, r.status
+              from class_periods cp
+              join attendance_sessions s on s.school_id = ${school.schoolId}::uuid
+                and s.class_id = cp.class_id
+                and s.attendance_date between cp.starts_on and cp.report_ends_on
+              join class_enrollments e on e.school_id = s.school_id
+                and e.class_id = s.class_id
+                and e.starts_on <= s.attendance_date
+                and (e.ends_on is null or e.ends_on >= s.attendance_date)
+              join students st on st.id = e.student_id and st.school_id = e.school_id
+              left join attendance_records r on r.school_id = s.school_id
+                and r.attendance_session_id = s.id and r.student_id = st.id
+              order by cp.class_id, s.attendance_date, st.last_name, st.first_name, st.admission_number
+            `,
+          );
+          const classReports = new Map<string, {
+            id: string;
+            className: string;
+            academicYearName: string;
+            termName: string;
+            startDate: string;
+            endDate: string;
+            days: Map<string, { date: string; students: Record<string, unknown>[] }>;
+          }>();
+          for (const row of periodRows) {
+            const id = String(row["class_id"]);
+            classReports.set(id, {
+              id,
+              className: String(row["class_name"]),
+              academicYearName: String(row["academic_year_name"]),
+              termName: String(row["term_name"]),
+              startDate: String(row["term_starts_on"]),
+              endDate: String(row["report_ends_on"]),
+              days: new Map(),
+            });
+          }
+          for (const row of attendanceRows) {
+            const schoolClass = classReports.get(String(row["class_id"]));
+            if (!schoolClass) continue;
+            const attendanceDate = String(row["attendance_date"]);
+            const day = schoolClass.days.get(attendanceDate) ?? { date: attendanceDate, students: [] };
+            day.students.push({
+              id: String(row["student_id"]),
+              first_name: String(row["first_name"]),
+              last_name: String(row["last_name"]),
+              admission_number: String(row["admission_number"]),
+              gender: row["gender"] == null ? "" : String(row["gender"]),
+              status: row["status"] == null ? null : String(row["status"]),
+            });
+            schoolClass.days.set(attendanceDate, day);
+          }
+          return json({
+            school_name: school.schoolName,
+            classes: [...classReports.values()].map((schoolClass) => ({
+              ...schoolClass,
+              days: [...schoolClass.days.values()],
+            })),
+          });
+        }
+
         if (!classId) {
           const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
           if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid attendance date");
@@ -3696,7 +3912,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
           select c.id, c.name, c.form_level as grade_level,
-                 ay.id as academic_year_id, ay.name as academic_year_name, ay.starts_on as academic_year_starts_on,
+                 c.class_teacher_id,
+                 teacher.display_name as class_teacher_name,
+                   ay.id as academic_year_id, ay.name as academic_year_name, ay.starts_on as academic_year_starts_on,
                  t.id as term_id, t.name as term_name,
                  (select count(*)::int
                   from class_enrollments e
@@ -3706,6 +3924,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                     and e.ends_on is null
                     and st.active) as student_count
           from classes c
+          left join staff_profiles class_teacher on class_teacher.id = c.class_teacher_id and class_teacher.school_id = c.school_id
+          left join users teacher on teacher.id = class_teacher.user_id
           join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
           left join terms t on t.id = c.term_id and t.school_id = c.school_id
           where c.school_id = ${school.schoolId}::uuid
@@ -3724,6 +3944,47 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         `,
       );
       return json({ classes: rows });
+    }
+
+    if (classLifecycleMatch && request.method === "PATCH") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+      const teacherId = body["class_teacher_id"];
+      if (name.length < 2 || name.length > 100) return badRequest("Class name must be 2–100 characters");
+      if (!uuidOrNull(teacherId)) return badRequest("Choose a valid class teacher");
+      try {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            update classes c
+            set name = ${name},
+                class_teacher_id = ${typeof teacherId === "string" ? teacherId : null}::uuid
+            where c.id = ${classLifecycleMatch[1]}::uuid
+              and c.school_id = ${school.schoolId}::uuid
+              and (
+                ${teacherId}::uuid is null
+                or c.class_teacher_id = ${teacherId}::uuid
+                or exists (
+                  select 1 from staff_profiles sp
+                  join memberships m on m.school_id = sp.school_id and m.user_id = sp.user_id
+                  where sp.id = ${teacherId}::uuid
+                    and sp.school_id = c.school_id
+                    and m.role = 'teacher'
+                    and m.active
+                )
+              )
+            returning c.id, c.name, c.class_teacher_id
+          `,
+        );
+        if (!rows[0]) return json({ error: "Class not found or the selected teacher is not active in this school." }, 404);
+        return json({ class: rows[0] });
+      } catch (error) {
+        if (error instanceof Error && /unique/i.test(error.message)) {
+          return json({ error: "A class with this name already exists for the academic year." }, 409);
+        }
+        throw error;
+      }
     }
 
     if (url.pathname === "/api/school/classes" && request.method === "POST") {
@@ -4351,7 +4612,35 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       `;
       const saved = rows[0];
       if (!saved) throw new Error("Application insert returned no result");
-      return json({ application: { id: String(saved["id"]), submittedAt: new Date(String(saved["created_at"])).toISOString() } }, 201);
+      let notification: { sent: boolean; error?: string };
+      try {
+        const adminRows = await withDatabaseContext(sql, { platformAdmin: true }, (tx) =>
+          tx`
+            select distinct lower(u.email) as email
+            from memberships m
+            join users u on u.id = m.user_id
+            where m.role = 'super_admin' and m.school_id is null and m.active
+          `,
+        );
+        const recipients = adminRows
+          .map((row) => String(row["email"] ?? "").trim().toLowerCase())
+          .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+        notification = await sendPlatformSignupNotification(env, recipients, {
+          schoolName,
+          subdomain: requestedSubdomain,
+          contactName,
+          email: contactEmail,
+          phone: contactPhone,
+        });
+        if (!notification.sent) console.error("Super Admin was not notified about a school signup", notification.error);
+      } catch (error) {
+        console.error("Could not prepare a Super Admin school signup notification", error instanceof Error ? error.name : "UnknownError");
+        notification = { sent: false, error: "The application was saved, but the Super Admin notification could not be prepared." };
+      }
+      return json({
+        application: { id: String(saved["id"]), submittedAt: new Date(String(saved["created_at"])).toISOString() },
+        notification,
+      }, 201);
     } catch (error) {
       if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That subdomain already has an application or school" }, 409);
       throw error;
@@ -4366,9 +4655,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (url.pathname === "/api/platform/applications" && request.method === "GET") {
       const rows = await sql`
         select id, school_name, requested_subdomain, contact_name, contact_email, contact_phone,
-               primary_color, crest_url, status, created_at
+               primary_color, crest_url, status, created_at, reviewed_at
         from school_onboarding_applications
-        where status = 'pending'
         order by created_at desc
       `;
       return json({ applications: rows.map((row) => ({
@@ -4382,6 +4670,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         crestUrl: row["crest_url"] ? String(row["crest_url"]) : null,
         status: String(row["status"]),
         submitted: new Date(String(row["created_at"])).toISOString(),
+        reviewedAt: row["reviewed_at"] ? new Date(String(row["reviewed_at"])).toISOString() : null,
       })) });
     }
 
@@ -4421,7 +4710,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           ),
           approved_application as (
             update school_onboarding_applications
-            set status = 'approved'
+            set status = 'approved', reviewed_at = now()
             where id = ${applicationId}::uuid and status = 'pending'
               and exists (select 1 from inserted_membership)
             returning id

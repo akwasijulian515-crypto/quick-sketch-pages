@@ -27,12 +27,16 @@ type SchoolClass = {
   id: string;
   name: string;
   grade_level: string;
+  class_teacher_id: string | null;
+  class_teacher_name: string | null;
   academic_year_id: string;
   academic_year_name: string;
   term_id: string | null;
   term_name: string | null;
   student_count: number;
 };
+
+type ClassTeacher = { staff_profile_id: string | null; display_name: string; role: string; active: boolean };
 
 type Student = {
   id: string;
@@ -180,9 +184,9 @@ function SchoolWorkflowSettings() {
           className="block h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
         >
           <option value="daily_register">Daily class register</option>
-          <option value="ges_term_to_date">Term-to-date GES-style register</option>
+          <option value="ges_term_to_date">Whole-school term-to-date GES-style register</option>
         </select>
-        <span className="block text-xs font-normal text-muted-foreground">Prints term-to-date attendance for an individual class with daily marks and cumulative totals. The layout is not verified against the official GES form until you share its reference photo.</span>
+        <span className="block text-xs font-normal text-muted-foreground">The school-wide option includes every class, its configured term, saved daily marks, and cumulative totals. The layout is not verified against the official GES form until you share its reference photo.</span>
       </label>
     </div>}
     {!loading && <Button className="mt-4" onClick={() => void saveSettings()} disabled={saving}>{saving ? "Saving..." : "Save settings"}</Button>}
@@ -193,6 +197,7 @@ function DirectoryManager() {
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  const [teachers, setTeachers] = useState<ClassTeacher[]>([]);
   const [search, setSearch] = useState("");
   const [classFilter, setClassFilter] = useState("");
   const [page, setPage] = useState(1);
@@ -202,6 +207,9 @@ function DirectoryManager() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [classDialogOpen, setClassDialogOpen] = useState(false);
+  const [classBeingEdited, setClassBeingEdited] = useState<SchoolClass | null>(null);
+  const [editedClassName, setEditedClassName] = useState("");
+  const [editedClassTeacher, setEditedClassTeacher] = useState("");
   const [studentDialogOpen, setStudentDialogOpen] = useState(false);
   const [classYearId, setClassYearId] = useState("");
   const [rosterClass, setRosterClass] = useState<SchoolClass | null>(null);
@@ -219,6 +227,11 @@ function DirectoryManager() {
     setAcademicYears(result.academic_years);
   }, []);
 
+  const loadTeachers = useCallback(async () => {
+    const result = await schoolApi<{ team: ClassTeacher[] }>("/api/school/team");
+    setTeachers(result.team.filter((member) => member.role === "teacher" && member.active && member.staff_profile_id));
+  }, []);
+
   const loadStudents = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (search.trim()) params.set("search", search.trim());
@@ -232,13 +245,13 @@ function DirectoryManager() {
     setLoading(true);
     setError("");
     try {
-      await Promise.all([loadClasses(), loadAcademicYears(), loadStudents()]);
+      await Promise.all([loadClasses(), loadAcademicYears(), loadStudents(), loadTeachers()]);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load school records");
     } finally {
       setLoading(false);
     }
-  }, [loadAcademicYears, loadClasses, loadStudents]);
+  }, [loadAcademicYears, loadClasses, loadStudents, loadTeachers]);
 
   useEffect(() => {
     void reloadDirectory();
@@ -278,6 +291,30 @@ function DirectoryManager() {
       await Promise.all([loadClasses(), loadAcademicYears()]);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not create class");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveClassChanges(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!classBeingEdited) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await schoolApi(`/api/school/classes/${encodeURIComponent(classBeingEdited.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editedClassName,
+          class_teacher_id: editedClassTeacher || null,
+        }),
+      });
+      setClassBeingEdited(null);
+      setNotice("Class details and class teacher updated.");
+      await loadClasses();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not update this class");
     } finally {
       setSaving(false);
     }
@@ -345,8 +382,8 @@ function DirectoryManager() {
       </div>
       {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading classes...</p> : classes.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">No classes created yet. Click &apos;Add Class&apos; to start</p> : <div className="mt-4 overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-sm">
-          <thead className="border-b text-xs text-muted-foreground"><tr><th className="px-3 py-2 font-medium">Class</th><th className="px-3 py-2 font-medium">Grade level</th><th className="px-3 py-2 font-medium">Academic year</th><th className="px-3 py-2 font-medium">Term</th><th className="px-3 py-2 text-right font-medium">Students</th><th className="px-3 py-2" /></tr></thead>
-          <tbody className="divide-y divide-border/70">{classes.map((item) => <tr key={item.id}><td className="px-3 py-3 font-medium">{item.name}</td><td className="px-3 py-3">{item.grade_level}</td><td className="px-3 py-3">{item.academic_year_name}</td><td className="px-3 py-3">{item.term_name ?? "—"}</td><td className="px-3 py-3 text-right tabular-nums">{Number(item.student_count)}</td><td className="px-3 py-3 text-right"><Button size="sm" variant="outline" onClick={() => void openRoster(item)}>Roster</Button></td></tr>)}</tbody>
+          <thead className="border-b text-xs text-muted-foreground"><tr><th className="px-3 py-2 font-medium">Class</th><th className="px-3 py-2 font-medium">Grade level</th><th className="px-3 py-2 font-medium">Academic year</th><th className="px-3 py-2 font-medium">Term</th><th className="px-3 py-2 font-medium">Class teacher</th><th className="px-3 py-2 text-right font-medium">Students</th><th className="px-3 py-2" /></tr></thead>
+          <tbody className="divide-y divide-border/70">{classes.map((item) => <tr key={item.id}><td className="px-3 py-3 font-medium">{item.name}</td><td className="px-3 py-3">{item.grade_level}</td><td className="px-3 py-3">{item.academic_year_name}</td><td className="px-3 py-3">{item.term_name ?? "—"}</td><td className="px-3 py-3">{item.class_teacher_name ?? "Unassigned"}</td><td className="px-3 py-3 text-right tabular-nums">{Number(item.student_count)}</td><td className="px-3 py-3 text-right"><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => void openRoster(item)}>Roster</Button><Button size="sm" variant="outline" onClick={() => { setClassBeingEdited(item); setEditedClassName(item.name); setEditedClassTeacher(item.class_teacher_id ?? ""); }}>Edit</Button></div></td></tr>)}</tbody>
         </table>
       </div>}
     </article>
@@ -395,6 +432,17 @@ function DirectoryManager() {
           <FormField label="Class assignment"><select name="class_id" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="">Unassigned</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>
           <div className="border-t border-border/70 pt-3"><h3 className="text-sm font-medium">Guardian contact (optional)</h3><div className="mt-3 space-y-3"><FormField label="Guardian name"><Input name="guardian_name" maxLength={160} autoComplete="name" /></FormField><div className="grid gap-3 sm:grid-cols-2"><FormField label="Phone"><Input name="guardian_phone" maxLength={40} type="tel" autoComplete="tel" /></FormField><FormField label="Email"><Input name="guardian_email" maxLength={254} type="email" autoComplete="email" /></FormField></div></div></div>
           <DialogFooter><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Add student"}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={classBeingEdited !== null} onOpenChange={(open) => { if (!open && !saving) setClassBeingEdited(null); }}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Edit class</DialogTitle><DialogDescription>Update the class name or assign an active teacher from this school.</DialogDescription></DialogHeader>
+        <form onSubmit={(event) => void saveClassChanges(event)} className="space-y-4">
+          <FormField label="Class name"><Input required minLength={2} maxLength={100} value={editedClassName} onChange={(event) => setEditedClassName(event.target.value)} /></FormField>
+          <FormField label="Class teacher"><select value={editedClassTeacher} onChange={(event) => setEditedClassTeacher(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="">Unassigned</option>{classBeingEdited?.class_teacher_id && !teachers.some((teacher) => teacher.staff_profile_id === classBeingEdited.class_teacher_id) && <option value={classBeingEdited.class_teacher_id}>{classBeingEdited.class_teacher_name ?? "Current teacher"} (inactive)</option>}{teachers.map((teacher) => <option key={teacher.staff_profile_id} value={teacher.staff_profile_id ?? ""}>{teacher.display_name}</option>)}</select></FormField>
+          <DialogFooter><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Save class"}</Button></DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
