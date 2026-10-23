@@ -6,10 +6,12 @@ import {
   useRouter,
   HeadContent,
   Scripts,
+  type ErrorComponentProps,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import { TenantBrandingProvider } from "../components/tenant-branding-provider";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
 function NotFoundComponent() {
@@ -34,10 +36,18 @@ function NotFoundComponent() {
   );
 }
 
-function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
   useEffect(() => {
+    if (/Failed to fetch dynamically imported module|Importing a module script failed/i.test(error instanceof Error ? error.message : String(error ?? ""))) {
+      const last = Number(sessionStorage.getItem("chunk-reload-at") ?? 0);
+      if (Date.now() - last > 10_000) {
+        sessionStorage.setItem("chunk-reload-at", String(Date.now()));
+        window.location.reload();
+        return;
+      }
+    }
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
   }, [error]);
 
@@ -77,23 +87,36 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Harrow Green School Operations" },
+      { title: "Klasora | School operations" },
+      { name: "theme-color", content: "#0F3629" },
       { name: "description", content: "School attendance, payments, grades, classes, and student operations." },
-      { name: "author", content: "Harrow Green" },
-      { property: "og:title", content: "Harrow Green School Operations" },
+      { name: "author", content: "Klasora" },
+      { property: "og:title", content: "Klasora | School operations" },
       { property: "og:description", content: "A clear workspace for daily school operations." },
       { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "Klasora" },
+      { property: "og:url", content: "https://klasora-tenant-portal.vercel.app/" },
+      { property: "og:image", content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png" },
+      { property: "og:image:secure_url", content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png" },
+      { property: "og:image:type", content: "image/png" },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
+      { property: "og:image:alt", content: "Klasora — a clear workspace for daily school operations" },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "Klasora | School operations" },
+      { name: "twitter:description", content: "A clear workspace for daily school operations." },
+      { name: "twitter:image", content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png" },
     ],
     links: [
       {
         rel: "stylesheet",
         href: appCss,
       },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
-      { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Libre+Baskerville:wght@400;700&display=swap" },
+      { rel: "icon", href: "/favicon-32.png", type: "image/png", sizes: "32x32" },
+      { rel: "icon", href: "/favicon.ico", sizes: "any" },
+      { rel: "apple-touch-icon", href: "/brand/klasora-icon-192.png" },
+      { rel: "preload", href: "/fonts/inter-latin.woff2", as: "font", type: "font/woff2", crossOrigin: "anonymous" },
+      { rel: "preload", href: "/fonts/sora-latin.woff2", as: "font", type: "font/woff2", crossOrigin: "anonymous" },
     ],
   }),
   shellComponent: RootShell,
@@ -104,8 +127,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem("klasora-theme");if(t==="dark"||(!t&&matchMedia("(prefers-color-scheme: dark)").matches)){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark"}}catch(e){}`,
+          }}
+        />
         <HeadContent />
       </head>
       <body>
@@ -119,10 +147,35 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
+  // After a new version is published, an open tab may still request old page files
+  // that no longer exist. Reload once to pick up the latest version.
+  useEffect(() => {
+    const key = "chunk-reload-at";
+    const reloadOnce = (event?: Event) => {
+      const last = Number(sessionStorage.getItem(key) ?? 0);
+      if (Date.now() - last < 10_000) return;
+      event?.preventDefault();
+      sessionStorage.setItem(key, String(Date.now()));
+      window.location.reload();
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const message = String((event.reason as Error | undefined)?.message ?? event.reason ?? "");
+      if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(message)) reloadOnce();
+    };
+    window.addEventListener("vite:preloadError", reloadOnce);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("vite:preloadError", reloadOnce);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
+      <TenantBrandingProvider>
+        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+        <Outlet />
+      </TenantBrandingProvider>
     </QueryClientProvider>
   );
 }

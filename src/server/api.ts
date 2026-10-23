@@ -1,46 +1,4395 @@
-import { database, type RuntimeEnv } from "./database";
+import { database, resolveRuntimeEnv, withDatabaseContext, type RuntimeEnv } from "./database";
 import { resolveTenant } from "./tenant";
+import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createTransport } from "nodemailer";
 
-type SchoolRecord = { id: string; name: string; subdomain: string; status: "trial" | "active" | "suspended"; createdAt: string };
+type SchoolRecord = { id: string; name: string; subdomain: string; status: "trial" | "active" | "suspended"; createdAt: string; primaryColor?: string; students?: number; admins?: number };
 
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
 const badRequest = (message: string) => json({ error: message }, 400);
 
-function isPlatformAdmin(request: Request, env: RuntimeEnv) {
-  const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  return Boolean(env.PLATFORM_ADMIN_TOKEN && token === env.PLATFORM_ADMIN_TOKEN);
+async function ensureTermFeeArrears(sql: ReturnType<typeof database>, schoolId: string) {
+  const endedTerms = await withDatabaseContext(sql, { schoolId }, (tx) => tx`
+    select id
+    from terms
+    where school_id = ${schoolId}::uuid
+      and ends_on < current_date
+      and arrears_processed_at is null
+    order by ends_on, starts_on
+  `);
+
+  for (const term of endedTerms) {
+    await withDatabaseContext(sql, { schoolId }, (tx) => tx`
+      with source_term as materialized (
+        select id, starts_on, ends_on
+        from terms
+        where id = ${String(term["id"])}::uuid
+          and school_id = ${schoolId}::uuid
+          and ends_on < current_date
+          and arrears_processed_at is null
+      ),
+      next_term as materialized (
+        select t.id, t.starts_on, t.ends_on
+        from terms t cross join source_term s
+        where t.school_id = ${schoolId}::uuid and t.starts_on > s.ends_on
+        order by t.starts_on, t.ends_on
+        limit 1
+      ),
+      source_invoice_insert as (
+        insert into invoices
+          (school_id, student_id, class_fee_id, invoice_number, description,
+           amount_due, base_amount_due, currency, status)
+        select f.school_id, e.student_id, f.id,
+               'SF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+               f.description, f.amount, f.amount, f.currency, 'issued'::invoice_status
+        from class_fees f
+        join source_term s on s.id = f.term_id
+        join class_enrollments e on e.school_id = f.school_id and e.class_id = f.class_id
+          and e.starts_on <= s.ends_on and coalesce(e.ends_on, 'infinity'::date) >= s.starts_on
+        where f.school_id = ${schoolId}::uuid and f.fee_type in ('tuition', 'pta')
+          and not exists (
+            select 1 from invoices existing
+            where existing.school_id = f.school_id and existing.student_id = e.student_id
+              and existing.class_fee_id = f.id and existing.status <> 'void'
+          )
+        on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
+        returning id, school_id, student_id, class_fee_id, amount_due, currency, rolled_forward_at
+      ),
+      source_invoices as materialized (
+        select i.id, i.school_id, i.student_id, i.class_fee_id, i.amount_due, i.currency, i.rolled_forward_at
+        from invoices i
+        join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+        join source_term s on s.id = f.term_id
+        where i.school_id = ${schoolId}::uuid and i.status <> 'void'
+        union
+        select id, school_id, student_id, class_fee_id, amount_due, currency, rolled_forward_at
+        from source_invoice_insert
+      ),
+      source_balance as materialized (
+        select i.id as source_invoice_id, i.school_id, i.student_id, i.class_fee_id,
+               f.fee_type, i.currency,
+               greatest(i.amount_due
+                 - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0), 0) as amount
+        from source_invoices i
+        join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+        left join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+        where f.fee_type in ('tuition', 'pta') and i.rolled_forward_at is null
+        group by i.id, i.school_id, i.student_id, i.class_fee_id, f.fee_type,
+                 i.currency, i.amount_due
+      ),
+      eligible as materialized (
+        select b.*, target_fee.id as destination_fee_id,
+               target_fee.amount as destination_base_amount,
+               target_fee.description as destination_description,
+               target_fee.currency as destination_currency,
+               n.id as destination_term_id
+        from source_balance b
+        join class_fees source_fee
+          on source_fee.id = b.class_fee_id and source_fee.school_id = b.school_id
+        join source_term s on s.id = source_fee.term_id
+        join next_term n on true
+        join class_enrollments next_enrollment
+          on next_enrollment.school_id = b.school_id
+          and next_enrollment.student_id = b.student_id
+          and next_enrollment.starts_on <= n.ends_on
+          and coalesce(next_enrollment.ends_on, 'infinity'::date) >= n.starts_on
+        join class_fees target_fee
+          on target_fee.school_id = b.school_id
+          and target_fee.class_id = next_enrollment.class_id
+          and target_fee.term_id = n.id
+          and target_fee.fee_type = b.fee_type
+      ),
+      pending_source as materialized (
+        select exists (
+          select 1
+          from source_invoices i
+          join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+          where p.status = 'pending' and p.category = 'school_fee'
+        ) as has_pending
+      ),
+      unmapped_source as materialized (
+        select exists (
+          select 1 from source_balance b
+          where b.amount > 0
+            and not exists (
+              select 1 from eligible e where e.source_invoice_id = b.source_invoice_id
+            )
+        ) as has_unmapped
+      ),
+      destination_invoice_insert as (
+        insert into invoices
+          (school_id, student_id, class_fee_id, invoice_number, description,
+           amount_due, base_amount_due, arrears_amount, currency, status)
+        select distinct e.school_id, e.student_id, e.destination_fee_id,
+               'SF-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+               e.destination_description, e.destination_base_amount,
+               e.destination_base_amount, 0, e.destination_currency, 'issued'::invoice_status
+        from eligible e
+        where e.amount > 0
+        on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
+        returning id, school_id, student_id, class_fee_id
+      ),
+      destination_invoices as materialized (
+        select i.id, i.school_id, i.student_id, i.class_fee_id
+        from invoices i
+        join eligible e on e.school_id = i.school_id and e.student_id = i.student_id
+          and e.destination_fee_id = i.class_fee_id
+        where i.status <> 'void'
+        union
+        select id, school_id, student_id, class_fee_id
+        from destination_invoice_insert
+      ),
+      arrears_insert as (
+        insert into invoice_arrears
+          (school_id, source_invoice_id, destination_invoice_id,
+           source_term_id, destination_term_id, amount)
+        select e.school_id, e.source_invoice_id, d.id, s.id,
+               e.destination_term_id, e.amount
+        from eligible e
+        join destination_invoices d on d.school_id = e.school_id
+          and d.student_id = e.student_id and d.class_fee_id = e.destination_fee_id
+        join source_term s on true
+        where e.amount > 0
+        on conflict (source_invoice_id, destination_invoice_id) do nothing
+        returning id, school_id, source_invoice_id, destination_invoice_id, amount
+      ),
+      changed_arrears as materialized (
+        select id, school_id, source_invoice_id, destination_invoice_id, amount
+        from invoice_arrears
+        where school_id = ${schoolId}::uuid
+          and destination_invoice_id in (select id from destination_invoices)
+        union all
+        select id, school_id, source_invoice_id, destination_invoice_id, amount
+        from arrears_insert
+      ),
+      arrears_totals as (
+        select destination_invoice_id, sum(amount) as arrears_amount
+        from changed_arrears
+        group by destination_invoice_id
+      ),
+      destination_invoice_update as (
+        update invoices i
+        set arrears_amount = totals.arrears_amount,
+            amount_due = i.base_amount_due + totals.arrears_amount,
+            status = case
+              when coalesce(paid.verified_amount, 0) >= i.base_amount_due + totals.arrears_amount then 'paid'::invoice_status
+              when coalesce(paid.verified_amount, 0) > 0 then 'part_paid'::invoice_status
+              else 'issued'::invoice_status
+            end,
+            updated_at = now()
+        from arrears_totals totals
+        left join lateral (
+          select sum(p.amount) as verified_amount
+          from payments p
+          where p.school_id = ${schoolId}::uuid
+            and p.invoice_id = totals.destination_invoice_id
+            and p.status = 'verified'
+        ) paid on true
+        where i.id = totals.destination_invoice_id and i.school_id = ${schoolId}::uuid
+        returning i.id
+      ),
+      source_invoice_update as (
+        update invoices i
+        set rolled_forward_at = coalesce(i.rolled_forward_at, now()),
+            updated_at = now()
+        where i.id in (select source_invoice_id from changed_arrears)
+          and i.school_id = ${schoolId}::uuid
+        returning i.id
+      ),
+      term_processed as (
+        update terms t
+        set arrears_processed_at = now()
+        from source_term s, pending_source p, unmapped_source u
+        where t.id = s.id and t.school_id = ${schoolId}::uuid
+          and not p.has_pending and not u.has_unmapped
+          and t.arrears_processed_at is null
+        returning t.id
+      )
+      select id from term_processed
+    `);
+  }
+}
+
+function platformTokenFromRequest(request: Request) {
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (bearer) return bearer;
+  const cookie = request.headers.get("cookie")?.split(";").map((part) => part.trim()).find((part) => part.startsWith("platform_admin_session="));
+  if (!cookie) return null;
+  try {
+    return decodeURIComponent(cookie.slice("platform_admin_session=".length));
+  } catch {
+    return null;
+  }
+}
+
+async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
+  const token = platformTokenFromRequest(request);
+  if (!token) return false;
+  if (env.PLATFORM_ADMIN_TOKEN && token === env.PLATFORM_ADMIN_TOKEN) return true;
+  if (!env.DATABASE_URL || !hasAuthConfig(env)) return false;
+
+  try {
+    const identity = await authenticateNeonToken(token, env);
+    if (!identity) return false;
+    const { userId, email } = identity;
+
+    const sql = database(env);
+    const users = await sql`select email, "emailVerified" as email_verified from neon_auth.user where id = ${userId} limit 1`;
+    const authUser = users[0];
+    if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== email) return false;
+    const memberships = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
+      tx`
+        select 1 from users u join memberships m on m.user_id = u.id
+        where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null and m.active
+        limit 1
+      `,
+    );
+    return memberships.length > 0;
+  } catch (error) {
+    logTokenVerificationFailure(error, token);
+    return false;
+  }
+}
+
+function platformSessionCookie(token: string, request: Request, maxAge: number) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `platform_admin_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api/platform; Max-Age=${maxAge}${secure}`;
 }
 
 function validSubdomain(value: string) { return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value); }
 
-export async function handleApiRequest(request: Request, env: RuntimeEnv): Promise<Response> {
-  const url = new URL(request.url);
-  if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
+const validPrimaryColor = (value: string) => /^#[0-9a-f]{6}$/i.test(value);
+const maxCrestUrlLength = 700_000;
+let cachedAuthJwksUrl = "";
+let cachedAuthJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
-  if (url.pathname !== "/api/platform/schools") return json({ error: "Not found" }, 404);
-  if (!env.DATABASE_URL || !env.PLATFORM_ADMIN_TOKEN) return json({ error: "Platform API is not configured" }, 503);
-  if (!isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
+function authBaseUrl(env: RuntimeEnv) {
+  const baseUrl = env.NEON_AUTH_BASE_URL ?? env.NEON_AUTH_URL;
+  if (!baseUrl) throw new Error("Neon Auth base URL is not configured");
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function hasAuthConfig(env: RuntimeEnv) {
+  return Boolean(env.NEON_AUTH_BASE_URL || env.NEON_AUTH_URL);
+}
+
+function bearerToken(request: Request) {
+  const authorization = request.headers.get("authorization");
+  const match = authorization ? /^Bearer\s+(\S+)$/i.exec(authorization.trim()) : null;
+  const headerToken = match?.[1];
+  if (headerToken && /^[\x21-\x7e]{1,4096}$/.test(headerToken)) return headerToken;
+
+  const cookie = request.headers.get("cookie")?.split(";").map((part) => part.trim())
+    .find((part) => part.startsWith("klasora_auth_session="));
+  if (!cookie) return null;
+  try {
+    const sessionToken = decodeURIComponent(cookie.slice("klasora_auth_session=".length));
+    return /^[\x21-\x7e]{1,4096}$/.test(sessionToken) ? sessionToken : null;
+  } catch {
+    return null;
+  }
+}
+
+function authSessionCookie(token: string, request: Request, maxAge: number) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `klasora_auth_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=${maxAge}${secure}`;
+}
+
+function authJwks(env: RuntimeEnv) {
+  const normalizedUrl = env.NEON_AUTH_JWKS_URL ?? `${authBaseUrl(env)}/.well-known/jwks.json`;
+  if (cachedAuthJwks && cachedAuthJwksUrl === normalizedUrl) return cachedAuthJwks;
+  cachedAuthJwksUrl = normalizedUrl;
+  cachedAuthJwks = createRemoteJWKSet(new URL(normalizedUrl));
+  return cachedAuthJwks;
+}
+
+async function verifyNeonToken(token: string, env: RuntimeEnv) {
+  const issuer = new URL(authBaseUrl(env)).origin;
+  return jwtVerify(token, authJwks(env), { issuer, audience: issuer });
+}
+
+async function authenticateNeonToken(token: string, env: RuntimeEnv) {
+  try {
+    const verified = await verifyNeonToken(token, env);
+    const userId = typeof verified.payload.sub === "string" ? verified.payload.sub : "";
+    if (!userId) {
+      console.warn("Verified Neon Auth JWT is missing its subject claim");
+      return null;
+    }
+    const sql = database(env);
+    const authUsers = await sql`
+      select lower(email) as email
+      from neon_auth.user
+      where id = ${userId}
+      limit 1
+    `;
+    const email = typeof authUsers[0]?.["email"] === "string" ? authUsers[0]["email"] : "";
+    if (!email) {
+      console.warn("Verified Neon Auth JWT subject has no matching Auth user");
+      return null;
+    }
+    return { userId, email };
+  } catch (jwtError) {
+    if (!env.DATABASE_URL) throw jwtError;
+    const sql = database(env);
+    const sessions = await sql`
+      select u.id as user_id, lower(u.email) as email
+      from neon_auth.session s
+      join neon_auth.user u on u.id = s."userId"
+      where s.token = ${token}
+        and s."expiresAt" > now()
+      limit 1
+    `;
+    const session = sessions[0];
+    if (session && typeof session["user_id"] === "string" && typeof session["email"] === "string") {
+      return { userId: session["user_id"], email: session["email"] };
+    }
+    logTokenVerificationFailure(jwtError, token);
+    return null;
+  }
+  return null;
+}
+
+function logTokenVerificationFailure(error: unknown, token: string) {
+  const segments = token.split(".");
+  console.error("Neon Auth token verification failed", {
+    reason: error instanceof Error ? error.message : "Unknown verification error",
+    segmentCount: segments.length,
+    segmentLengths: segments.map((segment) => segment.length),
+  });
+}
+
+function validCrestUrl(value: unknown): value is string | null {
+  if (value == null || value === "") return true;
+  if (typeof value !== "string" || value.length > maxCrestUrlLength) return false;
+  if (/^data:image\/(png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value)) return true;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character] ?? character);
+}
+
+async function sendSchoolAdminInvitation(
+  env: RuntimeEnv,
+  recipient: string,
+  contactName: string,
+  schoolName: string,
+  activationUrl: string,
+  primaryColor?: string,
+) {
+  return sendActivationInvitation(env, {
+    recipient,
+    contactName,
+    schoolName,
+    roleName: "School Admin",
+    activationUrl,
+    primaryColor,
+  });
+}
+
+async function sendActivationInvitation(
+  env: RuntimeEnv,
+  invitation: {
+    recipient: string;
+    contactName: string;
+    schoolName: string;
+    roleName: string;
+    activationUrl: string;
+    primaryColor?: string | undefined;
+  },
+) {
+  const smtpValues = [
+    env.SMTP_HOST,
+    env.SMTP_PORT,
+    env.SMTP_USERNAME,
+    env.SMTP_PASSWORD,
+    env.SMTP_FROM_EMAIL,
+  ];
+  const hasSmtpConfiguration = smtpValues.some((value) => value !== undefined && value !== "");
+  const smtpConfigured = smtpValues.every((value) => typeof value === "string" && value.trim().length > 0);
+  const smtpFromEmail = env.SMTP_FROM_EMAIL?.trim();
+  const accent = invitation.primaryColor && /^#[0-9a-f]{6}$/i.test(invitation.primaryColor)
+    ? invitation.primaryColor
+    : "#1f5c3b";
+  const safeName = escapeHtml(invitation.contactName);
+  const safeSchool = escapeHtml(invitation.schoolName);
+  const safeRole = escapeHtml(invitation.roleName);
+  const safeUrl = escapeHtml(invitation.activationUrl);
+  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#183237"><h1 style="color:${accent}">Welcome to ${safeSchool}</h1><p>Hello ${safeName},</p><p>Your <strong>${safeRole}</strong> access for <strong>${safeSchool}</strong> is ready.</p><p>Use the button below to activate your account. You will verify your email and choose a password.</p><p style="margin:28px 0"><a href="${safeUrl}" style="background:${accent};color:#fff;padding:12px 18px;border-radius:6px;text-decoration:none;font-weight:600">Activate your account</a></p><p>If the button does not work, copy this link into your browser:<br><a href="${safeUrl}">${safeUrl}</a></p></div>`;
+  const text = `Hello ${invitation.contactName},\n\nYour ${invitation.roleName} access for ${invitation.schoolName} is ready.\n\nActivate your account, verify your email, and choose a password here:\n${invitation.activationUrl}\n`;
+
+  if (hasSmtpConfiguration) {
+    const port = Number(env.SMTP_PORT);
+    if (!smtpConfigured || !smtpFromEmail || !Number.isInteger(port) || port < 1 || port > 65535) {
+      return { sent: false, error: "SMTP invitation settings are incomplete or invalid. Check SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM_EMAIL." };
+    }
+    try {
+      const transporter = createTransport({
+        host: env.SMTP_HOST,
+        port,
+        secure: port === 465,
+        auth: { user: env.SMTP_USERNAME, pass: env.SMTP_PASSWORD },
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
+      });
+      await transporter.sendMail({
+        from: { name: env.SMTP_FROM_NAME?.trim() || "Klasora", address: smtpFromEmail },
+        to: invitation.recipient,
+        subject: `Activate your ${invitation.schoolName} account`,
+        html,
+        text,
+      });
+      return { sent: true as const };
+    } catch (error) {
+      console.error("SMTP invitation delivery failed", error instanceof Error ? error.name : "UnknownError");
+      return { sent: false, error: "SMTP could not deliver the invitation. Check the SMTP host, credentials, and sender settings." };
+    }
+  }
+
+  if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
+    return { sent: false, error: "Invitation email is not configured. Set SMTP settings in Vercel or configure RESEND_API_KEY and RESEND_FROM_EMAIL." };
+  }
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        from: env.RESEND_FROM_EMAIL,
+        to: [invitation.recipient],
+        subject: `Activate your ${invitation.schoolName} account`,
+        html,
+        text,
+      }),
+    });
+    if (!response.ok) {
+      console.error("Resend rejected an account invitation", response.status);
+      return { sent: false, error: "The email provider could not deliver the invitation. Check the sender configuration." };
+    }
+    return { sent: true as const };
+  } catch (error) {
+    console.error("Could not reach Resend for an account invitation", error instanceof Error ? error.name : "UnknownError");
+    return { sent: false, error: "Could not reach the email provider to deliver the invitation." };
+  }
+}
+
+type SchoolAdminContext = {
+  schoolId: string;
+  subdomain: string;
+  role: string;
+  userId: string;
+  email: string;
+  schoolName: string;
+  primaryColor: string;
+};
+
+async function requireSchoolContext(
+  request: Request,
+  env: RuntimeEnv,
+  allowedRoles: readonly string[],
+): Promise<SchoolAdminContext | Response> {
+  if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
+  const bearer = bearerToken(request);
+  if (!bearer) return json({ error: "A valid sign-in token is required. Please sign in again." }, 401);
+
+  let userId: string;
+  let email: string;
+  try {
+    const identity = await authenticateNeonToken(bearer, env);
+    if (!identity) return json({ error: "Your sign-in session is invalid or expired. Please sign in again." }, 401);
+    ({ userId, email } = identity);
+  } catch (error) {
+    logTokenVerificationFailure(error, bearer);
+    return json({ error: "The sign-in token is invalid or expired" }, 401);
+  }
 
   const sql = database(env);
+  const authUsers = await sql`
+    select id, email, "emailVerified" as email_verified
+    from neon_auth.user
+    where id = ${userId}
+    limit 1
+  `;
+  const authUser = authUsers[0];
+  if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== email) {
+    return json({ error: "Verify your email address before using a school portal" }, 403);
+  }
+
+  const memberships = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
+    tx`
+      select u.id as user_id, m.school_id, m.role, s.subdomain, s.name as school_name,
+             s.primary_color, s.status as school_status
+      from users u
+      join memberships m on m.user_id = u.id
+      join schools s on s.id = m.school_id
+      where lower(u.email) = ${email} and m.active
+    `,
+  );
+  const querySubdomain = new URL(request.url).searchParams.get("tenant")?.trim().toLowerCase() ?? null;
+  if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
+  const requestedSubdomain = resolveTenant(request, env.ROOT_DOMAIN).subdomain ?? querySubdomain;
+  const schoolMemberships = memberships.filter((row) => row["school_id"] != null);
+  const authorizedMemberships = schoolMemberships.filter((row) => allowedRoles.includes(String(row["role"])));
+  const membership = requestedSubdomain
+    ? authorizedMemberships.find((row) => row["subdomain"] === requestedSubdomain)
+    : authorizedMemberships.length === 1 ? authorizedMemberships[0] : undefined;
+  if (!membership) return json({ error: "This account does not have access to this school" }, 403);
+  if (membership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
+
+  return {
+    schoolId: String(membership["school_id"]),
+    subdomain: String(membership["subdomain"]),
+    role: String(membership["role"]),
+    userId: String(membership["user_id"]),
+    email,
+    schoolName: String(membership["school_name"]),
+    primaryColor: String(membership["primary_color"] ?? "#1f5c3b"),
+  };
+}
+
+async function requireSchoolAdminContext(request: Request, env: RuntimeEnv): Promise<SchoolAdminContext | Response> {
+  return requireSchoolContext(request, env, ["school_admin"]);
+}
+
+function uuidOrNull(value: unknown): value is string | null {
+  return value === null || value === undefined || (typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+}
+
+function validIsoDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const timestamp = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
+}
+
+export async function handleApiRequest(request: Request, env: RuntimeEnv): Promise<Response> {
+  env = resolveRuntimeEnv(env);
+  const url = new URL(request.url);
+  if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
+  if (url.pathname === "/api/auth/config" && request.method === "GET") {
+    return json({ authUrl: env.NEON_AUTH_URL ?? null, rootDomain: env.ROOT_DOMAIN ?? null });
+  }
+  if (url.pathname === "/api/platform/session") {
+    if (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env)) {
+      // Not configured yet: treat as signed out so the page shows its sign-in form instead of crashing.
+      if (request.method === "GET" || request.method === "DELETE") return json({ authenticated: false, error: "Platform sign-in is not set up yet" }, 401);
+      return json({ error: "Platform sign-in is not set up yet. Add the PLATFORM_ADMIN_TOKEN secret." }, 503);
+    }
+    if (request.method === "GET") {
+      return await isPlatformAdmin(request, env) ? json({ authenticated: true }) : json({ error: "Unauthorized" }, 401);
+    }
+    if (request.method === "DELETE") {
+      return json({ authenticated: false }, 200, { "set-cookie": platformSessionCookie("", request, 0) });
+    }
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+    const payload: unknown = await request.json().catch(() => null);
+    const token = payload && typeof payload === "object" && "token" in payload && typeof payload.token === "string"
+      ? payload.token
+      : "";
+    if (!token || token !== env.PLATFORM_ADMIN_TOKEN) return json({ error: "Unauthorized" }, 401);
+    return json({ authenticated: true }, 200, { "set-cookie": platformSessionCookie(token, request, 8 * 60 * 60) });
+  }
+  if (url.pathname === "/api/school") {
+    const tenant = resolveTenant(request, env.ROOT_DOMAIN);
+    const querySubdomain = url.searchParams.get("tenant")?.trim().toLowerCase() ?? null;
+    if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
+    const requestedSubdomain = tenant.subdomain ?? querySubdomain;
+    if (!requestedSubdomain) return json({ school: null });
+
+    const sql = database(env);
+    const rows = await sql`select id, name, subdomain, status, coalesce(primary_color, '#1f5c3b') as primary_color, crest_url from schools where subdomain = ${requestedSubdomain} limit 1`;
+    const school = rows[0];
+    return json({
+      school: school
+        ? {
+            id: String(school["id"]),
+            name: String(school["name"]),
+            subdomain: String(school["subdomain"]),
+            status: school["status"],
+            primaryColor: String(school["primary_color"]),
+            crestUrl: school["crest_url"] ? String(school["crest_url"]) : null,
+          }
+        : null,
+    });
+  }
+
+  const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
+  const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
+  const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
+  const guardianLifecycleMatch = url.pathname.match(/^\/api\/school\/guardians\/([0-9a-f-]+)$/i);
+  const teacherLifecycleMatch = url.pathname.match(/^\/api\/school\/team\/teachers\/([0-9a-f-]+)$/i);
+  const studentHistoryMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)\/history\/(attendance|grades)$/i);
+  const paymentReviewMatch = url.pathname.match(/^\/api\/school\/payments\/([0-9a-f-]+)\/review$/i);
+  const workflowRoles: Record<string, Record<string, readonly string[]>> = {
+    "/api/school/dashboard": { GET: ["school_admin"] },
+    "/api/school/admin-summary": { GET: ["school_admin"] },
+    "/api/school/portal-accounts": { GET: ["school_admin"], POST: ["school_admin"] },
+    "/api/school/guardians": { POST: ["school_admin"] },
+    "/api/school/portal-data": { GET: ["parent", "student"] },
+    "/api/school/classes": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
+    "/api/school/students": { GET: ["school_admin", "teacher", "finance"] },
+    "/api/school/attendance": { GET: ["school_admin", "teacher"], POST: ["teacher"] },
+    "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
+    "/api/school/payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
+    "/api/school/other-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
+    "/api/school/student-financial-records": { GET: ["school_admin"] },
+    "/api/school/daily-payments": { GET: ["school_admin", "finance", "teacher"], POST: ["school_admin", "finance"] },
+    "/api/school/student-attendance": { GET: ["school_admin"] },
+    "/api/school/reconciliation": { GET: ["school_admin", "finance"] },
+    "/api/school/coupons": { GET: ["school_admin", "teacher", "finance"] },
+    "/api/school/marks": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
+    "/api/school/terminal-reports": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
+    "/api/school/promotions": { GET: ["school_admin", "teacher"], POST: ["teacher"], PATCH: ["school_admin"] },
+    "/api/school/academic-periods": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
+    "/api/school/terms": { POST: ["school_admin"] },
+    "/api/school/team": { GET: ["school_admin"], POST: ["school_admin"] },
+    "/api/school/teaching-setup": { GET: ["school_admin"], POST: ["school_admin"] },
+  };
+  const workflowMethodRoles = workflowRoles[url.pathname]?.[request.method]
+    ?? (guardianLifecycleMatch && ["PATCH", "DELETE"].includes(request.method) ? ["school_admin"] : undefined)
+    ?? (teacherLifecycleMatch && ["PATCH", "DELETE"].includes(request.method) ? ["school_admin"] : undefined)
+    ?? (studentProfileMatch && ["GET", "PATCH"].includes(request.method) ? ["school_admin"] : undefined)
+    ?? (studentProfileMatch && request.method === "DELETE" ? ["school_admin"] : undefined)
+    ?? (studentHistoryMatch && request.method === "GET" ? ["school_admin"] : undefined)
+    ?? (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined)
+    ?? (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined)
+    ?? (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
+  const schoolDataRoute = url.pathname === "/api/school/classes"
+    || url.pathname === "/api/school/students"
+    || url.pathname === "/api/school/academic-periods"
+    || url.pathname === "/api/school/terms"
+    || url.pathname === "/api/school/student-financial-records"
+    || url.pathname === "/api/school/team"
+    || url.pathname === "/api/school/teaching-setup"
+    || guardianLifecycleMatch !== null
+    || teacherLifecycleMatch !== null
+    || studentProfileMatch !== null
+    || studentHistoryMatch !== null
+    || paymentReviewMatch !== null
+    || classRosterMatch !== null
+    || termCloseMatch !== null
+    || workflowMethodRoles !== undefined;
+  if (schoolDataRoute) {
+    const isGet = request.method === "GET";
+    const isCreate = request.method === "POST" && (url.pathname === "/api/school/classes" || url.pathname === "/api/school/students");
+    const isWorkflowMethod = workflowMethodRoles !== undefined;
+    if (!isGet && !isCreate && !isWorkflowMethod) return json({ error: "Method not allowed" }, 405);
+
+    const school = isWorkflowMethod
+      ? await requireSchoolContext(request, env, workflowMethodRoles)
+      : await requireSchoolAdminContext(request, env);
+    if (school instanceof Response) return school;
+    const sql = database(env);
+
+    if (
+      studentHistoryMatch
+      || url.pathname === "/api/school/dashboard"
+      || url.pathname === "/api/school/admin-summary"
+      || url.pathname === "/api/school/portal-accounts"
+      || url.pathname === "/api/school/guardians"
+      || url.pathname === "/api/school/portal-data"
+    ) {
+      if (studentHistoryMatch) {
+      const [, studentId, historyType] = studentHistoryMatch;
+      if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      const offset = (page - 1) * pageSize;
+      const studentRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`select id from students where id = ${studentId}::uuid and school_id = ${school.schoolId}::uuid`,
+      );
+      if (!studentRows[0]) return json({ error: "Student not found" }, 404);
+
+      if (historyType === "attendance") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with filtered_records as materialized (
+              select ar.id, ase.attendance_date, ar.status, ar.note, c.name as class_name
+              from attendance_records ar
+              join attendance_sessions ase
+                on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+              join classes c on c.id = ase.class_id and c.school_id = ase.school_id
+              where ar.school_id = ${school.schoolId}::uuid
+                and ar.student_id = ${studentId}::uuid
+            ),
+            page_records as (
+              select * from filtered_records
+              order by attendance_date desc, id desc
+              limit ${pageSize} offset ${offset}
+            )
+            select
+              coalesce((
+                select jsonb_agg(jsonb_build_object(
+                  'id', id, 'attendance_date', attendance_date, 'status', status,
+                  'note', note, 'class_name', class_name
+                ) order by attendance_date desc, id desc)
+                from page_records
+              ), '[]'::jsonb) as records,
+              (select count(*)::int from filtered_records) as total_count,
+              coalesce((
+                select jsonb_object_agg(status, status_count)
+                from (
+                  select status, count(*)::int as status_count
+                  from filtered_records
+                  group by status
+                ) counts
+              ), '{}'::jsonb) as summary
+          `,
+        );
+        const report = rows[0];
+        if (!report) throw new Error("Student attendance query returned an invalid result");
+        const totalCount = Number(report["total_count"] ?? 0);
+        return json({
+          records: report["records"],
+          summary: report["summary"],
+          total_count: totalCount,
+          page,
+          page_size: pageSize,
+          page_count: Math.ceil(totalCount / pageSize),
+        });
+      }
+      }
+
+      if (url.pathname === "/api/school/dashboard") {
+        const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+        if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid dashboard date");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with class_totals as (
+              select count(*)::int as class_count
+              from classes c
+              join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              where c.school_id = ${school.schoolId}::uuid and ay.ends_on >= ${attendanceDate}::date
+            ),
+            student_totals as (
+              select count(distinct st.id)::int as student_count
+              from students st
+              join class_enrollments e on e.student_id = st.id and e.school_id = st.school_id
+              where st.school_id = ${school.schoolId}::uuid and st.active
+                and e.starts_on <= ${attendanceDate}::date
+                and (e.ends_on is null or e.ends_on >= ${attendanceDate}::date)
+            ),
+            attendance_totals as (
+              select count(*) filter (where ar.status = 'present')::int as present_count,
+                     count(*) filter (where ar.status = 'late')::int as late_count,
+                     count(*) filter (where ar.status = 'absent')::int as absent_count,
+                     count(*)::int as marked_count
+              from attendance_sessions ase
+              join attendance_records ar
+                on ar.attendance_session_id = ase.id and ar.school_id = ase.school_id
+              where ase.school_id = ${school.schoolId}::uuid and ase.attendance_date = ${attendanceDate}::date
+            ),
+            payment_totals as (
+              select p.currency,
+                     coalesce(sum(p.amount) filter (where p.status = 'verified'), 0)::numeric(12,2) as verified_amount,
+                     count(*) filter (where p.status = 'verified')::int as verified_count,
+                     count(*) filter (where p.status in ('pending', 'initiated'))::int as pending_count
+              from payments p
+              where p.school_id = ${school.schoolId}::uuid and p.paid_at::date = ${attendanceDate}::date
+              group by p.currency
+            ),
+            current_term as (
+              select ay.name as academic_year_name, t.name as term_name
+              from terms t
+              join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+              where t.school_id = ${school.schoolId}::uuid
+                and ${attendanceDate}::date between t.starts_on and t.ends_on
+              order by ay.starts_on desc, t.starts_on desc
+              limit 1
+            )
+            select (select class_count from class_totals) as class_count,
+                   (select student_count from student_totals) as student_count,
+                   (select row_to_json(attendance_totals) from attendance_totals) as attendance,
+                   coalesce((select jsonb_agg(jsonb_build_object(
+                     'currency', currency, 'verified_amount', verified_amount,
+                     'verified_count', verified_count, 'pending_count', pending_count
+                   ) order by currency) from payment_totals), '[]'::jsonb) as payments,
+                   (select row_to_json(current_term) from current_term) as current_term,
+                   coalesce((
+                     select jsonb_agg(jsonb_build_object(
+                       'id', p.id, 'receipt_number', p.receipt_number, 'amount', p.amount,
+                       'currency', p.currency, 'status', p.status, 'paid_at', p.paid_at,
+                       'category', p.category, 'student_name', st.first_name || ' ' || st.last_name
+                     ) order by p.paid_at desc)
+                     from (
+                       select id, student_id, receipt_number, amount, currency, status, paid_at, category
+                       from payments
+                       where school_id = ${school.schoolId}::uuid
+                       order by paid_at desc
+                       limit 8
+                     ) p
+                     join students st on st.id = p.student_id and st.school_id = ${school.schoolId}::uuid
+                   ), '[]'::jsonb) as recent_payments
+          `,
+        );
+        const summary = rows[0];
+        if (!summary) throw new Error("School dashboard query returned no result");
+        return json({
+          date: attendanceDate,
+          class_count: Number(summary["class_count"] ?? 0),
+          student_count: Number(summary["student_count"] ?? 0),
+          attendance: summary["attendance"] ?? { present_count: 0, late_count: 0, absent_count: 0, marked_count: 0 },
+          payments: summary["payments"],
+          current_term: summary["current_term"],
+          recent_payments: summary["recent_payments"],
+        });
+      }
+
+      if (url.pathname === "/api/school/admin-summary") {
+        const [rows, activationRows] = await Promise.all([
+          withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+            select
+              (select count(distinct m.user_id)::int from memberships m
+               where m.school_id = ${school.schoolId}::uuid and m.role <> 'super_admin' and m.active) as active_users,
+              (select count(*)::int from terminal_reports r
+               where r.school_id = ${school.schoolId}::uuid) as terminal_reports,
+              (select count(*)::int from students st
+               where st.school_id = ${school.schoolId}::uuid and st.user_id is not null) as linked_student_accounts,
+              (select count(*)::int from guardians g
+               where g.school_id = ${school.schoolId}::uuid and g.user_id is not null and g.active) as linked_parent_accounts
+            `,
+          ),
+          sql`
+            select count(*)::int as pending_activations
+            from memberships m
+            join users u on u.id = m.user_id
+            where m.school_id = ${school.schoolId}::uuid
+              and m.role <> 'super_admin'
+              and not exists (
+                select 1
+                from neon_auth.user au
+                where lower(au.email) = lower(u.email) and au."emailVerified" = true
+              )
+          `,
+        ]);
+        const summary = rows[0];
+        if (!summary) throw new Error("School administration summary query returned no result");
+        return json({
+          active_users: Number(summary["active_users"] ?? 0),
+          pending_activations: Number(activationRows[0]?.["pending_activations"] ?? 0),
+          terminal_reports: Number(summary["terminal_reports"] ?? 0),
+          linked_student_accounts: Number(summary["linked_student_accounts"] ?? 0),
+          linked_parent_accounts: Number(summary["linked_parent_accounts"] ?? 0),
+        });
+      }
+
+      if (url.pathname === "/api/school/portal-accounts") {
+        if (request.method === "GET") {
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              select coalesce((
+                select jsonb_agg(jsonb_build_object(
+                  'id', st.id, 'name', st.first_name || ' ' || st.last_name,
+                  'admission_number', st.admission_number,
+                  'class_name', c.name, 'linked', st.user_id is not null
+                ) order by st.last_name, st.first_name, st.admission_number)
+                from students st
+                left join lateral (
+                  select c.name
+                  from class_enrollments e
+                  join classes c on c.id = e.class_id and c.school_id = e.school_id
+                  where e.school_id = st.school_id and e.student_id = st.id and e.ends_on is null
+                  order by e.starts_on desc limit 1
+                ) c on true
+                where st.school_id = ${school.schoolId}::uuid and st.active
+              ), '[]'::jsonb) as students,
+              coalesce((
+                select jsonb_agg(jsonb_build_object(
+                  'id', g.id, 'name', g.full_name, 'email', g.email, 'phone', g.phone,
+                  'linked', g.user_id is not null, 'active', g.active,
+                  'students', coalesce((
+                    select string_agg(st.first_name || ' ' || st.last_name, ', ' order by st.last_name, st.first_name)
+                    from student_guardians sg
+                    join students st on st.id = sg.student_id and st.school_id = sg.school_id
+                    where sg.school_id = g.school_id and sg.guardian_id = g.id
+                  ), '')
+                ) order by g.full_name)
+                from guardians g
+                where g.school_id = ${school.schoolId}::uuid
+              ), '[]'::jsonb) as guardians
+            `,
+          );
+          return json({ students: rows[0]?.["students"] ?? [], guardians: rows[0]?.["guardians"] ?? [] });
+        }
+
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const accountType = body["account_type"];
+        const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
+        if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid account email");
+
+        if (accountType === "student") {
+          const studentId = body["student_id"];
+          if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              with selected_student as materialized (
+                select id, school_id, first_name, last_name, user_id
+                from students
+                where id = ${studentId}::uuid and school_id = ${school.schoolId}::uuid and active
+                  and (
+                    user_id is null
+                    or exists (
+                      select 1 from users linked_user
+                      where linked_user.id = students.user_id and lower(linked_user.email) = ${email}
+                    )
+                  )
+                for update
+              ),
+              app_user as (
+                insert into users (email, display_name)
+                select ${email}, first_name || ' ' || last_name from selected_student
+                on conflict (email) do update set display_name = excluded.display_name
+                returning id, email, display_name
+              ),
+              member as (
+                insert into memberships (user_id, school_id, role)
+                select id, ${school.schoolId}::uuid, 'student'::membership_role from app_user
+                on conflict (user_id, school_id, role) do update set role = excluded.role
+                returning user_id
+              ),
+              linked_student as (
+                update students st set user_id = app_user.id
+                from app_user, member, selected_student
+                where st.id = selected_student.id and st.school_id = selected_student.school_id
+                  and (selected_student.user_id is null or selected_student.user_id = app_user.id)
+                returning st.id, st.first_name, st.last_name, app_user.email
+              )
+              select * from linked_student
+            `,
+          );
+          if (!rows[0]) return json({ error: "Student account could not be linked. The student may already be linked to another account." }, 409);
+          const activationUrl = new URL("/login", request.url);
+          activationUrl.searchParams.set("tenant", school.subdomain);
+          activationUrl.searchParams.set("mode", "activate");
+          const invitation = await sendActivationInvitation(env, {
+            recipient: String(rows[0]["email"]),
+            contactName: `${String(rows[0]["first_name"])} ${String(rows[0]["last_name"])}`,
+            schoolName: school.schoolName,
+            roleName: "Student",
+            activationUrl: activationUrl.toString(),
+            primaryColor: school.primaryColor,
+          });
+          return json({ account: rows[0], activation_url: activationUrl.toString(), invitation }, 201);
+        }
+
+        if (accountType === "parent") {
+          const guardianId = body["guardian_id"];
+          if (!uuidOrNull(guardianId) || !guardianId) return badRequest("Choose a valid guardian");
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              with selected_guardian as materialized (
+                select id, school_id, full_name, email, user_id
+                from guardians
+                where id = ${guardianId}::uuid and school_id = ${school.schoolId}::uuid
+                  and active
+                  and (
+                    user_id is null
+                    or exists (
+                      select 1 from users linked_user
+                      where linked_user.id = guardians.user_id and lower(linked_user.email) = ${email}
+                    )
+                  )
+                for update
+              ),
+              app_user as (
+                insert into users (email, display_name)
+                select ${email}, full_name from selected_guardian
+                where selected_guardian.email is null or lower(selected_guardian.email) = ${email}
+                on conflict (email) do update set display_name = excluded.display_name
+                returning id, email, display_name
+              ),
+              member as (
+                insert into memberships (user_id, school_id, role)
+                select id, ${school.schoolId}::uuid, 'parent'::membership_role from app_user
+                on conflict (user_id, school_id, role) do update set active = true
+                returning user_id
+              ),
+              linked_guardian as (
+                update guardians g set user_id = app_user.id,
+                       email = coalesce(g.email, app_user.email)
+                from app_user, member, selected_guardian
+                where g.id = selected_guardian.id and g.school_id = selected_guardian.school_id
+                  and (selected_guardian.user_id is null or selected_guardian.user_id = app_user.id)
+                returning g.id, g.full_name, app_user.email
+              )
+              select * from linked_guardian
+            `,
+          );
+          if (!rows[0]) return json({ error: "Parent account could not be linked. Confirm the email matches the guardian record, or that the guardian is not linked to another account." }, 409);
+          const activationUrl = new URL("/login", request.url);
+          activationUrl.searchParams.set("tenant", school.subdomain);
+          activationUrl.searchParams.set("mode", "activate");
+          const invitation = await sendActivationInvitation(env, {
+            recipient: String(rows[0]["email"]),
+            contactName: String(rows[0]["full_name"]),
+            schoolName: school.schoolName,
+            roleName: "Parent",
+            activationUrl: activationUrl.toString(),
+            primaryColor: school.primaryColor,
+          });
+          return json({ account: rows[0], activation_url: activationUrl.toString(), invitation }, 201);
+        }
+
+        return badRequest("Choose a student or parent account");
+      }
+
+      if (url.pathname === "/api/school/guardians" && request.method === "POST") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const studentId = body["student_id"];
+        const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+        const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
+        const phone = typeof body["phone"] === "string" ? body["phone"].trim() : "";
+        if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
+        if (name.length < 2 || name.length > 160) return badRequest("Guardian name must be 2–160 characters");
+        if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid guardian email");
+        if (!phone || phone.length > 40) return badRequest("Enter a phone number of 1–40 characters");
+
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with selected_student as materialized (
+              select id, school_id
+              from students
+              where id = ${studentId}::uuid and school_id = ${school.schoolId}::uuid and active
+              for update
+            ),
+            saved_guardian as (
+              insert into guardians (school_id, full_name, phone, email)
+              select school_id, ${name}, ${phone}, ${email}
+              from selected_student
+              on conflict (school_id, email) do update
+                set full_name = excluded.full_name,
+                    phone = excluded.phone,
+                    active = true
+                where guardians.user_id is null
+                  or exists (
+                    select 1 from users linked_user
+                    where linked_user.id = guardians.user_id
+                      and lower(linked_user.email) = excluded.email
+                  )
+              returning id, school_id, user_id
+            ),
+            linked_guardian as (
+              insert into student_guardians (school_id, student_id, guardian_id, relationship, is_primary)
+              select student.school_id, student.id, guardian.id, 'parent',
+                     not exists (
+                       select 1 from student_guardians existing
+                       where existing.school_id = student.school_id
+                         and existing.student_id = student.id
+                         and existing.is_primary
+                     )
+              from selected_student student
+              join saved_guardian guardian on guardian.school_id = student.school_id
+              on conflict (student_id, guardian_id) do update
+                set relationship = excluded.relationship,
+                    is_primary = student_guardians.is_primary or excluded.is_primary
+              returning guardian_id
+            ),
+            restored_membership as (
+              update memberships membership
+              set active = true
+              from saved_guardian guardian
+              where guardian.user_id is not null
+                and membership.user_id = guardian.user_id
+                and membership.school_id = guardian.school_id
+                and membership.role = 'parent'
+              returning membership.user_id
+            )
+            select guardian.id, guardian.full_name as name, guardian.email, guardian.phone,
+                   (guardian.user_id is not null) as linked
+            from saved_guardian guardian
+            join linked_guardian on linked_guardian.guardian_id = guardian.id
+          `,
+        );
+        if (!rows[0]) {
+          return json({ error: "Could not add guardian. Check that the student is active and the email is not linked to a different parent account." }, 409);
+        }
+        return json({ guardian: rows[0] }, 201);
+      }
+
+      if (url.pathname === "/api/school/portal-data") {
+        if (school.role === "parent") {
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              with linked_children as materialized (
+                select st.id, st.first_name, st.last_name, st.admission_number,
+                       c.name as class_name, t.id as term_id, t.name as term_name,
+                       t.academic_year_name,
+                       t.starts_on as term_starts_on, t.ends_on as term_ends_on
+                from guardians g
+                join student_guardians sg on sg.guardian_id = g.id and sg.school_id = g.school_id
+                join students st on st.id = sg.student_id and st.school_id = sg.school_id
+                left join lateral (
+                  select c.name, c.academic_year_id
+                  from class_enrollments e
+                  join classes c on c.id = e.class_id and c.school_id = e.school_id
+                  where e.school_id = st.school_id and e.student_id = st.id and e.ends_on is null
+                  order by e.starts_on desc limit 1
+                ) c on true
+                left join lateral (
+                  select t.id, t.name, t.starts_on, t.ends_on, ay.name as academic_year_name
+                  from terms t
+                  join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+                  where t.school_id = st.school_id and current_date between t.starts_on and t.ends_on
+                  order by t.starts_on desc limit 1
+                ) t on true
+                where g.school_id = ${school.schoolId}::uuid and g.user_id = ${school.userId}::uuid
+                  and g.active
+                  and st.active
+              ),
+              child_data as (
+                select lc.*,
+                  (select count(*)::int from attendance_records ar
+                   join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+                   where ar.school_id = ${school.schoolId}::uuid and ar.student_id = lc.id
+                     and lc.term_id is not null
+                     and ase.attendance_date between lc.term_starts_on and current_date
+                     and ar.status in ('present', 'late')) as attendance_present,
+                  (select count(*)::int from attendance_records ar
+                   join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+                   where ar.school_id = ${school.schoolId}::uuid and ar.student_id = lc.id
+                     and lc.term_id is not null
+                     and ase.attendance_date between lc.term_starts_on and current_date) as attendance_total,
+                  (select greatest(coalesce(sum(i.amount_due - coalesce(paid.paid_amount, 0) - coalesce(paid.pending_amount, 0)), 0), 0)::numeric(12,2)
+                   from invoices i
+                   left join lateral (
+                     select sum(p.amount) filter (where p.status = 'verified') as paid_amount,
+                            sum(p.amount) filter (where p.status in ('pending', 'initiated')) as pending_amount
+                     from payments p where p.school_id = i.school_id and p.invoice_id = i.id
+                   ) paid on true
+                   where i.school_id = ${school.schoolId}::uuid and i.student_id = lc.id and i.status <> 'void') as balance_due,
+                  (select count(*)::int from subject_term_marks m
+                   where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
+                     and lc.term_id is not null and m.term_id = lc.term_id) as mark_count,
+                  (select avg(m.total_score)::numeric(5,2) from subject_term_marks m
+                   where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
+                     and lc.term_id is not null and m.term_id = lc.term_id) as term_average
+                from linked_children lc
+              )
+              select coalesce(jsonb_agg(to_jsonb(child_data) order by last_name, first_name), '[]'::jsonb) as children,
+                coalesce((
+                  select jsonb_agg(jsonb_build_object(
+                    'id', p.id, 'student_name', st.first_name || ' ' || st.last_name,
+                    'receipt_number', p.receipt_number, 'amount', p.amount, 'currency', p.currency,
+                    'category', p.category, 'paid_at', p.paid_at, 'status', p.status
+                  ) order by p.paid_at desc)
+                  from (
+                    select p.* from payments p
+                    join student_guardians sg on sg.student_id = p.student_id and sg.school_id = p.school_id
+                    join guardians g on g.id = sg.guardian_id and g.school_id = sg.school_id
+                    where p.school_id = ${school.schoolId}::uuid and g.user_id = ${school.userId}::uuid
+                      and g.active
+                    order by p.paid_at desc limit 20
+                  ) p
+                  join students st on st.id = p.student_id and st.school_id = p.school_id
+                ), '[]'::jsonb) as recent_payments
+              from child_data
+            `,
+          );
+          return json({ portal: "parent", children: rows[0]?.["children"] ?? [], recent_payments: rows[0]?.["recent_payments"] ?? [] });
+        }
+
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with selected_student as materialized (
+              select st.id, st.first_name, st.last_name, st.admission_number
+              from students st
+              where st.school_id = ${school.schoolId}::uuid and st.user_id = ${school.userId}::uuid and st.active
+            ),
+            selected_term as materialized (
+              select t.id, t.name, ay.name as academic_year_name, t.starts_on, t.ends_on
+              from terms t join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+              where t.school_id = ${school.schoolId}::uuid and current_date between t.starts_on and t.ends_on
+              order by t.starts_on desc limit 1
+            )
+            select st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   class_info.class_name, term.name as term_name, term.academic_year_name,
+                   coalesce(attendance.present_count, 0)::int as attendance_present,
+                   coalesce(attendance.total_count, 0)::int as attendance_total,
+                   coalesce(fees.balance_due, 0)::numeric(12,2) as balance_due,
+                   coalesce(fees.currency, 'GHS') as currency,
+                   coalesce(grades.results, '[]'::jsonb) as results,
+                   coalesce(payments.recent_payments, '[]'::jsonb) as recent_payments
+            from selected_student st
+            left join selected_term term on true
+            left join lateral (
+              select c.name as class_name, c.id as class_id
+              from class_enrollments e join classes c on c.id = e.class_id and c.school_id = e.school_id
+              where e.school_id = ${school.schoolId}::uuid and e.student_id = st.id and e.ends_on is null
+              order by e.starts_on desc limit 1
+            ) class_info on true
+            left join lateral (
+              select count(*) filter (where ar.status in ('present', 'late'))::int as present_count,
+                     count(*)::int as total_count
+              from attendance_records ar
+              join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+              where ar.school_id = ${school.schoolId}::uuid and ar.student_id = st.id
+                and term.id is not null
+                and ase.attendance_date between term.starts_on and least(term.ends_on, current_date)
+            ) attendance on true
+            left join lateral (
+              select greatest(sum(i.amount_due - coalesce(paid.paid_amount, 0) - coalesce(paid.pending_amount, 0)), 0)::numeric(12,2) as balance_due,
+                     max(i.currency) as currency
+              from invoices i
+              left join lateral (
+                select sum(p.amount) filter (where p.status = 'verified') as paid_amount,
+                       sum(p.amount) filter (where p.status in ('pending', 'initiated')) as pending_amount
+                from payments p where p.school_id = i.school_id and p.invoice_id = i.id
+              ) paid on true
+              where i.school_id = ${school.schoolId}::uuid and i.student_id = st.id and i.status <> 'void'
+            ) fees on true
+            left join lateral (
+              select jsonb_agg(jsonb_build_object(
+                'subject_name', s.name, 'total_score', m.total_score,
+                'performance_level', m.performance_level
+              ) order by s.name) as results
+              from subject_term_marks m
+              join class_subjects cs on cs.id = m.class_subject_id and cs.school_id = m.school_id
+              join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+              where m.school_id = ${school.schoolId}::uuid and m.student_id = st.id
+                and term.id is not null and m.term_id = term.id
+            ) grades on true
+            left join lateral (
+              select jsonb_agg(jsonb_build_object(
+                'id', p.id, 'receipt_number', p.receipt_number, 'amount', p.amount,
+                'currency', p.currency, 'category', p.category, 'paid_at', p.paid_at,
+                'status', p.status
+              ) order by p.paid_at desc) as recent_payments
+              from (
+                select p.* from payments p
+                where p.school_id = ${school.schoolId}::uuid and p.student_id = st.id
+                order by p.paid_at desc limit 10
+              ) p
+            ) payments on true
+          `,
+        );
+        if (!rows[0]) return json({ error: "No student portal account is linked to this sign-in. Contact your school administrator." }, 404);
+        return json({ portal: "student", student: rows[0] });
+      }
+
+      if (studentHistoryMatch) {
+      const [, studentId] = studentHistoryMatch;
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
+      if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      const offset = (page - 1) * pageSize;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with filtered_records as materialized (
+            select m.id, m.class_test_score, m.project_score, m.homework_score,
+                   m.group_work_score, m.exam_score, m.total_score, m.performance_level,
+                   s.name as subject_name, c.name as class_name, t.name as term_name,
+                   ay.name as academic_year_name, ay.starts_on as year_starts_on,
+                   t.starts_on as term_starts_on
+            from subject_term_marks m
+            join class_subjects cs
+              on cs.id = m.class_subject_id and cs.school_id = m.school_id
+            join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+            join classes c on c.id = cs.class_id and c.school_id = cs.school_id
+            join terms t on t.id = m.term_id and t.school_id = m.school_id
+            join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+            where m.school_id = ${school.schoolId}::uuid
+              and m.student_id = ${studentId}::uuid
+          ),
+          page_records as (
+            select * from filtered_records
+            order by year_starts_on desc, term_starts_on desc, subject_name asc, id
+            limit ${pageSize} offset ${offset}
+          )
+          select
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'id', id, 'subject_name', subject_name, 'class_name', class_name,
+                'term_name', term_name, 'academic_year_name', academic_year_name,
+                'class_test_score', class_test_score, 'project_score', project_score,
+                'homework_score', homework_score, 'group_work_score', group_work_score,
+                'exam_score', exam_score, 'total_score', total_score,
+                'performance_level', performance_level
+              ) order by year_starts_on desc, term_starts_on desc, subject_name asc, id)
+              from page_records
+            ), '[]'::jsonb) as records,
+            (select count(*)::int from filtered_records) as total_count
+        `,
+      );
+      const report = rows[0];
+      if (!report) throw new Error("Student grades query returned an invalid result");
+      const totalCount = Number(report["total_count"] ?? 0);
+      return json({
+        records: report["records"],
+        total_count: totalCount,
+        page,
+        page_size: pageSize,
+        page_count: Math.ceil(totalCount / pageSize),
+      });
+      }
+    }
+
+    if (studentProfileMatch) {
+      if (!uuidOrNull(studentProfileMatch[1])) return badRequest("Invalid student ID");
+      if (request.method === "DELETE") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          [
+            tx`
+              with locked_student as materialized (
+                select id, school_id, user_id
+                from students
+                where id = ${studentProfileMatch[1]}::uuid
+                  and school_id = ${school.schoolId}::uuid
+                for update
+              ),
+              deleted_student as (
+                delete from students st
+                using locked_student selected
+                where st.id = selected.id
+                  and st.school_id = selected.school_id
+                  and not exists (
+                    select 1 from attendance_records ar
+                    where ar.school_id = st.school_id and ar.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from grade_entries ge
+                    where ge.school_id = st.school_id and ge.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from subject_term_marks marks
+                    where marks.school_id = st.school_id and marks.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from terminal_reports reports
+                    where reports.school_id = st.school_id and reports.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from invoices i
+                    where i.school_id = st.school_id and i.student_id = st.id
+                  )
+                  and not exists (
+                    select 1 from payments p
+                    where p.school_id = st.school_id and p.student_id = st.id
+                  )
+                returning st.id
+              ),
+              disabled_membership as (
+                update memberships m
+                set active = false
+                from deleted_student deleted
+                join locked_student selected on selected.id = deleted.id
+                where m.user_id = selected.user_id
+                  and m.school_id = ${school.schoolId}::uuid
+                  and m.role = 'student'
+                returning m.user_id
+              )
+              select id from deleted_student
+            `,
+          ],
+        );
+        if (!rows[0]) {
+          return json({
+            error: "Student not found, or permanent deletion is blocked because this student has attendance, grades, reports, invoices, or payment history. Deactivate the record to preserve history.",
+          }, 409);
+        }
+        return json({ deleted: true, student_id: rows[0]["id"] });
+      }
+      if (request.method === "PATCH") {
+        const payload = ( await request.json().catch(() => null)) as Record<string, unknown> | null;
+        if (!payload || typeof payload !== "object" || typeof payload["active"] !== "boolean") {
+          return badRequest("Choose whether the student should be active");
+        }
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            update students
+            set active = ${payload["active"]}
+            where id = ${studentProfileMatch[1]}::uuid
+              and school_id = ${school.schoolId}::uuid
+            returning id, first_name, last_name, admission_number as student_id_number,
+                      case when active then 'active' else 'inactive' end as status
+          `,
+        );
+        if (!rows[0]) return json({ error: "Student not found" }, 404);
+        return json({ student: rows[0] });
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select st.id, st.first_name, st.last_name,
+                 st.admission_number as student_id_number,
+                 case when st.active then 'active' else 'inactive' end as status,
+                 st.date_of_birth, st.gender, st.address, st.emergency_contact,
+                 st.medical_notes, c.name as class_name,
+                 g.full_name as guardian_name, g.phone as guardian_phone,
+                 sg.relationship as guardian_relationship
+          from students st
+          left join lateral (
+            select e.class_id
+            from class_enrollments e
+            where e.school_id = st.school_id and e.student_id = st.id and e.ends_on is null
+            order by e.starts_on desc
+            limit 1
+          ) enrollment on true
+          left join classes c on c.id = enrollment.class_id and c.school_id = st.school_id
+          left join student_guardians sg
+            on sg.student_id = st.id and sg.school_id = st.school_id and sg.is_primary
+          left join guardians g on g.id = sg.guardian_id and g.school_id = sg.school_id
+          where st.id = ${studentProfileMatch[1]}::uuid
+            and st.school_id = ${school.schoolId}::uuid
+          limit 1
+        `,
+      );
+      if (!rows[0]) return json({ error: "Student not found" }, 404);
+      return json({ student: rows[0] });
+    }
+
+    if (guardianLifecycleMatch) {
+      if (!uuidOrNull(guardianLifecycleMatch[1])) return badRequest("Invalid guardian ID");
+      if (request.method === "PATCH") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object" || typeof (payload as Record<string, unknown>)["active"] !== "boolean") {
+          return badRequest("Choose whether the parent record should be active");
+        }
+        const active = (payload as Record<string, unknown>)["active"] as boolean;
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          [
+            tx`
+              select id from guardians
+              where id = ${guardianLifecycleMatch[1]}::uuid
+                and school_id = ${school.schoolId}::uuid
+              for update
+            `,
+            tx`
+              select id from memberships
+              where school_id = ${school.schoolId}::uuid
+                and role = 'parent'
+                and user_id = (
+                  select user_id from guardians
+                  where id = ${guardianLifecycleMatch[1]}::uuid
+                    and school_id = ${school.schoolId}::uuid
+                )
+              for update
+            `,
+            tx`
+              with updated_guardian as (
+                update guardians
+                set active = ${active}
+                where id = ${guardianLifecycleMatch[1]}::uuid
+                  and school_id = ${school.schoolId}::uuid
+                returning id, user_id, active
+              ),
+              updated_membership as (
+                update memberships m
+                set active = exists (
+                  select 1 from guardians g
+                  where g.school_id = m.school_id
+                    and g.user_id = m.user_id
+                    and g.id <> updated.id
+                    and g.active
+                ) or updated.active
+                from updated_guardian updated
+                where m.school_id = ${school.schoolId}::uuid
+                  and m.user_id = updated.user_id
+                  and m.role = 'parent'
+                returning m.user_id
+              )
+              select id, active from updated_guardian
+            `,
+          ],
+        );
+        if (!rows[0]) return json({ error: "Parent record not found" }, 404);
+        return json({ guardian: rows[0] });
+      }
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        [
+          tx`
+            select id from guardians
+            where id = ${guardianLifecycleMatch[1]}::uuid
+              and school_id = ${school.schoolId}::uuid
+            for update
+          `,
+          tx`
+            select id from memberships
+            where school_id = ${school.schoolId}::uuid
+              and role = 'parent'
+              and user_id = (
+                select user_id from guardians
+                where id = ${guardianLifecycleMatch[1]}::uuid
+                  and school_id = ${school.schoolId}::uuid
+              )
+            for update
+          `,
+          tx`
+            with removed_guardian as (
+              delete from guardians
+              where id = ${guardianLifecycleMatch[1]}::uuid
+                and school_id = ${school.schoolId}::uuid
+              returning id, user_id
+            ),
+            updated_membership as (
+              update memberships m
+              set active = exists (
+                select 1 from guardians g
+                where g.school_id = m.school_id
+                  and g.user_id = m.user_id
+                  and g.id <> removed_guardian.id
+                  and g.active
+              )
+              from removed_guardian
+              where m.school_id = ${school.schoolId}::uuid
+                and m.user_id = removed_guardian.user_id
+                and m.role = 'parent'
+              returning m.user_id
+            )
+            select id from removed_guardian
+          `,
+        ],
+      );
+      if (!rows[0]) return json({ error: "Parent record not found" }, 404);
+      return json({ deleted: true, guardian_id: rows[0]["id"] });
+    }
+
+    if (teacherLifecycleMatch) {
+      if (!uuidOrNull(teacherLifecycleMatch[1])) return badRequest("Invalid teacher ID");
+      if (request.method === "PATCH") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object" || typeof (payload as Record<string, unknown>)["active"] !== "boolean") {
+          return badRequest("Choose whether the teacher should be active");
+        }
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            update memberships
+            set active = ${(payload as Record<string, unknown>)["active"] as boolean}
+            where user_id = ${teacherLifecycleMatch[1]}::uuid
+              and school_id = ${school.schoolId}::uuid
+              and role = 'teacher'
+            returning user_id, active
+          `,
+        );
+        if (!rows[0]) return json({ error: "Teacher not found" }, 404);
+        return json({ teacher: rows[0] });
+      }
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with removed_profile as (
+            delete from staff_profiles sp
+            where sp.user_id = ${teacherLifecycleMatch[1]}::uuid
+              and sp.school_id = ${school.schoolId}::uuid
+              and exists (
+                select 1 from memberships m
+                where m.user_id = sp.user_id
+                  and m.school_id = sp.school_id
+                  and m.role = 'teacher'
+              )
+            returning sp.user_id
+          ),
+          removed_membership as (
+            delete from memberships m
+            using removed_profile p
+            where m.user_id = p.user_id
+              and m.school_id = ${school.schoolId}::uuid
+              and m.role = 'teacher'
+            returning m.user_id
+          )
+          select user_id from removed_membership
+        `,
+      );
+      if (!rows[0]) return json({ error: "Teacher not found" }, 404);
+      return json({ deleted: true, teacher_id: rows[0]["user_id"] });
+    }
+
+    if (termCloseMatch) {
+      if (!uuidOrNull(termCloseMatch[1])) return badRequest("Invalid term ID");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          update terms
+          set is_closed = true, closed_at = now(), closed_by_user_id = ${school.userId}::uuid
+          where id = ${termCloseMatch[1]}::uuid and school_id = ${school.schoolId}::uuid
+            and lower(name) like '%term 3%' and not is_closed
+          returning id, name, is_closed, closed_at
+        `,
+      );
+      if (!rows[0]) return json({ error: "Term not found, already closed, or it is not Term 3" }, 409);
+      return json({ term: rows[0] });
+    }
+
+    if (url.pathname === "/api/school/student-attendance" && request.method === "GET") {
+      const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      const classId = url.searchParams.get("class_id")?.trim() || null;
+      const search = url.searchParams.get("search")?.trim() || null;
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "50", 10);
+      if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid attendance date");
+      if (classId && !uuidOrNull(classId)) return badRequest("Invalid class ID");
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      if (search && search.length > 120) return badRequest("Search text is too long");
+      const offset = (page - 1) * pageSize;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with enrolled_students as materialized (
+            select distinct on (st.id)
+                   st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   c.id as class_id, c.name as class_name, e.starts_on
+            from students st
+            join class_enrollments e on e.school_id = st.school_id and e.student_id = st.id
+              and e.starts_on <= ${attendanceDate}::date
+              and (e.ends_on is null or e.ends_on >= ${attendanceDate}::date)
+            join classes c on c.id = e.class_id and c.school_id = e.school_id
+            where st.school_id = ${school.schoolId}::uuid and st.active
+              and (${classId}::uuid is null or c.id = ${classId}::uuid)
+              and (${search}::text is null or
+                concat_ws(' ', st.first_name, st.last_name) ilike '%' || ${search} || '%'
+                or st.admission_number ilike '%' || ${search} || '%')
+            order by st.id, e.starts_on desc, c.name
+          ),
+          attendance_rows as materialized (
+            select e.*, coalesce(attendance.status::text, 'unmarked') as attendance_status,
+                   attendance.note
+            from enrolled_students e
+            left join lateral (
+              select ar.status, ar.note
+              from attendance_sessions ase
+              join attendance_records ar
+                on ar.attendance_session_id = ase.id and ar.school_id = ase.school_id
+              where ase.school_id = ${school.schoolId}::uuid
+                and ase.class_id = e.class_id and ar.student_id = e.student_id
+                and ase.attendance_date = ${attendanceDate}::date
+              order by ar.marked_at desc
+              limit 1
+            ) attendance on true
+          ),
+          page_records as (
+            select * from attendance_rows
+            order by class_name, last_name, first_name, student_id
+            limit ${pageSize} offset ${offset}
+          )
+          select coalesce(jsonb_agg(jsonb_build_object(
+                   'student_id', student_id, 'first_name', first_name, 'last_name', last_name,
+                   'admission_number', admission_number, 'class_id', class_id,
+                   'class_name', class_name, 'attendance_status', attendance_status, 'note', note
+                 ) order by class_name, last_name, first_name, student_id), '[]'::jsonb) as records,
+                 (select count(*)::int from attendance_rows) as total_count
+          from page_records
+        `,
+      );
+      const result = rows[0];
+      if (!result) throw new Error("Student attendance summary query returned no result");
+      const totalCount = Number(result["total_count"] ?? 0);
+      return json({
+        records: result["records"],
+        date: attendanceDate,
+        total_count: totalCount,
+        page,
+        page_size: pageSize,
+        page_count: Math.ceil(totalCount / pageSize),
+      });
+    }
+
+    if (url.pathname === "/api/school/attendance") {
+      const classId = url.searchParams.get("class_id")?.trim() || null;
+      if (classId && !uuidOrNull(classId)) return badRequest("Invalid class ID");
+
+      if (request.method === "GET") {
+        if (!classId) {
+          const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+          if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid attendance date");
+          const classes = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              select c.id, c.name, ay.name as academic_year_name,
+                     (select count(*)::int
+                      from class_enrollments e
+                      join students st on st.id = e.student_id and st.school_id = e.school_id
+                      where e.school_id = c.school_id and e.class_id = c.id
+                        and e.starts_on <= ${attendanceDate}::date
+                        and (e.ends_on is null or e.ends_on >= ${attendanceDate}::date)
+                        and st.active) as student_count,
+                     coalesce(attendance.present_count, 0)::int as present_count,
+                     coalesce(attendance.late_count, 0)::int as late_count,
+                     coalesce(attendance.absent_count, 0)::int as absent_count,
+                     coalesce(attendance.excused_count, 0)::int as excused_count,
+                     coalesce(attendance.marked_count, 0)::int as marked_count
+              from classes c
+              join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              left join lateral (
+                select count(*) filter (where r.status = 'present') as present_count,
+                       count(*) filter (where r.status = 'late') as late_count,
+                       count(*) filter (where r.status = 'absent') as absent_count,
+                       count(*) filter (where r.status = 'excused') as excused_count,
+                       count(r.id) as marked_count
+                from attendance_sessions s
+                left join attendance_records r
+                  on r.attendance_session_id = s.id and r.school_id = s.school_id
+                where s.school_id = c.school_id and s.class_id = c.id
+                  and s.attendance_date = ${attendanceDate}::date
+              ) attendance on true
+              where c.school_id = ${school.schoolId}::uuid
+                and (
+                  ${school.role === "school_admin"}
+                  or c.class_teacher_id in (
+                    select sp.id from staff_profiles sp
+                    where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+                  )
+                )
+              order by ay.is_current desc, ay.starts_on desc, c.name
+            `,
+          );
+          return json({ classes });
+        }
+
+        const authorized = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select 1 from classes c
+            where c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
+              and (
+                ${school.role === "school_admin"}
+                or c.class_teacher_id in (
+                  select sp.id from staff_profiles sp
+                  where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+                )
+              )
+          `,
+        );
+        if (!authorized.length) return json({ error: "You are not assigned as class teacher for this class" }, 403);
+
+        const month = url.searchParams.get("month")?.trim() || null;
+        if (month) {
+          if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return badRequest("Month must use YYYY-MM format");
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              with authorized_class as materialized (
+                select c.id, c.school_id
+                from classes c
+                where c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
+                  and (
+                    ${school.role === "school_admin"}
+                    or c.class_teacher_id in (
+                      select sp.id from staff_profiles sp
+                      where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+                    )
+                  )
+              )
+              select s.attendance_date,
+                     count(*) filter (where r.status = 'present')::int as present_count,
+                     count(*) filter (where r.status = 'late')::int as late_count,
+                     count(*) filter (where r.status = 'absent')::int as absent_count,
+                     count(*) filter (where r.status = 'excused')::int as excused_count,
+                     count(r.id)::int as marked_count
+              from authorized_class c
+              join attendance_sessions s on s.class_id = c.id and s.school_id = c.school_id
+              left join attendance_records r on r.attendance_session_id = s.id and r.school_id = s.school_id
+              where s.attendance_date >= (${month} || '-01')::date
+                and s.attendance_date < ((${month} || '-01')::date + interval '1 month')
+              group by s.attendance_date
+              order by s.attendance_date
+            `,
+          );
+          return json({ days: rows });
+        }
+
+        const attendanceDate = url.searchParams.get("date")?.trim() || "";
+        if (!validIsoDate(attendanceDate)) {
+          return badRequest("Enter a valid attendance date");
+        }
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with authorized_class as materialized (
+              select c.id, c.school_id
+              from classes c
+              where c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
+                and (
+                  ${school.role === "school_admin"}
+                  or c.class_teacher_id in (
+                    select sp.id from staff_profiles sp
+                    where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+                  )
+                )
+            )
+            select s.id as session_id, st.id as student_id,
+                   st.first_name, st.last_name, st.admission_number,
+                   r.status, r.note
+            from authorized_class c
+            join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
+              and e.starts_on <= ${attendanceDate}::date
+              and (e.ends_on is null or e.ends_on >= ${attendanceDate}::date)
+            join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+            left join attendance_sessions s on s.class_id = c.id and s.school_id = c.school_id
+              and s.attendance_date = ${attendanceDate}::date
+            left join attendance_records r on r.attendance_session_id = s.id
+              and r.student_id = st.id and r.school_id = st.school_id
+            order by st.last_name, st.first_name, st.admission_number
+          `,
+        );
+        return json({
+          session_id: rows[0]?.["session_id"] ?? null,
+          students: rows.map((row) => ({
+            id: String(row["student_id"]),
+            first_name: String(row["first_name"]),
+            last_name: String(row["last_name"]),
+            admission_number: String(row["admission_number"]),
+            status: row["status"] == null ? null : String(row["status"]),
+            note: row["note"] == null ? "" : String(row["note"]),
+          })),
+        });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const requestedClassId = body["class_id"];
+      const attendanceDate = typeof body["date"] === "string" ? body["date"] : "";
+      const records = body["records"];
+      if (!uuidOrNull(requestedClassId) || !requestedClassId) return badRequest("Choose a valid class");
+      if (!validIsoDate(attendanceDate)) {
+        return badRequest("Enter a valid attendance date");
+      }
+      if (!Array.isArray(records) || records.length < 1 || records.length > 500) return badRequest("Submit between 1 and 500 attendance records");
+      const studentIds = new Set<string>();
+      for (const entry of records) {
+        if (!entry || typeof entry !== "object") return badRequest("Every attendance record must be an object");
+        const record = entry as Record<string, unknown>;
+        const studentId = record["student_id"];
+        const note = record["note"];
+        if (!uuidOrNull(studentId) || !studentId || studentIds.has(studentId)) return badRequest("Every student must have a valid, unique ID");
+        studentIds.add(studentId);
+        if (!["present", "late", "absent", "excused"].includes(String(record["status"]))) return badRequest("Choose present, late, absent, or excused for each learner");
+        if (note !== undefined && note !== null && (typeof note !== "string" || note.length > 500)) return badRequest("Attendance notes must be at most 500 characters");
+      }
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with authorized_class as materialized (
+            select c.id, c.school_id, c.class_teacher_id
+            from classes c
+            where c.id = ${requestedClassId}::uuid and c.school_id = ${school.schoolId}::uuid
+              and c.class_teacher_id in (
+                select sp.id from staff_profiles sp
+                where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+              )
+          ),
+          roster as materialized (
+            select e.student_id
+            from authorized_class c
+            join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
+              and e.starts_on <= ${attendanceDate}::date
+              and (e.ends_on is null or e.ends_on >= ${attendanceDate}::date)
+            join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+          ),
+          input_records as (
+            select * from jsonb_to_recordset(${JSON.stringify(records)}::jsonb) as x(
+              student_id uuid, status text, note text
+            )
+          ),
+          valid_roster as (
+            select count(*)::int as roster_count
+            from roster r
+            join input_records i on i.student_id = r.student_id
+          ),
+          created_session as (
+            insert into attendance_sessions (school_id, class_id, attendance_date, taken_by_staff_id)
+            select c.school_id, c.id, ${attendanceDate}::date, c.class_teacher_id
+            from authorized_class c
+            where (select roster_count from valid_roster) = ${records.length}
+              and (select count(*) from input_records) = ${records.length}
+            on conflict (class_id, attendance_date) do update
+              set taken_by_staff_id = excluded.taken_by_staff_id
+            returning id, school_id
+          ),
+          saved_records as (
+            insert into attendance_records (school_id, attendance_session_id, student_id, status, note, marked_at)
+            select c.school_id, s.id, i.student_id, i.status::attendance_status, nullif(i.note, ''), now()
+            from created_session s
+            join authorized_class c on c.school_id = s.school_id
+            join roster r on true
+            join input_records i on i.student_id = r.student_id
+            on conflict (attendance_session_id, student_id) do update
+              set status = excluded.status, note = excluded.note, marked_at = now()
+            returning student_id
+          )
+          select (select count(*)::int from authorized_class) as authorized_count,
+                 (select count(*)::int from roster) as roster_count,
+                 (select count(*)::int from saved_records) as saved_count,
+                 (select id from created_session limit 1) as session_id
+        `,
+      );
+      if (!Number(rows[0]?.["authorized_count"] ?? 0)) return json({ error: "You are not assigned as class teacher for this class" }, 403);
+      if (Number(rows[0]?.["roster_count"] ?? 0) !== records.length
+        || Number(rows[0]?.["saved_count"] ?? 0) !== records.length) {
+        return json({ error: "Attendance was not saved. Refresh the class roster and mark every currently enrolled student." }, 409);
+      }
+      return json({ session_id: rows[0]?.["session_id"], saved_count: Number(rows[0]?.["saved_count"] ?? 0) });
+    }
+
+    if (url.pathname === "/api/school/fees") {
+      if (request.method === "GET") {
+        await ensureTermFeeArrears(sql, school.schoolId);
+        const classId = url.searchParams.get("class_id")?.trim() || null;
+        const yearId = url.searchParams.get("academic_year_id")?.trim() || null;
+        if ((classId && !uuidOrNull(classId)) || (yearId && !uuidOrNull(yearId))) return badRequest("Invalid class or academic year ID");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select f.id, f.class_id, c.name as class_name, f.academic_year_id,
+                   ay.name as academic_year_name, f.term_id, t.name as term_name,
+                   f.fee_type, f.description, f.amount, f.currency, f.is_active
+            from class_fees f
+            join classes c on c.id = f.class_id and c.school_id = f.school_id
+            join academic_years ay on ay.id = f.academic_year_id and ay.school_id = f.school_id
+            left join terms t on t.id = f.term_id and t.school_id = f.school_id
+            where f.school_id = ${school.schoolId}::uuid
+              and (${classId}::uuid is null or f.class_id = ${classId}::uuid)
+              and (${yearId}::uuid is null or f.academic_year_id = ${yearId}::uuid)
+            order by ay.starts_on desc, c.name, f.fee_type
+          `,
+        );
+        return json({ fees: rows });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const yearId = body["academic_year_id"];
+      const termId = body["term_id"] ?? null;
+      const feeType = body["fee_type"];
+      const description = typeof body["description"] === "string" ? body["description"].trim() : "";
+      const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
+      const currency = typeof body["currency"] === "string" ? body["currency"].trim().toUpperCase() : "GHS";
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(yearId) || !yearId || !uuidOrNull(termId)) return badRequest("Choose a valid class, academic year, and term");
+      if (!["daily", "tuition", "pta", "exam", "other"].includes(String(feeType))) return badRequest("Choose a valid fee type");
+      if (feeType === "daily" && termId) return badRequest("Daily fees apply to the whole academic year and cannot be term-specific");
+      if (description.length < 2 || description.length > 160) return badRequest("Fee description must be 2–160 characters");
+      if (!Number.isFinite(amount) || amount < 0 || amount > 99_999_999.99) return badRequest("Enter a valid non-negative fee amount");
+      if (!/^[A-Z]{3}$/.test(currency)) return badRequest("Currency must be a three-letter code");
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          insert into class_fees
+            (school_id, class_id, academic_year_id, term_id, fee_type, description, amount, currency)
+          values
+            (${school.schoolId}::uuid, ${classId}::uuid, ${yearId}::uuid, ${termId}::uuid,
+             ${feeType}, ${description}, ${amount}, ${currency})
+          on conflict (school_id, class_id, academic_year_id, term_id, fee_type)
+          do update set description = excluded.description, amount = excluded.amount,
+                        currency = excluded.currency, is_active = true
+          returning id, class_id, academic_year_id, term_id, fee_type, description, amount, currency, is_active
+        `,
+      );
+      return json({ fee: rows[0] }, 201);
+    }
+
+    if (paymentReviewMatch) {
+      if (!uuidOrNull(paymentReviewMatch[1])) return badRequest("Invalid payment ID");
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const action = body["action"];
+      const reason = typeof body["reason"] === "string" ? body["reason"].trim() : "";
+      if (action !== "approve" && action !== "reject") return badRequest("Choose approve or reject");
+      if (action === "reject" && (reason.length < 3 || reason.length > 500)) {
+        return badRequest("Enter a rejection reason between 3 and 500 characters");
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with reviewed as (
+            update payments
+            set status = ${action === "approve" ? "verified" : "voided"}::gateway_payment_status,
+                verified_at = case when ${action === "approve"} then now() else null end,
+                receipt_issued_at = case when ${action === "approve"} then now() else null end,
+                reviewed_by_user_id = ${school.userId}::uuid,
+                reviewed_at = now(),
+                rejection_reason = case when ${action === "reject"} then ${reason} else null end
+            where id = ${paymentReviewMatch[1]}::uuid
+              and school_id = ${school.schoolId}::uuid
+              and category in ('school_fee', 'examination_fee', 'other')
+              and status = 'pending'
+              and (
+                recorded_by_user_id is distinct from ${school.userId}::uuid
+                or (${school.role === "school_admin" && action === "approve"} and category = 'school_fee')
+              )
+            returning id, school_id, invoice_id, status, amount
+          ),
+          audit_event as (
+            insert into payment_review_events
+              (school_id, payment_id, action, performed_by_user_id, reason)
+            select school_id, id, ${action === "approve" ? "approved" : "rejected"},
+                   ${school.userId}::uuid, ${action === "reject" ? reason : null}
+            from reviewed
+            returning payment_id
+          ),
+          invoice_update as (
+            update invoices i
+            set status = case
+                  when verified.total >= i.amount_due then 'paid'::invoice_status
+                  when verified.total > 0 then 'part_paid'::invoice_status
+                  else 'issued'::invoice_status
+                end,
+                updated_at = now()
+            from (
+              select i.id, coalesce(sum(p.amount), 0) + r.amount as total
+              from invoices i
+              join reviewed r on r.invoice_id = i.id and r.status = 'verified'
+              left join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+                and p.status = 'verified' and p.id <> r.id
+              group by i.id, r.amount
+            ) verified
+            where i.id = verified.id
+            returning i.id
+          )
+          select id, status from reviewed
+        `,
+      );
+      if (!rows[0]) {
+        return json({ error: "This payment is no longer pending, belongs to another school, or was recorded by this admin." }, 409);
+      }
+      return json({ payment: rows[0] });
+    }
+
+    if (url.pathname === "/api/school/other-payments" && request.method === "GET") {
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                 p.status, p.paid_at, p.receipt_issued_at, p.rejection_reason,
+                 st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                 f.description as fee_description, c.name as class_name,
+                 recorded.display_name as recorded_by,
+                 reviewer.display_name as reviewed_by, p.reviewed_at,
+                 event.action as review_action, event.reason as review_event_reason,
+                 balance.balance_due
+          from payments p
+          join students st on st.id = p.student_id and st.school_id = p.school_id
+          join invoices i on i.id = p.invoice_id and i.school_id = p.school_id
+          join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+          join classes c on c.id = f.class_id and c.school_id = f.school_id
+          left join users recorded on recorded.id = p.recorded_by_user_id
+          left join users reviewer on reviewer.id = p.reviewed_by_user_id
+          left join lateral (
+            select e.action, e.reason
+            from payment_review_events e
+            where e.school_id = p.school_id and e.payment_id = p.id
+            order by e.occurred_at desc
+            limit 1
+          ) event on true
+          left join lateral (
+            select greatest(i.amount_due
+              - coalesce(sum(all_payments.amount) filter (where all_payments.status = 'verified'), 0)
+              - coalesce(sum(all_payments.amount) filter (where all_payments.status = 'pending'), 0), 0) as balance_due
+            from payments all_payments
+            where all_payments.school_id = p.school_id and all_payments.invoice_id = i.id
+          ) balance on true
+          where p.school_id = ${school.schoolId}::uuid
+            and p.category in ('school_fee', 'examination_fee', 'other')
+          order by p.paid_at desc
+          limit 200
+        `,
+      );
+      return json({ payments: rows });
+    }
+
+    if (url.pathname === "/api/school/other-payments" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const studentId = body["student_id"];
+      const feeId = body["fee_id"];
+      const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
+      const method = body["method"];
+      if (!uuidOrNull(studentId) || !studentId || !uuidOrNull(feeId) || !feeId) {
+        return badRequest("Choose a valid student and configured fee");
+      }
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 99_999_999.99) {
+        return badRequest("Enter a valid payment amount");
+      }
+      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) {
+        return badRequest("Choose a valid payment method");
+      }
+
+      const invoiceNumber = `OFI-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+      const receiptNumber = `OF-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`
+          insert into invoices
+            (school_id, student_id, class_fee_id, invoice_number, description,
+             amount_due, base_amount_due, currency, status)
+          select f.school_id, ${studentId}::uuid, f.id, ${invoiceNumber},
+                 f.description, f.amount, f.amount, f.currency, 'issued'
+          from class_fees f
+          join classes c on c.id = f.class_id and c.school_id = f.school_id
+          join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
+            and e.student_id = ${studentId}::uuid and e.starts_on <= current_date and e.ends_on is null
+          join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+          where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
+            and f.is_active and f.fee_type in ('exam', 'other')
+            and c.academic_year_id = f.academic_year_id
+          on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
+        `,
+        tx`
+          select i.id, i.amount_due, i.currency, f.fee_type
+          from invoices i
+          join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+          where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+            and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+            and f.is_active and f.fee_type in ('exam', 'other')
+          for update of i
+        `,
+        tx`
+          with invoice as (
+            select i.id, i.amount_due, i.currency, f.fee_type
+            from invoices i
+            join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+            where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+              and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+              and f.is_active and f.fee_type in ('exam', 'other')
+          ),
+          balance as (
+            select i.id, i.amount_due, i.currency, i.fee_type,
+                   greatest(i.amount_due
+                     - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0)
+                     - coalesce(sum(p.amount) filter (where p.status = 'pending'
+                         and p.category in ('examination_fee', 'other')), 0), 0) as balance_due
+            from invoice i
+            left join payments p on p.school_id = ${school.schoolId}::uuid and p.invoice_id = i.id
+            group by i.id, i.amount_due, i.currency, i.fee_type
+          ),
+          recorded as (
+            insert into payments
+              (school_id, invoice_id, student_id, receipt_number, amount, currency, method,
+               recorded_by_staff_id, recorded_by_user_id, category, status)
+            select ${school.schoolId}::uuid, b.id, ${studentId}::uuid, ${receiptNumber},
+                   ${amount}, b.currency, ${String(method)},
+                   (select id from staff_profiles where school_id = ${school.schoolId}::uuid
+                    and user_id = ${school.userId}::uuid limit 1),
+                   ${school.userId}::uuid,
+                   case when b.fee_type = 'exam' then 'examination_fee'::payment_category
+                        else 'other'::payment_category end,
+                   'pending'
+            from balance b
+            where ${amount} <= b.balance_due and b.balance_due > 0
+            returning id, invoice_id, receipt_number, amount, currency, category, method, status, paid_at
+          )
+          select recorded.*, balance.balance_due - recorded.amount as balance_due,
+                 st.first_name, st.last_name, st.admission_number, f.description as fee_description,
+                 c.name as class_name
+          from balance
+          join recorded on recorded.invoice_id = balance.id
+          join students st on st.id = ${studentId}::uuid and st.school_id = ${school.schoolId}::uuid
+          join class_fees f on f.id = ${feeId}::uuid and f.school_id = ${school.schoolId}::uuid
+          join classes c on c.id = f.class_id and c.school_id = f.school_id
+        `,
+      ]);
+      const result = rows[2]?.[0];
+      if (!result) {
+        return json({
+          error: "No eligible configured fee was found, the learner is not enrolled, or the amount exceeds the uncollected balance.",
+        }, 409);
+      }
+      return json({ payment: result, balance_due: Number(result["balance_due"]) }, 201);
+    }
+
+    if (url.pathname === "/api/school/payments" && request.method === "GET") {
+      await ensureTermFeeArrears(sql, school.schoolId);
+      const feeId = url.searchParams.get("fee_id")?.trim() || null;
+      if (feeId && !uuidOrNull(feeId)) return badRequest("Invalid class fee ID");
+      if (feeId) {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select st.id as student_id, st.first_name, st.last_name,
+                   st.admission_number, c.name as class_name,
+                   coalesce(i.amount_due, f.amount) as original_amount,
+                   coalesce(i.base_amount_due, f.amount) as base_amount_due,
+                   coalesce(i.arrears_amount, 0) as arrears_amount,
+                   arrears.sources as arrears_sources,
+                   coalesce(paid.paid_amount, 0) as paid_amount,
+                   coalesce(paid.pending_amount, 0) as pending_amount,
+                   case when i.rolled_forward_at is not null then 0
+                     else greatest(coalesce(i.amount_due, f.amount)
+                       - coalesce(paid.paid_amount, 0)
+                       - coalesce(paid.pending_amount, 0), 0)
+                   end as balance_due,
+                   i.status as invoice_status, f.currency
+            from class_fees f
+            join classes c on c.id = f.class_id and c.school_id = f.school_id
+            join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
+              and e.starts_on <= current_date and e.ends_on is null
+            join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+            left join invoices i on i.school_id = f.school_id and i.student_id = st.id
+              and i.class_fee_id = f.id and i.status <> 'void'
+            left join lateral (
+              select sum(p.amount) filter (where p.status = 'verified') as paid_amount,
+                     sum(p.amount) filter (
+                       where p.status = 'pending' and p.category in ('school_fee', 'examination_fee', 'other')
+                     ) as pending_amount
+              from payments p
+              where p.school_id = f.school_id and p.invoice_id = i.id
+            ) paid on true
+            left join lateral (
+              select string_agg(
+                source_year.name || ' · ' || source_term.name || ' (' || source_invoice.currency || ' ' ||
+                  to_char(a.amount, 'FM999999999990.00') || ')',
+                ', ' order by source_term.starts_on
+              ) as sources
+              from invoice_arrears a
+              join invoices source_invoice
+                on source_invoice.id = a.source_invoice_id and source_invoice.school_id = a.school_id
+              join class_fees source_fee
+                on source_fee.id = source_invoice.class_fee_id and source_fee.school_id = source_invoice.school_id
+              join academic_years source_year
+                on source_year.id = source_fee.academic_year_id and source_year.school_id = source_fee.school_id
+              join terms source_term
+                on source_term.id = a.source_term_id and source_term.school_id = a.school_id
+              where a.school_id = f.school_id and a.destination_invoice_id = i.id
+            ) arrears on true
+            where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
+              and f.is_active and f.fee_type <> 'daily'
+            order by st.last_name, st.first_name, st.admission_number
+          `,
+        );
+        return json({ balances: rows });
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select p.id, p.student_id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                 p.status, p.paid_at, st.first_name, st.last_name, st.admission_number,
+                 f.description as fee_description, c.name as class_name
+          from payments p
+          join students st on st.id = p.student_id and st.school_id = p.school_id
+          left join invoices i on i.id = p.invoice_id and i.school_id = p.school_id
+          left join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+          left join classes c on c.id = f.class_id and c.school_id = f.school_id
+          where p.school_id = ${school.schoolId}::uuid and p.status = 'verified'
+          order by p.paid_at desc
+          limit 200
+        `,
+      );
+      return json({ payments: rows });
+    }
+
+    if (url.pathname === "/api/school/payments" && request.method === "POST") {
+      await ensureTermFeeArrears(sql, school.schoolId);
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const studentId = body["student_id"];
+      const feeId = body["fee_id"];
+      const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
+      const method = body["method"];
+      if (!uuidOrNull(studentId) || !studentId || !uuidOrNull(feeId) || !feeId) return badRequest("Choose a valid student and school fee");
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 99_999_999.99) return badRequest("Enter a valid payment amount");
+      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
+
+      const invoiceNumber = `SF-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+      const receiptNumber = `SF-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`
+          insert into invoices
+            (school_id, student_id, class_fee_id, invoice_number, description,
+             amount_due, base_amount_due, currency, status)
+          select f.school_id, ${studentId}::uuid, f.id, ${invoiceNumber},
+                 f.description, f.amount, f.amount, f.currency, 'issued'
+          from class_fees f
+          join classes c on c.id = f.class_id and c.school_id = f.school_id
+          join class_enrollments e on e.class_id = c.id and e.school_id = c.school_id
+            and e.student_id = ${studentId}::uuid and e.starts_on <= current_date and e.ends_on is null
+          join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+          where f.school_id = ${school.schoolId}::uuid and f.id = ${feeId}::uuid
+            and f.is_active and f.fee_type in ('tuition', 'pta') and c.academic_year_id = f.academic_year_id
+          on conflict (school_id, student_id, class_fee_id) where class_fee_id is not null do nothing
+        `,
+        tx`
+          select id, amount_due
+          from invoices
+          where school_id = ${school.schoolId}::uuid and student_id = ${studentId}::uuid
+            and class_fee_id = ${feeId}::uuid and status <> 'void'
+          for update
+        `,
+        tx`
+          with invoice as (
+            select i.id, i.amount_due, i.currency
+            from invoices i
+            join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+            where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+              and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+              and f.fee_type in ('tuition', 'pta')
+          ),
+          balance as (
+            select i.id, i.amount_due, i.currency,
+                   greatest(i.amount_due
+                     - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0)
+                     - coalesce(sum(p.amount) filter (where p.status = 'pending'), 0), 0) as balance_due
+            from invoice i
+            left join payments p on p.school_id = ${school.schoolId}::uuid and p.invoice_id = i.id
+            group by i.id, i.amount_due, i.currency
+          ),
+          recorded as (
+            insert into payments
+              (school_id, invoice_id, student_id, receipt_number, amount, currency, method,
+               recorded_by_staff_id, recorded_by_user_id, category, status, verified_at, receipt_issued_at)
+            select ${school.schoolId}::uuid, b.id, ${studentId}::uuid,
+                   ${receiptNumber},
+                   ${amount}, b.currency, ${String(method)},
+                   (select id from staff_profiles where school_id = ${school.schoolId}::uuid
+                    and user_id = ${school.userId}::uuid limit 1),
+                   ${school.userId}::uuid,
+                   'school_fee',
+                   ${school.role === "school_admin" ? "verified" : "pending"}::gateway_payment_status,
+                   case when ${school.role === "school_admin"} then now() else null end,
+                   case when ${school.role === "school_admin"} then now() else null end
+            from balance b
+            where ${amount} <= b.balance_due and b.balance_due > 0
+            returning id, receipt_number, amount, currency, paid_at
+          )
+          select balance.amount_due, balance.balance_due as balance_before,
+                 recorded.id as payment_id
+          from balance left join recorded on true
+        `,
+        tx`
+          update invoices i
+          set status = case
+                when paid.total >= i.amount_due then 'paid'::invoice_status
+                when paid.total > 0 then 'part_paid'::invoice_status
+                else 'issued'::invoice_status
+              end,
+              updated_at = now()
+          from (
+            select i.id, coalesce(sum(p.amount) filter (where p.status = 'verified'), 0) as total
+            from invoices i
+            left join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+            where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+              and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+            group by i.id
+          ) paid
+          where i.id = paid.id
+        `,
+        tx`
+          select p.id, p.receipt_number, p.amount, p.currency, p.paid_at,
+                 i.amount_due,
+                 greatest(i.amount_due - coalesce((
+                   select sum(paid.amount) from payments paid
+                   where paid.school_id = i.school_id and paid.invoice_id = i.id
+                     and paid.status in ('verified', 'pending')
+                 ), 0), 0) as balance_due
+          from invoices i
+          left join payments p on p.invoice_id = i.id and p.school_id = i.school_id
+            and p.receipt_number = ${receiptNumber}
+          where i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+            and i.class_fee_id = ${feeId}::uuid and i.status <> 'void'
+        `,
+      ]);
+      const result = rows[0];
+      if (!result) return json({ error: "No matching student fee balance was found" }, 404);
+      if (!result["id"]) {
+        return json({
+          error: "Payment exceeds the remaining balance or this fee has already been paid.",
+          balance_due: Number(result["balance_due"] ?? 0),
+        }, 409);
+      }
+      return json({
+        payment: result,
+        balance_due: Number(result["balance_due"] ?? 0),
+      }, 201);
+    }
+
+    if (url.pathname === "/api/school/daily-payments" && request.method === "GET") {
+      const paymentDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      if (!validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
+      if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee register dates cannot be in the future");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select distinct on (st.id)
+                 st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                 c.id as class_id, c.name as class_name,
+                 ay.name as academic_year_name,
+                 f.amount as fee_amount, f.currency,
+                 attendance.status as attendance_status,
+                 p.id as payment_id, p.method, p.paid_at,
+                 coupon.code as coupon_code
+          from class_enrollments e
+          join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+          join classes c on c.id = e.class_id and c.school_id = e.school_id
+          join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+            and ${paymentDate}::date between ay.starts_on and ay.ends_on
+          join class_fees f on f.school_id = c.school_id and f.class_id = c.id
+            and f.academic_year_id = ay.id and f.fee_type = 'daily'
+            and f.term_id is null and f.is_active
+          left join lateral (
+            select ar.status
+            from attendance_records ar
+            join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+            where ar.school_id = e.school_id and ar.student_id = st.id and ase.class_id = c.id
+              and ase.attendance_date = ${paymentDate}::date
+            order by ar.marked_at desc
+            limit 1
+          ) attendance on true
+          left join payments p on p.school_id = e.school_id and p.student_id = st.id
+            and p.daily_fee_date = ${paymentDate}::date and p.category = 'daily_fee'
+            and p.status = 'verified'
+          left join coupons coupon on coupon.school_id = p.school_id and coupon.payment_id = p.id
+          where e.school_id = ${school.schoolId}::uuid
+            and e.starts_on <= ${paymentDate}::date and (e.ends_on is null or e.ends_on >= ${paymentDate}::date)
+            and (
+              ${school.role !== "teacher"}
+              or c.class_teacher_id in (
+                select sp.id from staff_profiles sp
+                where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+              )
+              or exists (
+                select 1
+                from teaching_assignments ta
+                join class_subjects cs
+                  on cs.id = ta.class_subject_id and cs.school_id = ta.school_id
+                join staff_profiles sp
+                  on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = ay.id
+                  and cs.class_id = c.id and sp.user_id = ${school.userId}::uuid
+              )
+            )
+          order by st.id, e.starts_on desc
+        `,
+      );
+      return json({ students: rows, date: paymentDate });
+    }
+
+    if (url.pathname === "/api/school/daily-payments" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const studentId = body["student_id"];
+      const paymentDate = body["date"];
+      const method = body["method"];
+      if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
+      if (typeof paymentDate !== "string" || !validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
+      if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee payments cannot be recorded for a future date");
+      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with eligible as (
+            select f.school_id, f.amount, f.currency, st.id as student_id, c.id as class_id,
+                   (select id from staff_profiles where school_id = f.school_id
+                    and user_id = ${school.userId}::uuid limit 1) as staff_id
+            from students st
+            join class_enrollments e on e.student_id = st.id and e.school_id = st.school_id
+              and e.starts_on <= ${paymentDate}::date and (e.ends_on is null or e.ends_on >= ${paymentDate}::date)
+            join classes c on c.id = e.class_id and c.school_id = e.school_id
+            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              and ${paymentDate}::date between ay.starts_on and ay.ends_on
+            join class_fees f on f.class_id = c.id and f.school_id = c.school_id
+              and f.academic_year_id = ay.id and f.fee_type = 'daily' and f.term_id is null and f.is_active
+            where st.id = ${studentId}::uuid and st.school_id = ${school.schoolId}::uuid and st.active
+            order by e.starts_on desc
+            limit 1
+          ),
+          recorded as (
+            insert into payments
+              (school_id, student_id, amount, currency, method, recorded_by_staff_id,
+               category, daily_fee_date, status, verified_at)
+            select school_id, student_id, amount, currency, ${String(method)}, staff_id,
+                   'daily_fee', ${paymentDate}::date, 'verified', now()
+            from eligible
+            on conflict (school_id, student_id, daily_fee_date) where category = 'daily_fee' do nothing
+            returning id, school_id, student_id, amount, currency, daily_fee_date, method
+          ),
+          issued_coupon as (
+            insert into coupons (school_id, student_id, code, issued_by_staff_id, payment_id, valid_on)
+            select r.school_id, r.student_id, 'DF-' || upper(encode(gen_random_bytes(5), 'hex')),
+                   (select id from staff_profiles where school_id = r.school_id
+                    and user_id = ${school.userId}::uuid limit 1),
+                   r.id, r.daily_fee_date
+            from recorded r
+            returning payment_id, code
+          )
+          select r.*, c.code as coupon_code
+          from recorded r join issued_coupon c on c.payment_id = r.id
+        `,
+      );
+      if (!rows[0]) {
+        return json({ error: "Student is not eligible for this date, no daily fee is configured, or payment is already recorded." }, 409);
+      }
+      return json({ payment: rows[0] }, 201);
+    }
+
+    if (url.pathname === "/api/school/reconciliation" && request.method === "GET") {
+      const reconciliationDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      if (!validIsoDate(reconciliationDate)) return badRequest("Enter a valid reconciliation date");
+      const [summaryRows, channels, categoryTotals, payments] = await Promise.all([
+        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+          with expected_students as (
+            select st.id as student_id, f.amount, f.currency
+            from attendance_records ar
+            join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+            join students st on st.id = ar.student_id and st.school_id = ar.school_id and st.active
+            join class_enrollments e on e.student_id = st.id and e.school_id = st.school_id
+              and e.class_id = ase.class_id and e.starts_on <= ${reconciliationDate}::date
+              and (e.ends_on is null or e.ends_on >= ${reconciliationDate}::date)
+            join classes c on c.id = ase.class_id and c.school_id = ase.school_id
+            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              and ${reconciliationDate}::date between ay.starts_on and ay.ends_on
+            join class_fees f on f.class_id = c.id and f.school_id = c.school_id
+              and f.academic_year_id = ay.id and f.fee_type = 'daily'
+              and f.term_id is null and f.is_active
+            where ar.school_id = ${school.schoolId}::uuid
+              and ase.attendance_date = ${reconciliationDate}::date and ar.status in ('present', 'late')
+            group by st.id, f.amount, f.currency
+          ),
+          expected_by_currency as (
+            select currency, sum(amount) as total, count(*)::int as students
+            from expected_students group by currency
+          ),
+          received_by_currency as (
+            select currency,
+                   sum(amount) filter (where category = 'daily_fee') as daily_total,
+                   count(*) filter (where category = 'daily_fee')::int as daily_payments,
+                   sum(amount) filter (where category = 'school_fee') as school_fee_total,
+                   count(*) filter (where category = 'school_fee')::int as school_fee_payments,
+                   sum(amount) filter (where category not in ('daily_fee', 'school_fee')) as other_total,
+                   count(*) filter (where category not in ('daily_fee', 'school_fee'))::int as other_payments,
+                   sum(amount) as total
+            from payments
+            where school_id = ${school.schoolId}::uuid and status = 'verified'
+              and (
+                (category = 'daily_fee' and daily_fee_date = ${reconciliationDate}::date)
+                or (category <> 'daily_fee' and paid_at::date = ${reconciliationDate}::date)
+              )
+            group by currency
+          )
+          select currency,
+                 coalesce(expected_by_currency.total, 0) as expected_daily,
+                 coalesce(expected_by_currency.students, 0) as expected_students,
+                 coalesce(received_by_currency.daily_total, 0) as daily_received,
+                 coalesce(received_by_currency.daily_payments, 0) as daily_payment_count,
+                 coalesce(received_by_currency.school_fee_total, 0) as school_fee_received,
+                 coalesce(received_by_currency.school_fee_payments, 0) as school_fee_payment_count,
+                 coalesce(received_by_currency.other_total, 0) as other_payments_received,
+                 coalesce(received_by_currency.other_payments, 0) as other_payment_count,
+                 coalesce(received_by_currency.total, 0) as total_received
+          from (
+            select currency from expected_by_currency
+            union select currency from received_by_currency
+          ) currencies
+          left join expected_by_currency using (currency)
+          left join received_by_currency using (currency)
+          order by currency
+        `),
+        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+          select method, category, currency, sum(amount) as amount, count(*)::int as payment_count
+          from payments
+          where school_id = ${school.schoolId}::uuid and status = 'verified'
+            and (
+              (category = 'daily_fee' and daily_fee_date = ${reconciliationDate}::date)
+              or (category <> 'daily_fee' and paid_at::date = ${reconciliationDate}::date)
+            )
+          group by method, category, currency
+          order by category, method
+        `),
+        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+          select category, currency, sum(amount) as amount, count(*)::int as payment_count
+          from payments
+          where school_id = ${school.schoolId}::uuid and status = 'verified'
+            and (
+              (category = 'daily_fee' and daily_fee_date = ${reconciliationDate}::date)
+              or (category <> 'daily_fee' and paid_at::date = ${reconciliationDate}::date)
+            )
+          group by category, currency
+          order by currency, category
+        `),
+        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+          select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                 p.paid_at, p.daily_fee_date, st.first_name, st.last_name, st.admission_number
+          from payments p
+          join students st on st.id = p.student_id and st.school_id = p.school_id
+          where p.school_id = ${school.schoolId}::uuid and p.status = 'verified'
+            and (
+              (p.category = 'daily_fee' and p.daily_fee_date = ${reconciliationDate}::date)
+              or (p.category <> 'daily_fee' and p.paid_at::date = ${reconciliationDate}::date)
+            )
+          order by p.paid_at desc
+        `),
+      ]);
+      return json({
+        date: reconciliationDate,
+        currency_totals: summaryRows.map((row) => ({
+          currency: row["currency"],
+          expected_daily: row["expected_daily"],
+          expected_students: row["expected_students"],
+          daily_received: row["daily_received"],
+          daily_payment_count: row["daily_payment_count"],
+          school_fee_received: row["school_fee_received"],
+          school_fee_payment_count: row["school_fee_payment_count"],
+          other_payments_received: row["other_payments_received"],
+          other_payment_count: row["other_payment_count"],
+          total_received: row["total_received"],
+          variance: Number(row["expected_daily"] ?? 0) - Number(row["daily_received"] ?? 0),
+        })),
+        channels,
+        category_totals: categoryTotals,
+        payments,
+      });
+    }
+
+    if (url.pathname === "/api/school/coupons" && request.method === "GET") {
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select c.id, c.code, c.status, c.valid_on, c.expires_at, c.created_at,
+                 st.first_name, st.last_name, st.admission_number,
+                 p.amount, p.currency, p.daily_fee_date
+          from coupons c
+          left join students st on st.id = c.student_id and st.school_id = c.school_id
+          left join payments p on p.id = c.payment_id and p.school_id = c.school_id
+          where c.school_id = ${school.schoolId}::uuid
+          order by c.created_at desc
+          limit 200
+        `,
+      );
+      return json({ coupons: rows });
+    }
+
+    if (url.pathname === "/api/school/marks") {
+      if (request.method === "GET") {
+        const classId = url.searchParams.get("class_id")?.trim() || null;
+        const termId = url.searchParams.get("term_id")?.trim() || null;
+        const classSubjectId = url.searchParams.get("class_subject_id")?.trim() || null;
+        if ([classId, termId, classSubjectId].some((id) => id && !uuidOrNull(id))) return badRequest("Invalid class, term, or subject assignment ID");
+
+        const assignments = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select cs.id as class_subject_id, c.id as class_id, c.name as class_name,
+                   cs.subject_id, s.name as subject_name, c.academic_year_id,
+                   ay.name as academic_year_name, t.id as term_id, t.name as term_name
+            from class_subjects cs
+            join classes c on c.id = cs.class_id and c.school_id = cs.school_id
+            join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+            join terms t on t.academic_year_id = ay.id and t.school_id = ay.school_id
+            where cs.school_id = ${school.schoolId}::uuid
+              and (${classId}::uuid is null or c.id = ${classId}::uuid)
+              and (${termId}::uuid is null or t.id = ${termId}::uuid)
+              and (
+                ${school.role === "school_admin"}
+                or exists (
+                  select 1 from teaching_assignments ta
+                  join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                  where ta.school_id = cs.school_id and ta.class_subject_id = cs.id
+                    and ta.academic_year_id = c.academic_year_id and sp.user_id = ${school.userId}::uuid
+                )
+              )
+            order by ay.starts_on desc, c.name, s.name, t.starts_on
+          `,
+        );
+        if (!classSubjectId || !termId) return json({ assignments });
+
+        const selected = assignments.find((row) => String(row["class_subject_id"]) === classSubjectId && String(row["term_id"]) === termId);
+        if (!selected) return json({ error: "That subject is not assigned to this class and term" }, 404);
+        const students = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   m.class_test_score, m.project_score, m.homework_score, m.group_work_score,
+                   m.exam_score, m.total_score, m.performance_level
+            from class_enrollments e
+            join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+            left join subject_term_marks m
+              on m.school_id = st.school_id and m.student_id = st.id
+             and m.class_subject_id = ${classSubjectId}::uuid and m.term_id = ${termId}::uuid
+            where e.school_id = ${school.schoolId}::uuid
+              and e.class_id = ${selected["class_id"]}::uuid and e.ends_on is null
+            order by st.last_name, st.first_name, st.admission_number
+          `,
+        );
+        return json({ assignments, students });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classSubjectId = body["class_subject_id"];
+      const termId = body["term_id"];
+      const marks = body["marks"];
+      if (!uuidOrNull(classSubjectId) || !classSubjectId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid subject assignment and term");
+      if (!Array.isArray(marks) || marks.length < 1 || marks.length > 200) return badRequest("Submit between 1 and 200 student mark rows");
+      const seenStudents = new Set<string>();
+      for (const row of marks) {
+        if (!row || typeof row !== "object") return badRequest("Every mark row must be an object");
+        const mark = row as Record<string, unknown>;
+        if (!uuidOrNull(mark["student_id"]) || !mark["student_id"] || seenStudents.has(mark["student_id"])) return badRequest("Each student must have a valid, unique ID");
+        seenStudents.add(mark["student_id"]);
+        for (const [field, limit] of [["class_test_score", 10], ["project_score", 20], ["homework_score", 10], ["group_work_score", 10], ["exam_score", 100]] as const) {
+          const value = mark[field];
+          if (value !== null && value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > limit)) {
+            return badRequest(`Invalid ${field.replaceAll("_", " ")}; it must be between 0 and ${limit}`);
+          }
+        }
+      }
+
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with input_marks as (
+            select * from jsonb_to_recordset(${JSON.stringify(marks)}::jsonb) as x(
+              student_id uuid, class_test_score numeric, project_score numeric,
+              homework_score numeric, group_work_score numeric, exam_score numeric
+            )
+          ),
+          saved as (
+            insert into subject_term_marks
+              (school_id, student_id, class_subject_id, term_id, class_test_score,
+               project_score, homework_score, group_work_score, exam_score, updated_by_user_id)
+            select ${school.schoolId}::uuid, input.student_id, cs.id, term.id,
+                   input.class_test_score, input.project_score, input.homework_score,
+                   input.group_work_score, input.exam_score, ${school.userId}::uuid
+            from input_marks input
+            join class_subjects cs on cs.id = ${classSubjectId}::uuid and cs.school_id = ${school.schoolId}::uuid
+            join classes c on c.id = cs.class_id and c.school_id = cs.school_id
+            join students st on st.id = input.student_id and st.school_id = cs.school_id and st.active
+            join terms term on term.id = ${termId}::uuid and term.school_id = c.school_id
+              and term.academic_year_id = c.academic_year_id
+            join class_enrollments e on e.student_id = input.student_id
+              and e.class_id = c.id and e.school_id = c.school_id and e.ends_on is null
+            where (
+              ${school.role === "school_admin"}
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = cs.school_id and ta.class_subject_id = cs.id
+                  and ta.academic_year_id = c.academic_year_id and sp.user_id = ${school.userId}::uuid
+              )
+            )
+            on conflict (student_id, class_subject_id, term_id) do update
+              set class_test_score = excluded.class_test_score,
+                  project_score = excluded.project_score,
+                  homework_score = excluded.homework_score,
+                  group_work_score = excluded.group_work_score,
+                  exam_score = excluded.exam_score,
+                  updated_by_user_id = excluded.updated_by_user_id
+            returning student_id
+          )
+          select student_id from saved
+        `,
+      );
+      if (rows.length !== marks.length) return json({ error: "Some students are not currently enrolled in that class, or the subject is not assigned to your account" }, 400);
+      return json({ saved: rows.length });
+    }
+
+    if (url.pathname === "/api/school/terminal-reports") {
+      if (request.method === "GET") {
+        const classId = url.searchParams.get("class_id")?.trim() || null;
+        const termId = url.searchParams.get("term_id")?.trim() || null;
+        if (!uuidOrNull(classId) || !uuidOrNull(termId) || !classId || !termId) return badRequest("Choose a valid class and term");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   (select name from schools where id = st.school_id) as school_name,
+                   r.id as report_id, r.conduct, r.attitude, r.interest,
+                   r.attendance_present, r.attendance_total, r.teacher_remark,
+                   r.headteacher_remark, r.promotion_status, r.published_at,
+                   coalesce((
+                     select jsonb_agg(jsonb_build_object(
+                       'subject_id', i.subject_id, 'subject_name', s.name,
+                       'class_test_score', i.class_test_score, 'project_score', i.project_score,
+                       'homework_score', i.homework_score, 'group_work_score', i.group_work_score,
+                       'exam_score', i.exam_score, 'total_score', i.total_score,
+                       'performance_level', i.performance_level, 'remark', i.remark
+                     ) order by s.name)
+                     from terminal_report_items i join subjects s on s.id = i.subject_id and s.school_id = i.school_id
+                     where i.report_id = r.id and i.school_id = st.school_id
+                   ), '[]'::jsonb) as items
+            from class_enrollments e
+            join students st on st.id = e.student_id and st.school_id = e.school_id
+            join classes c on c.id = e.class_id and c.school_id = e.school_id
+            left join terminal_reports r on r.student_id = st.id and r.term_id = ${termId}::uuid and r.school_id = st.school_id
+            where e.school_id = ${school.schoolId}::uuid and c.id = ${classId}::uuid
+              and e.ends_on is null
+              and exists (select 1 from terms t where t.id = ${termId}::uuid
+                and t.school_id = c.school_id and t.academic_year_id = c.academic_year_id)
+              and (
+                ${school.role === "school_admin"}
+                or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+                or exists (
+                  select 1 from teaching_assignments ta
+                  join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                  where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                    and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                    and sp.user_id = ${school.userId}::uuid
+                )
+              )
+            order by st.last_name, st.first_name, st.admission_number
+          `,
+        );
+        return json({ reports: rows });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const termId = body["term_id"];
+      const profiles = body["profiles"] ?? [];
+      const publish = body["publish"] === true;
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid class and term");
+      if (publish && school.role !== "school_admin") return json({ error: "Only a School Admin can publish terminal reports" }, 403);
+      if (!Array.isArray(profiles) || profiles.length > 200) return badRequest("Invalid report profile list");
+      const seenStudents = new Set<string>();
+      for (const row of profiles) {
+        if (!row || typeof row !== "object") return badRequest("Every learner report must be an object");
+        const profile = row as Record<string, unknown>;
+        if (!uuidOrNull(profile["student_id"]) || !profile["student_id"] || seenStudents.has(profile["student_id"])) return badRequest("Each report must have a valid, unique student ID");
+        seenStudents.add(profile["student_id"]);
+        for (const field of ["conduct", "attitude", "interest", "teacher_remark", "headteacher_remark"] as const) {
+          const value = profile[field];
+          if (value !== undefined && value !== null && (typeof value !== "string" || value.length > (field.endsWith("remark") ? 2000 : 80))) {
+            return badRequest(`${field.replaceAll("_", " ")} is too long`);
+          }
+        }
+        const promotion = profile["promotion_status"];
+        if (promotion !== undefined && promotion !== null && promotion !== "" && !["promote", "repeat", "transfer", "graduate"].includes(String(promotion))) {
+          return badRequest("Invalid promotion decision");
+        }
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`
+          with report_students as (
+            select e.student_id, e.school_id, c.id as class_id
+            from class_enrollments e
+            join classes c on c.id = e.class_id and c.school_id = e.school_id
+            join terms t on t.id = ${termId}::uuid and t.school_id = c.school_id
+              and t.academic_year_id = c.academic_year_id
+            where e.school_id = ${school.schoolId}::uuid and c.id = ${classId}::uuid and e.ends_on is null
+              and (
+                ${school.role === "school_admin"}
+                or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+                or exists (
+                  select 1 from teaching_assignments ta
+                  join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                  where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                    and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                    and sp.user_id = ${school.userId}::uuid
+                )
+              )
+          ),
+          input_profiles as (
+            select * from jsonb_to_recordset(${JSON.stringify(profiles)}::jsonb) as x(
+              student_id uuid, conduct text, attitude text, interest text,
+              teacher_remark text, headteacher_remark text, promotion_status text
+            )
+          )
+          insert into terminal_reports
+            (school_id, student_id, term_id, generated_by_staff_id, conduct, attitude, interest,
+             attendance_present, attendance_total, teacher_remark, headteacher_remark, promotion_status, published_at)
+          select rs.school_id, rs.student_id, ${termId}::uuid,
+                 (select id from staff_profiles where school_id = rs.school_id and user_id = ${school.userId}::uuid limit 1),
+                 ip.conduct, ip.attitude, ip.interest,
+                 (select count(*)::int from attendance_records ar
+                  join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
+                  where ar.school_id = rs.school_id and ar.student_id = rs.student_id
+                    and ase.class_id = rs.class_id and ase.attendance_date between t.starts_on and t.ends_on
+                    and ar.status in ('present', 'late')),
+                 (select count(*)::int from attendance_sessions ase
+                  where ase.school_id = rs.school_id and ase.class_id = rs.class_id
+                    and ase.attendance_date between t.starts_on and t.ends_on),
+                 ip.teacher_remark,
+                 case when ${school.role === "school_admin"} then ip.headteacher_remark else null end,
+                 nullif(ip.promotion_status, ''),
+                 case when ${publish} then now() else null end
+          from report_students rs
+          join terms t on t.id = ${termId}::uuid and t.school_id = rs.school_id
+          left join input_profiles ip on ip.student_id = rs.student_id
+          on conflict (student_id, term_id) do update
+            set conduct = coalesce(excluded.conduct, terminal_reports.conduct),
+                attitude = coalesce(excluded.attitude, terminal_reports.attitude),
+                interest = coalesce(excluded.interest, terminal_reports.interest),
+                attendance_present = excluded.attendance_present,
+                attendance_total = excluded.attendance_total,
+                teacher_remark = coalesce(excluded.teacher_remark, terminal_reports.teacher_remark),
+                headteacher_remark = coalesce(excluded.headteacher_remark, terminal_reports.headteacher_remark),
+                promotion_status = coalesce(excluded.promotion_status, terminal_reports.promotion_status),
+                published_at = case when ${publish} then coalesce(terminal_reports.published_at, now()) else terminal_reports.published_at end
+            where terminal_reports.published_at is null
+               or (${school.role === "school_admin"} and ${publish})
+        `,
+        tx`
+          delete from terminal_report_items i
+          using terminal_reports r, class_enrollments e, classes c
+          where i.report_id = r.id and i.school_id = ${school.schoolId}::uuid
+            and r.school_id = i.school_id and r.student_id = e.student_id
+            and r.term_id = ${termId}::uuid and e.school_id = r.school_id
+            and e.ends_on is null and e.class_id = c.id and c.school_id = e.school_id
+            and c.id = ${classId}::uuid
+            and (r.published_at is null or (${school.role === "school_admin"} and ${publish}))
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                join class_subjects cs on cs.id = ta.class_subject_id and cs.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and cs.class_id = c.id and cs.subject_id = i.subject_id
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
+        `,
+        tx`
+          insert into terminal_report_items
+            (school_id, report_id, subject_id, class_test_score, project_score, homework_score,
+             group_work_score, exam_score, total_score, performance_level)
+          select r.school_id, r.id, cs.subject_id, m.class_test_score, m.project_score,
+                 m.homework_score, m.group_work_score, m.exam_score, m.total_score, m.performance_level
+          from terminal_reports r
+          join class_enrollments e on e.student_id = r.student_id and e.school_id = r.school_id
+            and e.ends_on is null
+          join classes c on c.id = e.class_id and c.school_id = e.school_id and c.id = ${classId}::uuid
+          join subject_term_marks m on m.student_id = r.student_id and m.school_id = r.school_id
+            and m.term_id = ${termId}::uuid and m.total_score is not null
+          join class_subjects cs on cs.id = m.class_subject_id and cs.school_id = m.school_id and cs.class_id = c.id
+          where r.school_id = ${school.schoolId}::uuid and r.term_id = ${termId}::uuid
+            and (r.published_at is null or (${school.role === "school_admin"} and ${publish}))
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id = cs.id and sp.user_id = ${school.userId}::uuid
+              )
+            )
+          on conflict (report_id, subject_id) do update
+            set class_test_score = excluded.class_test_score,
+                project_score = excluded.project_score,
+                homework_score = excluded.homework_score,
+                group_work_score = excluded.group_work_score,
+                exam_score = excluded.exam_score,
+                total_score = excluded.total_score,
+                performance_level = excluded.performance_level
+        `,
+        tx`
+          select count(*)::int as saved_count
+          from terminal_reports r
+          join class_enrollments e on e.student_id = r.student_id and e.school_id = r.school_id and e.ends_on is null
+          join classes c on c.id = e.class_id and c.school_id = e.school_id and c.id = ${classId}::uuid
+          where r.school_id = ${school.schoolId}::uuid and r.term_id = ${termId}::uuid
+            and (r.published_at is null or (${school.role === "school_admin"} and ${publish}))
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
+        `,
+      ]);
+      if (!Number(rows[0]?.["saved_count"] ?? 0)) return json({ error: "No authorized active students were found for that class and term" }, 400);
+      return json({ saved_count: Number(rows[0]?.["saved_count"] ?? 0), published: publish });
+    }
+
+    if (url.pathname === "/api/school/promotions") {
+      if (request.method === "GET") {
+        const classId = url.searchParams.get("class_id")?.trim() || null;
+        const termId = url.searchParams.get("term_id")?.trim() || null;
+        if ([classId, termId].some((id) => id && !uuidOrNull(id))) return badRequest("Invalid class or term ID");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select d.id, d.student_id, st.first_name, st.last_name, st.admission_number,
+                   d.from_class_id, c.name as from_class_name, d.term_id, t.name as term_name,
+                   d.decision, d.target_class_id, target.name as target_class_name,
+                   d.teacher_remark, d.status, d.submitted_at, d.reviewed_at, d.review_remark
+            from promotion_decisions d
+            join students st on st.id = d.student_id and st.school_id = d.school_id
+            join classes c on c.id = d.from_class_id and c.school_id = d.school_id
+            join terms t on t.id = d.term_id and t.school_id = d.school_id
+            left join classes target on target.id = d.target_class_id and target.school_id = d.school_id
+            where d.school_id = ${school.schoolId}::uuid
+              and (${classId}::uuid is null or d.from_class_id = ${classId}::uuid)
+              and (${termId}::uuid is null or d.term_id = ${termId}::uuid)
+              and (
+                ${school.role === "school_admin"}
+                or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+                or exists (
+                  select 1 from teaching_assignments ta
+                  join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                  where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                    and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                    and sp.user_id = ${school.userId}::uuid
+                )
+              )
+            order by d.status, c.name, st.last_name, st.first_name
+          `,
+        );
+        return json({ decisions: rows });
+      }
+
+      if (request.method === "PATCH") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const id = body["id"];
+        const action = body["action"];
+        const reviewRemark = typeof body["review_remark"] === "string" ? body["review_remark"].trim() : "";
+        if (!uuidOrNull(id) || !id) return badRequest("Invalid promotion decision ID");
+        if (action !== "approve" && action !== "reject") return badRequest("Action must be approve or reject");
+        if (reviewRemark.length > 2000) return badRequest("Review remark must be at most 2000 characters");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with selected as materialized (
+              select d.id, d.school_id, d.student_id, d.from_class_id, d.target_class_id,
+                     d.decision, d.term_id, t.ends_on as term_ends_on
+              from promotion_decisions d
+              join terms t on t.id = d.term_id and t.school_id = d.school_id
+              where d.id = ${id}::uuid and d.school_id = ${school.schoolId}::uuid and d.status = 'pending'
+              for update of d
+            ),
+            closed_enrollment as (
+              update class_enrollments e
+              set ends_on = greatest(current_date, s.term_ends_on)
+              from selected s
+              where ${action === "approve"} and e.school_id = s.school_id
+                and e.student_id = s.student_id and e.class_id = s.from_class_id and e.ends_on is null
+                and (
+                  s.decision not in ('promote', 'repeat')
+                  or exists (
+                    select 1 from classes target
+                    join academic_years target_year on target_year.id = target.academic_year_id
+                      and target_year.school_id = target.school_id
+                    join terms source_term on source_term.id = s.term_id and source_term.school_id = s.school_id
+                    where target.school_id = s.school_id and target.id = s.target_class_id
+                      and target_year.starts_on > source_term.ends_on
+                  )
+                )
+              returning e.school_id, e.student_id, s.target_class_id, s.decision, s.term_ends_on
+            ),
+            created_enrollment as (
+              insert into class_enrollments (school_id, class_id, student_id, starts_on)
+              select ce.school_id, ce.target_class_id, ce.student_id, greatest(current_date, target_year.starts_on)
+              from closed_enrollment ce
+              join classes target on target.id = ce.target_class_id and target.school_id = ce.school_id
+              join academic_years target_year on target_year.id = target.academic_year_id and target_year.school_id = target.school_id
+              where ce.target_class_id is not null and ce.decision in ('promote', 'repeat')
+                and target_year.starts_on > ce.term_ends_on
+              returning id
+            ),
+            reviewed as (
+              update promotion_decisions d
+              set status = ${action === "approve" ? "approved" : "rejected"},
+                  reviewed_by_user_id = ${school.userId}::uuid,
+                  reviewed_at = now(),
+                  review_remark = nullif(${reviewRemark}, '')
+              from selected s
+              where d.id = s.id
+                and (${action === "reject"} or exists (select 1 from closed_enrollment))
+                and (s.decision not in ('promote', 'repeat') or ${action === "reject"} or exists (select 1 from created_enrollment))
+              returning d.id, d.status
+            )
+            select id, status from reviewed
+          `,
+        );
+        if (!rows[0]) return json({ error: "Decision not found, already reviewed, or its active enrollment/target class is invalid" }, 409);
+        return json({ decision: rows[0] });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const termId = body["term_id"];
+      const decisions = body["decisions"];
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid class and term");
+      if (!Array.isArray(decisions) || decisions.length < 1 || decisions.length > 200) return badRequest("Submit between 1 and 200 promotion decisions");
+      const students = new Set<string>();
+      for (const value of decisions) {
+        if (!value || typeof value !== "object") return badRequest("Each decision must be an object");
+        const decision = value as Record<string, unknown>;
+        if (!uuidOrNull(decision["student_id"]) || !decision["student_id"] || students.has(decision["student_id"])) return badRequest("Each student must have a valid, unique ID");
+        students.add(decision["student_id"]);
+        if (!["promote", "repeat", "transfer", "graduate"].includes(String(decision["decision"]))) return badRequest("Invalid promotion decision");
+        if (!uuidOrNull(decision["target_class_id"])) return badRequest("Invalid target class ID");
+        if (["promote", "repeat"].includes(String(decision["decision"])) !== Boolean(decision["target_class_id"])) return badRequest("Promote and repeat decisions need a next-year target class");
+        if (typeof decision["teacher_remark"] === "string" && decision["teacher_remark"].length > 2000) return badRequest("Teacher remark must be at most 2000 characters");
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with input_decisions as (
+            select * from jsonb_to_recordset(${JSON.stringify(decisions)}::jsonb) as x(
+              student_id uuid, decision text, target_class_id uuid, teacher_remark text
+            )
+          ),
+          inserted as (
+            insert into promotion_decisions
+              (school_id, student_id, from_class_id, term_id, decision, target_class_id, teacher_remark, submitted_by_user_id)
+            select c.school_id, e.student_id, c.id, t.id, i.decision, i.target_class_id, i.teacher_remark, ${school.userId}::uuid
+            from input_decisions i
+            join classes c on c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
+            join terms t on t.id = ${termId}::uuid and t.school_id = c.school_id
+              and t.academic_year_id = c.academic_year_id and t.is_closed and lower(t.name) like '%term 3%'
+            join class_enrollments e on e.student_id = i.student_id and e.class_id = c.id
+              and e.school_id = c.school_id and e.ends_on is null
+            left join classes target on target.id = i.target_class_id and target.school_id = c.school_id
+              and target.academic_year_id <> c.academic_year_id
+            left join academic_years target_year on target_year.id = target.academic_year_id
+              and target_year.school_id = target.school_id
+            where (
+              c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
+              and (
+                (i.decision in ('promote', 'repeat') and target.id is not null and target_year.starts_on > t.ends_on)
+                or (i.decision in ('transfer', 'graduate') and i.target_class_id is null)
+              )
+            on conflict (student_id, term_id) do nothing
+            returning id
+          )
+          select (select count(*)::int from inserted) as saved_count
+        `,
+      );
+      if (Number(rows[0]?.["saved_count"] ?? 0) !== decisions.length) return json({ error: "Could not submit all decisions. Confirm each learner is enrolled, the target class belongs to an academic year after Term 3, and you are assigned to this class." }, 400);
+      return json({ saved_count: Number(rows[0]?.["saved_count"] ?? 0), status: "pending" }, 201);
+    }
+
+    if (url.pathname === "/api/school/academic-periods") {
+      if (request.method === "POST") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+        const startsOn = typeof body["starts_on"] === "string" ? body["starts_on"] : "";
+        const endsOn = typeof body["ends_on"] === "string" ? body["ends_on"] : "";
+        const isCurrent = body["is_current"] === true;
+        if (name.length < 2 || name.length > 80) return badRequest("Academic year name must be 2–80 characters");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn) || !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) || startsOn >= endsOn) {
+          return badRequest("Enter valid academic year start and end dates");
+        }
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with cleared_current as (
+              update academic_years set is_current = false
+              where school_id = ${school.schoolId}::uuid and is_current and ${isCurrent}
+              returning id
+            ),
+            inserted as (
+              insert into academic_years (school_id, name, starts_on, ends_on, is_current)
+              select ${school.schoolId}::uuid, ${name}, ${startsOn}::date, ${endsOn}::date, ${isCurrent}
+              where not ${isCurrent} or (select count(*) >= 0 from cleared_current)
+              returning id, name, starts_on, ends_on, is_current
+            )
+            select * from inserted
+          `,
+        );
+        if (!rows[0]) return json({ error: "Academic year already exists or could not be created" }, 409);
+        return json({ academic_year: rows[0] }, 201);
+      }
+
+      await ensureTermFeeArrears(sql, school.schoolId);
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select
+            ay.id as academic_year_id,
+            ay.name as academic_year_name,
+            ay.starts_on as academic_year_starts_on,
+            ay.is_current,
+            t.id as term_id,
+            t.name as term_name,
+            t.starts_on as term_starts_on,
+            t.ends_on as term_ends_on,
+            (current_date between t.starts_on and t.ends_on) as term_is_current,
+            t.is_closed as term_is_closed,
+            t.arrears_processed_at as term_arrears_processed_at
+          from academic_years ay
+          left join terms t on t.academic_year_id = ay.id and t.school_id = ay.school_id
+          where ay.school_id = ${school.schoolId}::uuid
+          order by ay.is_current desc, ay.starts_on desc, t.starts_on asc
+        `,
+      );
+      const years = new Map<string, { id: string; name: string; starts_on: string; is_current: boolean; terms: { id: string; name: string; starts_on: string; ends_on: string; is_current: boolean; is_closed: boolean; arrears_processed_at: string | null }[] }>();
+      for (const row of rows) {
+        const yearId = String(row["academic_year_id"]);
+        let year = years.get(yearId);
+        if (!year) {
+          year = { id: yearId, name: String(row["academic_year_name"]), starts_on: String(row["academic_year_starts_on"]), is_current: row["is_current"] === true, terms: [] };
+          years.set(yearId, year);
+        }
+        if (row["term_id"] != null) {
+          year.terms.push({
+            id: String(row["term_id"]),
+            name: String(row["term_name"]),
+            starts_on: String(row["term_starts_on"]),
+            ends_on: String(row["term_ends_on"]),
+            is_current: row["term_is_current"] === true,
+            is_closed: row["term_is_closed"] === true,
+            arrears_processed_at: row["term_arrears_processed_at"] == null ? null : String(row["term_arrears_processed_at"]),
+          });
+        }
+      }
+      return json({ academic_years: [...years.values()] });
+    }
+
+    if (url.pathname === "/api/school/terms" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const academicYearId = body["academic_year_id"];
+      const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+      const startsOn = typeof body["starts_on"] === "string" ? body["starts_on"] : "";
+      const endsOn = typeof body["ends_on"] === "string" ? body["ends_on"] : "";
+      if (!uuidOrNull(academicYearId) || !academicYearId) return badRequest("Choose a valid academic year");
+      if (name.length < 2 || name.length > 80) return badRequest("Term name must be 2–80 characters");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn) || !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) || startsOn >= endsOn) {
+        return badRequest("Enter valid term start and end dates");
+      }
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with selected_year as materialized (
+            select id, school_id, starts_on, ends_on
+            from academic_years
+            where id = ${academicYearId}::uuid and school_id = ${school.schoolId}::uuid
+            for update
+          ),
+          existing as materialized (
+            select count(*)::int as term_count, max(t.ends_on) as latest_end
+            from terms t
+            join selected_year ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+          )
+          insert into terms (school_id, academic_year_id, name, starts_on, ends_on)
+          select ay.school_id, ay.id, ${name}, ${startsOn}::date, ${endsOn}::date
+          from selected_year ay cross join existing
+          where existing.term_count < 3
+            and ${startsOn}::date >= ay.starts_on
+            and ${endsOn}::date <= ay.ends_on
+            and ${startsOn}::date > coalesce(existing.latest_end, ay.starts_on - 1)
+            and not exists (
+              select 1 from terms other
+              where other.school_id = ay.school_id and other.academic_year_id = ay.id
+                and (lower(other.name) = lower(${name})
+                  or (other.starts_on < ${endsOn}::date and other.ends_on > ${startsOn}::date))
+            )
+          returning id, academic_year_id, name, starts_on, ends_on
+        `,
+      );
+      if (!rows[0]) return json({ error: "Academic year must have no more than three terms. Add each term in date order, with a unique name and dates inside the academic year." }, 409);
+      return json({ term: rows[0] }, 201);
+    }
+
+    if (url.pathname === "/api/school/team") {
+      if (request.method === "GET") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select u.id as user_id, u.email, u.display_name, m.role, m.active, sp.id as staff_profile_id
+            from memberships m join users u on u.id = m.user_id
+            left join staff_profiles sp on sp.user_id = u.id and sp.school_id = m.school_id
+            where m.school_id = ${school.schoolId}::uuid and m.role in ('school_admin', 'teacher', 'finance')
+            order by m.role, u.display_name
+          `,
+        );
+        return json({ team: rows });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+      const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
+      const role = body["role"];
+      if (name.length < 2 || name.length > 160) return badRequest("Name must be 2–160 characters");
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid email address");
+      if (role !== "teacher" && role !== "finance") return badRequest("Choose teacher or finance");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with app_user as (
+            insert into users (email, display_name) values (${email}, ${name})
+            on conflict (email) do update set display_name = excluded.display_name
+            returning id, email, display_name
+          ),
+          member as (
+            insert into memberships (user_id, school_id, role)
+            select id, ${school.schoolId}::uuid, ${role}::membership_role from app_user
+            on conflict (user_id, school_id, role) do update set active = true
+            returning user_id
+          ),
+          staff as (
+            insert into staff_profiles (school_id, user_id, job_title)
+            select ${school.schoolId}::uuid, id, 'Teacher' from app_user where ${role} = 'teacher'
+            on conflict (school_id, user_id) do update set job_title = coalesce(staff_profiles.job_title, excluded.job_title)
+            returning id
+          )
+          select app_user.id as user_id, app_user.email, app_user.display_name, ${role} as role
+          from app_user
+        `,
+      );
+      if (!rows[0]) return json({ error: "Could not add this school member" }, 409);
+      const activationUrl = new URL("/login", request.url);
+      activationUrl.searchParams.set("tenant", school.subdomain);
+      activationUrl.searchParams.set("mode", "activate");
+      const invitation = await sendActivationInvitation(env, {
+        recipient: String(rows[0]["email"]),
+        contactName: String(rows[0]["display_name"]),
+        schoolName: school.schoolName,
+        roleName: role === "teacher" ? "Teacher" : "Finance",
+        activationUrl: activationUrl.toString(),
+        primaryColor: school.primaryColor,
+      });
+      return json({ member: rows[0], activation_url: activationUrl.toString(), invitation }, 201);
+    }
+
+    if (url.pathname === "/api/school/teaching-setup") {
+      if (request.method === "GET") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select c.id as class_id, c.name as class_name, c.academic_year_id, ay.name as academic_year_name,
+                   class_teacher_user.display_name as class_teacher_name,
+                   cs.id as class_subject_id, s.id as subject_id, s.code as subject_code, s.name as subject_name,
+                   sp.user_id as teacher_user_id, u.display_name as teacher_name, u.email as teacher_email
+            from classes c
+            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+            left join class_subjects cs on cs.class_id = c.id and cs.school_id = c.school_id
+            left join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+            left join teaching_assignments ta on ta.class_subject_id = cs.id
+              and ta.school_id = cs.school_id and ta.academic_year_id = c.academic_year_id
+            left join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+            left join users u on u.id = sp.user_id
+            left join staff_profiles class_teacher on class_teacher.id = c.class_teacher_id and class_teacher.school_id = c.school_id
+            left join users class_teacher_user on class_teacher_user.id = class_teacher.user_id
+            where c.school_id = ${school.schoolId}::uuid
+            order by ay.starts_on desc, c.name, s.name
+          `,
+        );
+        const team = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select u.id as user_id, u.email, u.display_name, sp.id as staff_profile_id
+            from memberships m join users u on u.id = m.user_id
+            join staff_profiles sp on sp.user_id = u.id and sp.school_id = m.school_id
+            where m.school_id = ${school.schoolId}::uuid and m.role = 'teacher' and m.active
+            order by u.display_name
+          `,
+        );
+        const subjects = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select id, code, name
+            from subjects
+            where school_id = ${school.schoolId}::uuid
+            order by name
+          `,
+        );
+        return json({ assignments: rows, teachers: team, subjects });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const teacherId = body["teacher_user_id"] ?? null;
+      const subjectId = body["subject_id"] ?? null;
+      const subjectCode = typeof body["subject_code"] === "string" ? body["subject_code"].trim().toUpperCase() : "";
+      const subjectName = typeof body["subject_name"] === "string" ? body["subject_name"].trim() : "";
+      const assignmentType = body["assignment_type"] === "class_teacher"
+        ? "class_teacher"
+        : body["assignment_type"] === "create_subject" ? "create_subject" : "subject";
+      if (assignmentType === "create_subject") {
+        if (subjectCode.length < 1 || subjectCode.length > 24 || !/^[A-Z0-9-]+$/.test(subjectCode)) return badRequest("Subject code must use letters, numbers, or hyphens");
+        if (subjectName.length < 2 || subjectName.length > 120) return badRequest("Subject name must be 2–120 characters");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            insert into subjects (school_id, code, name)
+            values (${school.schoolId}::uuid, ${subjectCode}, ${subjectName})
+            on conflict (school_id, code) do nothing
+            returning id, code, name
+          `,
+        );
+        if (!rows[0]) return json({ error: "A subject with that code already exists in this school" }, 409);
+        return json({ subject: rows[0] }, 201);
+      }
+      if (!uuidOrNull(classId) || !classId) return badRequest("Choose a valid class");
+      if (!uuidOrNull(teacherId)) return badRequest("Choose a valid teacher");
+      if (assignmentType === "class_teacher") {
+        if (!teacherId) return badRequest("Choose a valid teacher");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with selected_class as materialized (
+              select id, school_id
+              from classes
+              where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
+            ),
+            selected_teacher as materialized (
+              select u.id
+              from users u
+              join memberships m on m.user_id = u.id
+              where u.id = ${teacherId}::uuid
+                and m.school_id = ${school.schoolId}::uuid
+                and m.role = 'teacher'
+                and m.active
+            ),
+            saved_staff as (
+              insert into staff_profiles (school_id, user_id, job_title)
+              select ${school.schoolId}::uuid, teacher.id, 'Teacher'
+              from selected_class cross join selected_teacher teacher
+              on conflict (school_id, user_id)
+                do update set job_title = coalesce(staff_profiles.job_title, excluded.job_title)
+              returning id, school_id
+            ),
+            assigned_class as (
+              update classes c
+              set class_teacher_id = staff.id
+              from selected_class sc
+              cross join saved_staff staff
+              where c.id = sc.id and c.school_id = sc.school_id
+              returning c.id, c.class_teacher_id
+            )
+            select id as class_id, class_teacher_id from assigned_class
+          `,
+        );
+        if (!rows[0]) return json({ error: "Could not assign this teacher to the class" }, 400);
+        return json({ class_teacher: rows[0] });
+      }
+
+      if (!uuidOrNull(subjectId)) return badRequest("Choose a valid subject");
+      if (!subjectId && (subjectCode.length < 1 || subjectCode.length > 24 || !/^[A-Z0-9-]+$/.test(subjectCode))) return badRequest("Subject code must use letters, numbers, or hyphens");
+      if (!subjectId && (subjectName.length < 2 || subjectName.length > 120)) return badRequest("Subject name must be 2–120 characters");
+      if (teacherId && !uuidOrNull(teacherId)) return badRequest("Choose a valid teacher");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with selected_class as materialized (
+            select id, school_id, academic_year_id from classes
+            where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
+          ),
+          saved_subject as (
+            insert into subjects (school_id, code, name)
+            select ${school.schoolId}::uuid, ${subjectCode}, ${subjectName}
+            from selected_class
+            where ${subjectId}::uuid is null and ${subjectCode} <> ''
+            on conflict (school_id, code) do update set name = excluded.name
+            returning id, school_id
+          ),
+          selected_subject as materialized (
+            select id, school_id from subjects
+            where id = ${subjectId}::uuid and school_id = ${school.schoolId}::uuid
+              and ${subjectId}::uuid is not null
+            union all
+            select id, school_id from saved_subject
+            where ${subjectId}::uuid is null
+          ),
+          selected_teacher as materialized (
+            select u.id from users u join memberships m on m.user_id = u.id
+            where u.id = ${teacherId}::uuid and m.school_id = ${school.schoolId}::uuid and m.role = 'teacher' and m.active
+          ),
+          saved_class_subject as (
+            insert into class_subjects (school_id, class_id, subject_id)
+            select c.school_id, c.id, s.id from selected_class c cross join selected_subject s
+            where ${teacherId}::uuid is null or exists (select 1 from selected_teacher)
+            on conflict (class_id, subject_id) do update set class_id = excluded.class_id
+            returning id, school_id, class_id
+          ),
+          saved_staff as (
+            insert into staff_profiles (school_id, user_id, job_title)
+            select ${school.schoolId}::uuid, teacher.id, 'Teacher'
+            from selected_class cross join selected_teacher teacher
+            on conflict (school_id, user_id) do update set job_title = coalesce(staff_profiles.job_title, excluded.job_title)
+            returning id, school_id
+          ),
+          saved_assignment as (
+            insert into teaching_assignments (school_id, staff_profile_id, class_subject_id, academic_year_id)
+            select cs.school_id, sp.id, cs.id, c.academic_year_id
+            from saved_class_subject cs join selected_class c on c.id = cs.class_id and c.school_id = cs.school_id
+            cross join saved_staff sp
+            where ${teacherId}::uuid is not null
+            on conflict (staff_profile_id, class_subject_id, academic_year_id)
+              do update set is_primary_teacher = teaching_assignments.is_primary_teacher
+            returning id
+          )
+          select cs.id, assignment.id as assignment_id
+          from saved_class_subject cs left join saved_assignment assignment on true
+        `,
+      );
+      if (!rows[0]) return json({ error: "Could not assign this subject to the class. Confirm the class, subject, and teacher belong to this school." }, 400);
+      if (teacherId && !rows[0]["assignment_id"]) return json({ error: "Could not assign the teacher. Confirm they belong to this school." }, 400);
+      return json({ class_subject: rows[0]["id"], assignment: rows[0]["assignment_id"] ?? null }, 201);
+    }
+
+    if (url.pathname === "/api/school/classes" && request.method === "GET") {
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select c.id, c.name, c.form_level as grade_level,
+                 ay.id as academic_year_id, ay.name as academic_year_name, ay.starts_on as academic_year_starts_on,
+                 t.id as term_id, t.name as term_name,
+                 (select count(*)::int
+                  from class_enrollments e
+                  join students st on st.id = e.student_id and st.school_id = e.school_id
+                  where e.school_id = c.school_id
+                    and e.class_id = c.id
+                    and e.ends_on is null
+                    and st.active) as student_count
+          from classes c
+          join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+          left join terms t on t.id = c.term_id and t.school_id = c.school_id
+          where c.school_id = ${school.schoolId}::uuid
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = c.school_id and cs.class_id = c.id)
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
+          order by ay.is_current desc, ay.starts_on desc, c.name
+        `,
+      );
+      return json({ classes: rows });
+    }
+
+    if (url.pathname === "/api/school/classes" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+      const gradeLevel = typeof body["grade_level"] === "string" ? body["grade_level"].trim() : "";
+      if (name.length < 2 || name.length > 100) return badRequest("Class name must be 2–100 characters");
+      if (gradeLevel.length > 100) return badRequest("Grade level must be at most 100 characters");
+      if (!uuidOrNull(body["academic_year_id"]) || !uuidOrNull(body["term_id"])) {
+        return badRequest("Academic year and term must be valid IDs");
+      }
+
+      const academicYearId = typeof body["academic_year_id"] === "string" ? body["academic_year_id"] : null;
+      const termId = typeof body["term_id"] === "string" ? body["term_id"] : null;
+      const now = new Date();
+      const yearStart = now.getUTCMonth() >= 8 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+      const defaultYearName = `${yearStart}/${yearStart + 1}`;
+      const defaultYearStart = `${yearStart}-09-01`;
+      const defaultYearEnd = `${yearStart + 1}-08-31`;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with requested_year as (
+            select id, school_id, name, starts_on, ends_on from academic_years
+            where school_id = ${school.schoolId}::uuid and id = ${academicYearId}::uuid
+              and ${academicYearId}::uuid is not null
+          ),
+          current_year as (
+            select id, school_id, name, starts_on, ends_on from academic_years
+            where school_id = ${school.schoolId}::uuid and is_current
+              and ${academicYearId}::uuid is null
+          ),
+          fallback_year as (
+            select id, school_id, name, starts_on, ends_on from academic_years
+            where school_id = ${school.schoolId}::uuid
+              and ${academicYearId}::uuid is null
+              and not exists (select 1 from current_year)
+            order by starts_on desc
+            limit 1
+          ),
+          inserted_year as (
+            insert into academic_years (school_id, name, starts_on, ends_on, is_current)
+            select ${school.schoolId}::uuid, ${defaultYearName}, ${defaultYearStart}::date, ${defaultYearEnd}::date, true
+            where ${academicYearId}::uuid is null
+              and not exists (select 1 from academic_years where school_id = ${school.schoolId}::uuid)
+            on conflict (school_id, name) do update
+              set is_current = academic_years.is_current
+            returning id, school_id, name, starts_on, ends_on
+          ),
+          selected_year as (
+            select id, school_id, name, starts_on, ends_on from requested_year
+            union all select id, school_id, name, starts_on, ends_on from current_year
+            union all select id, school_id, name, starts_on, ends_on from fallback_year
+            union all select id, school_id, name, starts_on, ends_on from inserted_year
+          ),
+          requested_term as (
+            select t.id, t.school_id, t.academic_year_id, t.name
+            from terms t
+            join selected_year y on y.id = t.academic_year_id and y.school_id = t.school_id
+            where t.id = ${termId}::uuid and ${termId}::uuid is not null
+          ),
+          current_term as (
+            select t.id, t.school_id, t.academic_year_id, t.name
+            from terms t
+            join selected_year y on y.id = t.academic_year_id and y.school_id = t.school_id
+            where ${termId}::uuid is null and current_date between t.starts_on and t.ends_on
+            order by t.starts_on
+            limit 1
+          ),
+          fallback_term as (
+            select t.id, t.school_id, t.academic_year_id, t.name
+            from terms t
+            join selected_year y on y.id = t.academic_year_id and y.school_id = t.school_id
+            where ${termId}::uuid is null and not exists (select 1 from current_term)
+            order by t.starts_on
+            limit 1
+          ),
+          inserted_term as (
+            insert into terms (school_id, academic_year_id, name, starts_on, ends_on)
+            select y.school_id, y.id, 'Term 1', y.starts_on,
+                   y.starts_on + greatest(1, (y.ends_on - y.starts_on + 1) / 3) - 1
+            from selected_year y
+            where ${termId}::uuid is null
+              and not exists (select 1 from terms t where t.school_id = y.school_id and t.academic_year_id = y.id)
+            on conflict (academic_year_id, name) do update
+              set name = terms.name
+            returning id, school_id, academic_year_id, name
+          ),
+          selected_term as (
+            select id, school_id, academic_year_id, name from requested_term
+            union all select id, school_id, academic_year_id, name from current_term
+            union all select id, school_id, academic_year_id, name from fallback_term
+            union all select id, school_id, academic_year_id, name from inserted_term
+          ),
+          inserted_class as (
+            insert into classes (school_id, academic_year_id, term_id, name, form_level)
+            select y.school_id, y.id, t.id, ${name}, ${gradeLevel || name}
+            from selected_year y
+            join selected_term t on t.school_id = y.school_id and t.academic_year_id = y.id
+            on conflict (academic_year_id, name) do nothing
+            returning id, school_id, academic_year_id, term_id, name, form_level
+          )
+          select c.id, c.name, c.form_level as grade_level,
+                 y.id as academic_year_id, y.name as academic_year_name,
+                 t.id as term_id, t.name as term_name, 0::int as student_count
+          from inserted_class c
+          join selected_year y on y.id = c.academic_year_id and y.school_id = c.school_id
+          join selected_term t on t.id = c.term_id and t.school_id = c.school_id
+        `,
+      );
+      if (!rows[0]) return json({ error: "Could not create class. Check the selected year and term, and ensure its name is unique for that year." }, 409);
+      return json({ class: rows[0] }, 201);
+    }
+
+    if (url.pathname === "/api/school/student-financial-records" && request.method === "GET") {
+      await ensureTermFeeArrears(sql, school.schoolId);
+      const studentId = url.searchParams.get("student_id")?.trim() ?? "";
+      const termId = url.searchParams.get("term_id")?.trim() || null;
+      const selectedTypes = new Set((url.searchParams.get("types") ?? "daily,school,other").split(",").map((value) => value.trim()));
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "50", 10);
+      if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
+      if (termId && !uuidOrNull(termId)) return badRequest("Choose a valid academic term");
+      if (!selectedTypes.size || [...selectedTypes].some((type) => !["daily", "school", "other"].includes(type))) {
+        return badRequest("Choose daily payments, school fees, or other fees");
+      }
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      const includeDaily = selectedTypes.has("daily");
+      const includeSchool = selectedTypes.has("school");
+      const includeOther = selectedTypes.has("other");
+      const offset = (page - 1) * pageSize;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with filtered_records as materialized (
+            select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
+                   p.status, p.paid_at, p.daily_fee_date,
+                   st.first_name, st.last_name, st.admission_number,
+                   coalesce(f.description, i.description,
+                     case when p.category = 'daily_fee' then 'Daily fee' else 'Fee payment' end) as fee_description,
+                   c.name as class_name,
+                   coalesce(fee_term.id, payment_term.id) as term_id,
+                   coalesce(fee_term.name, payment_term.name) as term_name,
+                   coalesce(fee_year.name, payment_term.academic_year_name) as academic_year_name
+            from payments p
+            join students st on st.id = p.student_id and st.school_id = p.school_id
+            left join invoices i on i.id = p.invoice_id and i.school_id = p.school_id
+            left join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+            left join classes c on c.id = f.class_id and c.school_id = f.school_id
+            left join terms fee_term on fee_term.id = f.term_id and fee_term.school_id = f.school_id
+            left join academic_years fee_year on fee_year.id = f.academic_year_id
+              and fee_year.school_id = f.school_id
+            left join lateral (
+              select t.id, t.name, ay.name as academic_year_name
+              from terms t
+              join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+              where t.school_id = p.school_id
+                and coalesce(p.daily_fee_date, p.paid_at::date) between t.starts_on and t.ends_on
+              order by ay.starts_on desc, t.starts_on desc
+              limit 1
+            ) payment_term on true
+            where p.school_id = ${school.schoolId}::uuid
+              and p.student_id = ${studentId}::uuid
+              and ((${includeDaily} and p.category = 'daily_fee')
+                or (${includeSchool} and p.category = 'school_fee')
+                or (${includeOther} and p.category in ('examination_fee', 'other')))
+              and (${termId}::uuid is null or coalesce(fee_term.id, payment_term.id) = ${termId}::uuid)
+          ),
+          page_rows as (
+            select * from filtered_records
+            order by coalesce(daily_fee_date, paid_at::date) desc, paid_at desc, id desc
+            limit ${pageSize} offset ${offset}
+          ),
+          currency_totals as (
+            select currency,
+                   count(*)::int as payment_count,
+                   count(*) filter (where status = 'verified')::int as verified_count,
+                   count(*) filter (where status = 'pending')::int as pending_count,
+                   coalesce(sum(amount) filter (where status = 'verified'), 0) as verified_amount,
+                   coalesce(sum(amount) filter (where status = 'pending'), 0) as pending_amount
+            from filtered_records
+            group by currency
+          ),
+          fee_balances as (
+            select i.id, i.amount_due, i.base_amount_due, i.arrears_amount, i.currency,
+                   f.description as fee_description, t.name as term_name,
+                   ay.name as academic_year_name, sources.arrears_sources,
+                   coalesce(sum(p.amount) filter (where p.status = 'verified'), 0) as paid_amount,
+                   coalesce(sum(p.amount) filter (where p.status = 'pending'), 0) as pending_amount,
+                   greatest(i.amount_due
+                     - coalesce(sum(p.amount) filter (where p.status = 'verified'), 0)
+                     - coalesce(sum(p.amount) filter (where p.status = 'pending'), 0), 0) as balance_due
+            from invoices i
+            join class_fees f on f.id = i.class_fee_id and f.school_id = i.school_id
+            join terms t on t.id = f.term_id and t.school_id = f.school_id
+            join academic_years ay on ay.id = f.academic_year_id and ay.school_id = f.school_id
+            left join payments p on p.school_id = i.school_id and p.invoice_id = i.id
+            left join lateral (
+              select string_agg(source_year.name || ' · ' || source_term.name, ', '
+                order by source_term.starts_on) as arrears_sources
+              from invoice_arrears a
+              join invoices source_invoice
+                on source_invoice.id = a.source_invoice_id and source_invoice.school_id = a.school_id
+              join class_fees source_fee
+                on source_fee.id = source_invoice.class_fee_id and source_fee.school_id = source_invoice.school_id
+              join academic_years source_year
+                on source_year.id = source_fee.academic_year_id and source_year.school_id = source_fee.school_id
+              join terms source_term
+                on source_term.id = a.source_term_id and source_term.school_id = a.school_id
+              where a.school_id = i.school_id and a.destination_invoice_id = i.id
+            ) sources on true
+            where ${includeSchool}
+              and i.school_id = ${school.schoolId}::uuid and i.student_id = ${studentId}::uuid
+              and i.status <> 'void' and i.rolled_forward_at is null
+              and f.fee_type in ('tuition', 'pta')
+              and (${termId}::uuid is null or t.id = ${termId}::uuid)
+            group by i.id, f.description, t.name, t.starts_on, ay.name, sources.arrears_sources
+          )
+          select
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'id', id, 'receipt_number', receipt_number, 'amount', amount,
+                'currency', currency, 'category', category, 'method', method,
+                'status', status, 'paid_at', paid_at, 'daily_fee_date', daily_fee_date,
+                'first_name', first_name, 'last_name', last_name,
+                'admission_number', admission_number, 'fee_description', fee_description,
+                'class_name', class_name, 'term_id', term_id, 'term_name', term_name,
+                'academic_year_name', academic_year_name
+              ) order by coalesce(daily_fee_date, paid_at::date) desc, paid_at desc, id desc)
+              from page_rows
+            ), '[]'::jsonb) as records,
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'currency', currency, 'payment_count', payment_count,
+                'verified_count', verified_count, 'pending_count', pending_count,
+                'verified_amount', verified_amount, 'pending_amount', pending_amount
+              ) order by currency)
+              from currency_totals
+            ), '[]'::jsonb) as totals,
+            coalesce((
+              select jsonb_agg(jsonb_build_object(
+                'fee_description', fee_description, 'term_name', term_name,
+                'academic_year_name', academic_year_name, 'currency', currency,
+                'arrears_sources', arrears_sources,
+                'base_amount_due', base_amount_due, 'arrears_amount', arrears_amount,
+                'paid_amount', paid_amount, 'pending_amount', pending_amount,
+                'balance_due', balance_due
+              ) order by academic_year_name, term_name, fee_description)
+              from fee_balances
+            ), '[]'::jsonb) as fee_balances,
+            (select count(*)::int from filtered_records) as total_count
+        `,
+      );
+      const report = rows[0];
+      if (!report || !Array.isArray(report["records"]) || !Array.isArray(report["totals"])
+        || !Array.isArray(report["fee_balances"])) {
+        throw new Error("Student financial-record query returned an invalid result");
+      }
+      const totalCount = Number(report["total_count"] ?? 0);
+      return json({
+        records: report["records"],
+        totals: report["totals"],
+        fee_balances: report["fee_balances"],
+        total_count: totalCount,
+        page,
+        page_size: pageSize,
+        page_count: Math.ceil(totalCount / pageSize),
+      });
+    }
+
+    if (url.pathname === "/api/school/students" && request.method === "GET") {
+      const search = url.searchParams.get("search")?.trim().slice(0, 100) ?? "";
+      const classId = url.searchParams.get("class_id")?.trim() || null;
+      if (classId && !uuidOrNull(classId)) return badRequest("Invalid class ID");
+      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
+      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      const offset = (page - 1) * pageSize;
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          with current_enrollment as (
+            select distinct on (e.student_id) e.student_id, e.class_id
+            from class_enrollments e
+            where e.school_id = ${school.schoolId}::uuid and e.ends_on is null
+            order by e.student_id, e.starts_on desc
+          ),
+          filtered_students as materialized (
+            select st.id, st.first_name, st.last_name, st.admission_number,
+                   case when st.active then 'active' else 'inactive' end as status,
+                   e.class_id, c.name as class_name
+            from students st
+            left join current_enrollment e on e.student_id = st.id
+            left join classes c on c.id = e.class_id and c.school_id = st.school_id
+            where st.school_id = ${school.schoolId}::uuid
+              and (${search} = '' or position(lower(${search}) in lower(st.first_name || ' ' || st.last_name || ' ' || st.admission_number)) > 0)
+              and (${classId}::uuid is null or e.class_id = ${classId}::uuid)
+              and (
+                ${school.role === "school_admin" || school.role === "finance"}
+                or exists (
+                  select 1 from classes authorized_class
+                  where authorized_class.id = e.class_id and authorized_class.school_id = st.school_id
+                    and (
+                      authorized_class.class_teacher_id in (select id from staff_profiles where school_id = authorized_class.school_id and user_id = ${school.userId}::uuid)
+                      or exists (
+                        select 1 from teaching_assignments ta
+                        join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                        where ta.school_id = authorized_class.school_id and ta.academic_year_id = authorized_class.academic_year_id
+                          and ta.class_subject_id in (select cs.id from class_subjects cs where cs.school_id = authorized_class.school_id and cs.class_id = authorized_class.id)
+                          and sp.user_id = ${school.userId}::uuid
+                      )
+                    )
+                )
+              )
+          ),
+          page_rows as (
+            select * from filtered_students
+            order by last_name, first_name, admission_number
+            limit ${pageSize} offset ${offset}
+          )
+          select (select count(*)::int from filtered_students) as total,
+                 coalesce((
+                   select jsonb_agg(jsonb_build_object(
+                     'id', id, 'first_name', first_name, 'last_name', last_name,
+                     'student_id_number', admission_number, 'status', status,
+                     'class_id', class_id, 'class_name', class_name
+                   ) order by last_name, first_name, admission_number)
+                   from page_rows
+                 ), '[]'::jsonb) as students
+        `,
+      );
+      const studentRows = rows[0]?.["students"];
+      if (!Array.isArray(studentRows)) throw new Error("Student query returned an invalid page");
+      return json({ students: studentRows, total: Number(rows[0]?.["total"] ?? 0), page, page_size: pageSize });
+    }
+
+    if (url.pathname === "/api/school/students" && request.method === "POST") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const fullName = typeof body["full_name"] === "string" ? body["full_name"].trim() : "";
+      const nameParts = fullName.split(/\s+/).filter(Boolean);
+      const firstName = typeof body["first_name"] === "string" ? body["first_name"].trim() : nameParts[0] ?? "";
+      const lastName = typeof body["last_name"] === "string" ? body["last_name"].trim() : nameParts.slice(1).join(" ");
+      const classId = body["class_id"] == null ? null : body["class_id"];
+      if (firstName.length < 1 || firstName.length > 100) return badRequest("First name must be 1–100 characters");
+      if (lastName.length < 1 || lastName.length > 100) return badRequest("Enter both a first and last name");
+      if (!uuidOrNull(classId)) return badRequest("Invalid class ID");
+
+      const dateOfBirth = typeof body["date_of_birth"] === "string" ? body["date_of_birth"].trim() : "";
+      const gender = typeof body["gender"] === "string" ? body["gender"].trim() : "";
+      const address = typeof body["address"] === "string" ? body["address"].trim() : "";
+      const emergencyContact = typeof body["emergency_contact"] === "string" ? body["emergency_contact"].trim() : "";
+      const medicalNotes = typeof body["medical_notes"] === "string" ? body["medical_notes"].trim() : "";
+      if (dateOfBirth && !validIsoDate(dateOfBirth)) return badRequest("Enter a valid date of birth");
+      if (gender.length > 40) return badRequest("Gender must be at most 40 characters");
+      if (address.length > 1000) return badRequest("Address must be at most 1000 characters");
+      if (emergencyContact.length > 40) return badRequest("Emergency contact must be at most 40 characters");
+      if (medicalNotes.length > 2000) return badRequest("Medical notes must be at most 2000 characters");
+
+      const guardian = body["guardian"] && typeof body["guardian"] === "object"
+        ? body["guardian"] as Record<string, unknown>
+        : {};
+      const guardianName = typeof guardian["full_name"] === "string" ? guardian["full_name"].trim() : "";
+      const guardianPhone = typeof guardian["phone"] === "string" ? guardian["phone"].trim() : "";
+      const guardianEmail = typeof guardian["email"] === "string" ? guardian["email"].trim().toLowerCase() : "";
+      const guardianRelationship = typeof guardian["relationship"] === "string" ? guardian["relationship"].trim() : "parent";
+      if (guardianName.length > 160 || guardianPhone.length > 40 || guardianEmail.length > 254 || guardianRelationship.length > 60) {
+        return badRequest("Guardian contact information is too long");
+      }
+      if (guardianEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardianEmail)) return badRequest("Enter a valid guardian email address");
+
+      try {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            with requested_class as (
+              select id, school_id from classes
+              where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
+                and ${classId}::uuid is not null
+            ),
+            inserted_student as (
+              insert into students (
+                school_id, admission_number, first_name, last_name,
+                date_of_birth, gender, address, emergency_contact, medical_notes
+              )
+              select ${school.schoolId}::uuid,
+                     '',
+                     ${firstName}, ${lastName}, nullif(${dateOfBirth}, '')::date,
+                     nullif(${gender}, ''), nullif(${address}, ''),
+                     nullif(${emergencyContact}, ''), nullif(${medicalNotes}, '')
+              where ${classId}::uuid is null or exists (select 1 from requested_class)
+              returning id, school_id, admission_number, first_name, last_name, active
+            ),
+            inserted_enrollment as (
+              insert into class_enrollments (school_id, class_id, student_id)
+              select c.school_id, c.id, st.id
+              from requested_class c
+              cross join inserted_student st
+              returning class_id, student_id
+            ),
+            inserted_guardian as (
+              insert into guardians (school_id, full_name, phone, email)
+              select st.school_id, ${guardianName}, nullif(${guardianPhone}, ''), nullif(${guardianEmail}, '')
+              from inserted_student st
+              where ${Boolean(guardianName || guardianPhone || guardianEmail)}
+              on conflict (school_id, email) do update
+                set full_name = excluded.full_name,
+                    phone = coalesce(excluded.phone, guardians.phone)
+              returning id
+            ),
+            linked_guardian as (
+              insert into student_guardians (school_id, student_id, guardian_id, relationship, is_primary)
+              select st.school_id, st.id, g.id, ${guardianRelationship || "parent"}, true
+              from inserted_student st
+              cross join inserted_guardian g
+              on conflict (student_id, guardian_id) do update
+                set relationship = excluded.relationship, is_primary = true
+              returning student_id
+            )
+            select st.id, st.first_name, st.last_name, st.admission_number as student_id_number,
+                   case when st.active then 'active' else 'inactive' end as status,
+                   e.class_id, c.name as class_name
+            from inserted_student st
+            left join inserted_enrollment e on e.student_id = st.id
+            left join classes c on c.id = e.class_id and c.school_id = st.school_id
+          `,
+        );
+        if (!rows[0]) return json({ error: classId ? "The selected class does not exist in this school" : "Student could not be created" }, 400);
+        return json({ student: rows[0] }, 201);
+      } catch (error) {
+        if (error instanceof Error && /students_school_id_admission_number_key|duplicate key/i.test(error.message)) {
+          return json({ error: "That student ID is already in use at this school" }, 409);
+        }
+        throw error;
+      }
+    }
+
+    if (classRosterMatch) {
+      if (!uuidOrNull(classRosterMatch[1])) return badRequest("Invalid class ID");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select c.id as class_id,
+                 coalesce(jsonb_agg(jsonb_build_object(
+                   'id', st.id, 'first_name', st.first_name, 'last_name', st.last_name,
+                   'student_id_number', st.admission_number
+                 ) order by st.last_name, st.first_name) filter (where st.id is not null), '[]'::jsonb) as students
+          from classes c
+          left join class_enrollments e
+            on e.class_id = c.id and e.school_id = c.school_id and e.ends_on is null
+          left join students st
+            on st.id = e.student_id and st.school_id = e.school_id and st.active
+          where c.id = ${classRosterMatch[1]}::uuid and c.school_id = ${school.schoolId}::uuid
+            and (
+              ${school.role === "school_admin"}
+              or c.class_teacher_id in (
+                select sp.id from staff_profiles sp
+                where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+              )
+              or exists (
+                select 1 from teaching_assignments ta
+                join staff_profiles sp on sp.id = ta.staff_profile_id and sp.school_id = ta.school_id
+                where ta.school_id = c.school_id and ta.academic_year_id = c.academic_year_id
+                  and ta.class_subject_id in (
+                    select cs.id from class_subjects cs
+                    where cs.school_id = c.school_id and cs.class_id = c.id
+                  )
+                  and sp.user_id = ${school.userId}::uuid
+              )
+            )
+          group by c.id
+        `,
+      );
+      if (!rows[0]) return json({ error: "Class not found or you are not assigned to it" }, 404);
+      return json({ class_id: String(rows[0]["class_id"]), students: rows[0]["students"] });
+    }
+  }
+
+  if (url.pathname === "/api/auth/eligibility") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    if (!env.DATABASE_URL) return json({ error: "Database is not configured" }, 503);
+    const payload: unknown = await request.json().catch(() => null);
+    const email = payload && typeof payload === "object" && "email" in payload && typeof payload["email"] === "string"
+      ? payload["email"].trim().toLowerCase()
+      : "";
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid email address");
+
+    const sql = database(env);
+    const rows = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
+      tx`
+        select m.role, s.status as school_status
+        from users u
+        join memberships m on m.user_id = u.id
+        left join schools s on s.id = m.school_id
+        where lower(u.email) = ${email} and m.active
+      `,
+    );
+    const eligible = rows.some((row) => row["role"] === "super_admin" || row["school_status"] === "trial" || row["school_status"] === "active");
+    return json({ eligible });
+  }
+
+  if (url.pathname === "/api/auth/session") {
+    if (request.method !== "DELETE") return json({ error: "Method not allowed" }, 405);
+    return json({ authenticated: false }, 200, { "set-cookie": authSessionCookie("", request, 0) });
+  }
+
+  if (url.pathname === "/api/auth/context") {
+    if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
+    const bearer = bearerToken(request);
+    if (!bearer) return json({ error: "A valid sign-in token is required. Please sign in again." }, 401);
+
+    let authUserId: string;
+    let tokenEmail: string;
+    try {
+      const identity = await authenticateNeonToken(bearer, env);
+      if (!identity) return json({ error: "Your sign-in session is invalid or expired. Please sign in again." }, 401);
+      ({ userId: authUserId, email: tokenEmail } = identity);
+    } catch (error) {
+      logTokenVerificationFailure(error, bearer);
+      return json({ error: "The sign-in token is invalid or expired" }, 401);
+    }
+
+    const sql = database(env);
+    const authUsers = await sql`
+      select id, email, "emailVerified" as email_verified
+      from neon_auth.user
+      where id = ${authUserId}
+      limit 1
+    `;
+    const authUser = authUsers[0];
+    if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== tokenEmail) {
+      return json({ error: "Verify your email address before using a school portal" }, 403);
+    }
+
+    const memberships = await withDatabaseContext(sql, { userEmail: tokenEmail }, (tx) =>
+      tx`
+        select u.display_name, m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
+               coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
+        from users u
+        join memberships m on m.user_id = u.id
+        left join schools s on s.id = m.school_id
+        where lower(u.email) = ${tokenEmail} and m.active
+      `,
+    );
+    const platformAdmin = memberships.find((row) => row["role"] === "super_admin" && row["school_id"] == null);
+    if (platformAdmin) {
+      return json(
+        { user: { email: tokenEmail, displayName: String(platformAdmin["display_name"] ?? tokenEmail) }, membership: { role: "super_admin", schoolId: null } },
+        200,
+        { "set-cookie": authSessionCookie("", request, 0) },
+      );
+    }
+
+    const tenant = resolveTenant(request, env.ROOT_DOMAIN);
+    const querySubdomain = url.searchParams.get("tenant")?.trim().toLowerCase() ?? null;
+    if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
+    const requestedSubdomain = tenant.subdomain ?? querySubdomain;
+    const schoolMemberships = memberships.filter((row) => row["school_id"] != null);
+    const selectedMembership = requestedSubdomain
+      ? schoolMemberships.find((row) => row["subdomain"] === requestedSubdomain)
+      : schoolMemberships.length === 1 ? schoolMemberships[0] : undefined;
+    if (!selectedMembership) return json({ error: "This account does not have access to this school" }, 403);
+    if (selectedMembership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
+    const schoolId = String(selectedMembership["school_id"]);
+    const scopedMemberships = await withDatabaseContext(sql, { schoolId, userEmail: tokenEmail }, (tx) =>
+      tx`
+        select u.display_name, m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
+               coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
+        from users u
+        join memberships m on m.user_id = u.id
+        join schools s on s.id = m.school_id
+        where lower(u.email) = ${tokenEmail} and m.school_id = ${schoolId}::uuid and m.active
+        limit 1
+      `,
+    );
+    const tenantMembership = scopedMemberships[0];
+    if (!tenantMembership) return json({ error: "This account does not have access to this school" }, 403);
+    if (tenantMembership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
+
+    return json({
+      user: { email: tokenEmail, displayName: String(tenantMembership["display_name"] ?? tokenEmail) },
+      membership: {
+        role: String(tenantMembership["role"]),
+        schoolId: String(tenantMembership["school_id"]),
+        schoolName: String(tenantMembership["school_name"]),
+        subdomain: String(tenantMembership["subdomain"]),
+        status: tenantMembership["school_status"],
+        primaryColor: String(tenantMembership["primary_color"]),
+        crestUrl: tenantMembership["crest_url"] ? String(tenantMembership["crest_url"]) : null,
+      },
+    }, 200, { "set-cookie": authSessionCookie(bearer, request, 900) });
+  }
+
+  if (url.pathname === "/api/onboarding/applications") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    if (!env.DATABASE_URL) return json({ error: "Database is not configured" }, 503);
+
+    const payload: unknown = await request.json().catch(() => null);
+    if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+    const application = payload as Record<string, unknown>;
+    const schoolName = typeof application["schoolName"] === "string" ? application["schoolName"].trim() : "";
+    const requestedSubdomain = typeof application["subdomain"] === "string" ? application["subdomain"].trim().toLowerCase() : "";
+    const contactName = typeof application["contactName"] === "string" ? application["contactName"].trim() : "";
+    const contactEmail = typeof application["email"] === "string" ? application["email"].trim().toLowerCase() : "";
+    const contactPhone = typeof application["phone"] === "string" ? application["phone"].trim() : "";
+    const primaryColor = typeof application["primaryColor"] === "string" ? application["primaryColor"] : "";
+    const crestUrl = application["crestUrl"] ?? null;
+
+    if (schoolName.length < 2 || schoolName.length > 160) return badRequest("School name must be 2–160 characters");
+    if (!validSubdomain(requestedSubdomain)) return badRequest("Subdomain must use lowercase letters, numbers, and hyphens");
+    if (contactName.length < 2 || contactName.length > 160) return badRequest("Contact name must be 2–160 characters");
+    if (contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) return badRequest("Enter a valid contact email");
+    if (contactPhone.length > 40) return badRequest("Phone number must be 40 characters or fewer");
+    if (!validPrimaryColor(primaryColor)) return badRequest("Primary colour must be a six-digit hex value");
+    if (!validCrestUrl(crestUrl)) return badRequest("Crest must be an HTTPS URL or a supported image under 512 KB");
+
+    const sql = database(env);
+    try {
+      const rows = await sql`
+        insert into school_onboarding_applications
+          (school_name, requested_subdomain, contact_name, contact_email, contact_phone, primary_color, crest_url)
+        values
+          (${schoolName}, ${requestedSubdomain}, ${contactName}, ${contactEmail}, ${contactPhone || null}, ${primaryColor}, ${typeof crestUrl === "string" ? crestUrl : null})
+        returning id, created_at
+      `;
+      const saved = rows[0];
+      if (!saved) throw new Error("Application insert returned no result");
+      return json({ application: { id: String(saved["id"]), submittedAt: new Date(String(saved["created_at"])).toISOString() } }, 201);
+    } catch (error) {
+      if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That subdomain already has an application or school" }, 409);
+      throw error;
+    }
+  }
+
+  if (url.pathname === "/api/platform/applications" || url.pathname.startsWith("/api/platform/applications/")) {
+    if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env))) return json({ error: "Platform API is not configured" }, 503);
+    if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
+
+    const sql = database(env);
+    if (url.pathname === "/api/platform/applications" && request.method === "GET") {
+      const rows = await sql`
+        select id, school_name, requested_subdomain, contact_name, contact_email, contact_phone,
+               primary_color, crest_url, status, created_at
+        from school_onboarding_applications
+        where status = 'pending'
+        order by created_at desc
+      `;
+      return json({ applications: rows.map((row) => ({
+        id: String(row["id"]),
+        schoolName: String(row["school_name"]),
+        subdomain: String(row["requested_subdomain"]),
+        applicant: String(row["contact_name"]),
+        email: String(row["contact_email"]),
+        phone: row["contact_phone"] ? String(row["contact_phone"]) : null,
+        color: String(row["primary_color"]),
+        crestUrl: row["crest_url"] ? String(row["crest_url"]) : null,
+        status: String(row["status"]),
+        submitted: new Date(String(row["created_at"])).toISOString(),
+      })) });
+    }
+
+    const approveMatch = url.pathname.match(/^\/api\/platform\/applications\/([0-9a-f-]+)\/approve$/i);
+    if (!approveMatch) return json({ error: "Not found" }, 404);
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
+    try {
+      const applicationId = approveMatch[1];
+      const schoolId = crypto.randomUUID();
+      const rows = await withDatabaseContext(sql, { schoolId, platformAdmin: true }, (tx) =>
+        tx`
+          with pending_application as materialized (
+            select id, school_name, requested_subdomain, contact_name, contact_email, contact_phone, primary_color, crest_url
+            from school_onboarding_applications
+            where id = ${applicationId}::uuid and status = 'pending'
+            for update
+          ),
+          inserted_school as (
+            insert into schools (id, name, subdomain, status, primary_color, crest_url, contact_email, contact_phone)
+            select ${schoolId}::uuid, school_name, requested_subdomain, 'trial', primary_color, crest_url, contact_email, contact_phone
+            from pending_application
+            returning id, name, subdomain, status, primary_color
+          ),
+          upserted_user as (
+            insert into users (email, display_name)
+            select contact_email, contact_name from pending_application
+            on conflict (email) do update set display_name = users.display_name
+            returning id
+          ),
+          inserted_membership as (
+            insert into memberships (user_id, school_id, role)
+            select upserted_user.id, inserted_school.id, 'school_admin'
+            from upserted_user cross join inserted_school
+            on conflict (user_id, school_id, role) do nothing
+            returning id
+          ),
+          approved_application as (
+            update school_onboarding_applications
+            set status = 'approved'
+            where id = ${applicationId}::uuid and status = 'pending'
+              and exists (select 1 from inserted_membership)
+            returning id
+          )
+          select inserted_school.id, inserted_school.name, inserted_school.subdomain,
+                 inserted_school.status, inserted_school.primary_color, upserted_user.id as admin_user_id,
+                 pending_application.contact_email as admin_email,
+                 pending_application.contact_name
+          from inserted_school
+          cross join upserted_user
+          cross join approved_application
+          cross join pending_application
+        `,
+      );
+      const school = rows[0];
+      if (!school) return json({ error: "Application was not found or is no longer pending" }, 404);
+      const subdomain = String(school["subdomain"]);
+      const activationUrl = env.ROOT_DOMAIN && env.ROOT_DOMAIN !== "localhost"
+        ? new URL(`https://${subdomain}.${env.ROOT_DOMAIN}/login`)
+        : new URL("/login", request.url);
+      activationUrl.searchParams.set("tenant", subdomain);
+      activationUrl.searchParams.set("mode", "activate");
+      const tenantLoginUrl = activationUrl.toString();
+      const invitation = typeof rows[0]?.["admin_email"] === "string"
+        ? await sendSchoolAdminInvitation(
+          env,
+          String(rows[0]["admin_email"]),
+          String(rows[0]["contact_name"]),
+          String(school["name"]),
+          tenantLoginUrl,
+          String(school["primary_color"] ?? "#1f5c3b"),
+        )
+        : { sent: false, error: "The approved application has no contact email, so the invitation cannot be sent." };
+      return json({ school: {
+        id: String(school["id"]),
+        name: String(school["name"]),
+        subdomain,
+        status: school["status"],
+        primaryColor: String(school["primary_color"]),
+        adminUserId: String(school["admin_user_id"]),
+        tenantLoginUrl,
+      }, invitation });
+    } catch (error) {
+      if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That school subdomain is already in use" }, 409);
+      throw error;
+    }
+  }
+
+  const schoolStatusMatch = url.pathname.match(/^\/api\/platform\/schools\/([0-9a-f-]+)\/status$/i);
+  const schoolDeleteMatch = url.pathname.match(/^\/api\/platform\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (url.pathname !== "/api/platform/schools" && !schoolStatusMatch && !schoolDeleteMatch) return json({ error: "Not found" }, 404);
+  if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env))) return json({ error: "Platform API is not configured" }, 503);
+  if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
+
+  const sql = database(env);
+  if (schoolDeleteMatch) {
+    if (request.method !== "DELETE") return json({ error: "Method not allowed" }, 405);
+    const rows = await sql`
+      with deleted_school as (
+        delete from schools
+        where id = ${schoolDeleteMatch[1]}::uuid
+        returning id, subdomain
+      ),
+      deleted_application as (
+        delete from school_onboarding_applications application
+        using deleted_school school
+        where application.requested_subdomain = school.subdomain
+        returning application.id
+      )
+      select id, subdomain from deleted_school
+    `;
+    const deletedSchool = rows[0];
+    if (!deletedSchool) return json({ error: "School not found" }, 404);
+    return json({ deleted: true, school: { id: String(deletedSchool["id"]), subdomain: String(deletedSchool["subdomain"]) } });
+  }
+  if (schoolStatusMatch) {
+    if (request.method !== "PATCH") return json({ error: "Method not allowed" }, 405);
+    const payload: unknown = await request.json().catch(() => null);
+    const status = payload && typeof payload === "object" && "status" in payload ? payload.status : null;
+    if (status !== "trial" && status !== "active" && status !== "suspended") return badRequest("Status must be trial, active, or suspended");
+    const rows = await sql`
+      update schools set status = ${status}
+      where id = ${schoolStatusMatch[1]}::uuid
+      returning id, name, subdomain, status, created_at, primary_color
+    `;
+    const school = rows[0];
+    if (!school) return json({ error: "School not found" }, 404);
+    return json({ school: {
+      id: String(school["id"]),
+      name: String(school["name"]),
+      subdomain: String(school["subdomain"]),
+      status: school["status"],
+      createdAt: new Date(String(school["created_at"])).toISOString(),
+      primaryColor: String(school["primary_color"]),
+    } });
+  }
   if (request.method === "GET") {
-    const rows = await sql`select id, name, subdomain, status, created_at from schools order by created_at desc limit 100`;
-    return json({ schools: rows.map((row) => ({ id: String(row["id"]), name: String(row["name"]), subdomain: String(row["subdomain"]), status: row["status"], createdAt: new Date(String(row["created_at"])).toISOString() })) satisfies SchoolRecord[] });
+    const rows = await withDatabaseContext(sql, { platformAdmin: true }, (tx) =>
+      tx`
+        select s.id, s.name, s.subdomain, s.status, s.created_at,
+               coalesce(s.primary_color, '#1f5c3b') as primary_color,
+               (select count(*)::int from students st where st.school_id = s.id) as student_count,
+               (select count(*)::int from memberships m where m.school_id = s.id and m.role = 'school_admin') as admin_count
+        from schools s
+        order by s.created_at desc
+        limit 100
+      `,
+    );
+    return json({ schools: rows.map((row) => ({
+      id: String(row["id"]),
+      name: String(row["name"]),
+      subdomain: String(row["subdomain"]),
+      status: row["status"],
+      createdAt: new Date(String(row["created_at"])).toISOString(),
+      primaryColor: String(row["primary_color"]),
+      students: Number(row["student_count"]),
+      admins: Number(row["admin_count"]),
+    })) satisfies SchoolRecord[] });
   }
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const payload: unknown = await request.json().catch(() => null);
   if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
-  const { name, subdomain } = payload as { name?: unknown; subdomain?: unknown };
+  const { name, subdomain, primaryColor: requestedColor } = payload as { name?: unknown; subdomain?: unknown; primaryColor?: unknown };
   const cleanName = typeof name === "string" ? name.trim() : "";
   const cleanSubdomain = typeof subdomain === "string" ? subdomain.trim().toLowerCase() : "";
+  const primaryColor = typeof requestedColor === "string" ? requestedColor : "#1f5c3b";
   if (cleanName.length < 2 || cleanName.length > 160) return badRequest("School name must be 2–160 characters");
   if (!validSubdomain(cleanSubdomain)) return badRequest("Subdomain must use lowercase letters, numbers, and hyphens");
+  if (!validPrimaryColor(primaryColor)) return badRequest("Primary colour must be a six-digit hex value");
 
   try {
-    const rows = await sql`insert into schools (name, subdomain) values (${cleanName}, ${cleanSubdomain}) returning id, name, subdomain, status, created_at`;
+    const rows = await sql`insert into schools (name, subdomain, primary_color) values (${cleanName}, ${cleanSubdomain}, ${primaryColor}) returning id, name, subdomain, status, created_at, primary_color`;
     const school = rows[0];
     if (!school) throw new Error("School insert returned no result");
-    return json({ school: { id: String(school["id"]), name: String(school["name"]), subdomain: String(school["subdomain"]), status: school["status"], createdAt: new Date(String(school["created_at"])).toISOString() } satisfies SchoolRecord }, 201);
+    return json({ school: { id: String(school["id"]), name: String(school["name"]), subdomain: String(school["subdomain"]), status: school["status"], createdAt: new Date(String(school["created_at"])).toISOString(), primaryColor: String(school["primary_color"]) } satisfies SchoolRecord }, 201);
   } catch (error) {
     if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That subdomain is already in use" }, 409);
     throw error;

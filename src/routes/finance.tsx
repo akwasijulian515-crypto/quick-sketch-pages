@@ -1,38 +1,384 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2, CircleCheck, Plus, Printer, ReceiptText, Wallet, X } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { Download, ReceiptText, Wallet } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
+import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
-import { cn } from "@/lib/utils";
+import { useTenantBranding } from "@/components/tenant-branding-provider";
+import { downloadPaymentReceipt } from "@/lib/payment-receipt-pdf";
 
-export const Route = createFileRoute("/finance")({ head: () => ({ meta: [{ title: "Finance — Harrow Green" }, { name: "description", content: "Record daily fees and school-fee payments." }] }), component: FinancePage });
+export const Route = createFileRoute("/finance")({
+  head: () => ({ meta: [{ title: "Finance — Klasora" }, { name: "description", content: "Record school and other fees, print receipts, and track learner balances." }] }),
+  component: FinancePage,
+});
 
-type PaymentStatus = "verified" | "pending" | "recorded";
-type Payment = { id: string; receipt?: string; student: string; className: string; fee: "Daily payment" | "School fees"; amount: number; method: string; date: string; status: PaymentStatus; reference: string };
-const students = [{ name: "Abena Ofori", className: "Form 2B", daily: 20, school: 350 }, { name: "Daniel Boateng", className: "Form 2B", daily: 20, school: 350 }, { name: "Eunice Agyeman", className: "Form 2B", daily: 20, school: 350 }, { name: "Gloria Mensah", className: "Form 2B", daily: 20, school: 350 }, { name: "Kojo Mensah", className: "Form 3C", daily: 25, school: 420 }];
-const initialPayments: Payment[] = [
-  { id: "payment-1", receipt: "HGA-240514-041", student: "Abena Ofori", className: "Form 2B", fee: "School fees", amount: 350, method: "Mobile money", date: "Today, 09:42", status: "verified", reference: "PSK-7J4M-18A" },
-  { id: "payment-2", student: "Kwame Asare", className: "Form 2B", fee: "Daily payment", amount: 20, method: "Cash", date: "Today, 09:15", status: "recorded", reference: "DF-2B-4817" },
-  { id: "payment-3", receipt: "HGA-240514-039", student: "Esi Owusu", className: "Form 2B", fee: "School fees", amount: 75, method: "Card", date: "Today, 08:54", status: "verified", reference: "PSK-9K1P-72B" },
-];
+type FeeRule = {
+  id: string;
+  class_name: string;
+  academic_year_name: string;
+  term_name: string | null;
+  fee_type: string;
+  description: string;
+  amount: number | string;
+  currency: string;
+  is_active: boolean;
+};
+type FeeBalance = {
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+  class_name: string;
+  original_amount: number | string;
+  base_amount_due: number | string;
+  arrears_amount: number | string;
+  arrears_sources: string | null;
+  paid_amount: number | string;
+  pending_amount: number | string;
+  balance_due: number | string;
+  currency: string;
+};
+type Payment = {
+  id: string;
+  receipt_number: string | null;
+  amount: number | string;
+  currency: string;
+  category: string;
+  method: string;
+  status: string;
+  paid_at: string;
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+  fee_description: string | null;
+  class_name: string | null;
+  balance_due?: number | string | null;
+};
+type OtherFeePayment = Payment & {
+  student_id: string;
+  fee_description: string;
+  class_name: string;
+  rejection_reason: string | null;
+};
+
+async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getNeonAccessToken();
+  const url = new URL(path, window.location.origin);
+  const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  if (tenant) url.searchParams.set("tenant", tenant);
+  const headers = new Headers(init?.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+      ? payload.error
+      : "The school request failed";
+    throw new Error(message);
+  }
+  return payload as T;
+}
+
+const schoolFeeTypes = new Set(["tuition", "pta"]);
+const otherFeeTypes = new Set(["exam", "other"]);
 
 function FinancePage() {
-  const [payments, setPayments] = useState(initialPayments); const [showForm, setShowForm] = useState(false); const [receipt, setReceipt] = useState<Payment | null>(null);
-  function recordPayment(data: Omit<Payment, "id" | "date" | "reference" | "receipt" | "status">) { const isDailyCash = data.fee === "Daily payment" && data.method === "Cash"; const id = crypto.randomUUID(); const reference = isDailyCash ? `DF-${data.className.replace("Form ", "").replace(" ", "")}-${String(payments.length + 4817)}` : `DEMO-${crypto.randomUUID().slice(0, 8).toUpperCase()}`; setPayments((current) => [{ ...data, id, date: "Just now", reference, status: isDailyCash ? "recorded" : "pending" }, ...current]); setShowForm(false); }
-  function verifyPayment(id: string) { setPayments((current) => current.map((payment) => payment.id === id ? { ...payment, status: "verified", receipt: `HGA-${String(current.length + 42).padStart(3, "0")}` } : payment)); }
-  return <SchoolShell title="Finance" finance><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><Wallet className="size-5" /></div><h1 className="font-display text-3xl font-bold">Finance desk</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record daily-fee collections and school-fee payment requests using the School Admin&apos;s class fee rules.</p></div><Button onClick={() => setShowForm(true)}><Plus />Record payment</Button></div><div className="mt-4 rounded-md border border-primary/15 bg-primary/5 px-4 py-3 text-sm text-secondary-foreground"><strong>Collection rule:</strong> cash daily fees create a teacher clearance coupon, not a receipt. School-fee receipts are issued only after a verified payment.</div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Collected today" value="GH₵ 2,840" note="18 payments recorded" /><Metric label="Daily fees" value="GH₵ 880" note="44 student clearances" /><Metric label="School-fee receipts" value={String(payments.filter((payment) => payment.receipt).length + 38)} note="This week" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Today&apos;s collections</h2><p className="mt-1 text-xs text-muted-foreground">Daily-fee clearance is separate from official school-fee receipts.</p></div><ReceiptText className="size-5 text-primary" /></div><div className="overflow-x-auto"><table className="w-full min-w-[880px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Reference", "Student", "Fee", "Amount", "Status", "Action"].map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{payments.map((payment) => <tr key={payment.id}><td className="px-5 py-4 font-mono text-xs text-secondary-foreground">{payment.reference}</td><td className="px-5 py-4"><p className="font-medium">{payment.student}</p><p className="text-xs text-muted-foreground">{payment.className}</p></td><td className="px-5 py-4">{payment.fee}</td><td className="px-5 py-4">GH₵ {payment.amount.toFixed(2)}<p className="mt-0.5 text-xs text-muted-foreground">{payment.method}</p></td><td className="px-5 py-4"><Status payment={payment} /></td><td className="px-5 py-4">{payment.status === "recorded" ? <span className="text-xs text-secondary-foreground">Coupon available to teacher</span> : payment.status === "pending" ? <Button size="sm" variant="outline" onClick={() => verifyPayment(payment.id)}>Test gateway callback</Button> : payment.receipt ? <Button size="sm" variant="outline" onClick={() => setReceipt(payment)}><Printer />Receipt</Button> : null}</td></tr>)}</tbody></table></div></section></div>{showForm && <PaymentForm onClose={() => setShowForm(false)} onSubmit={recordPayment} />}{receipt && <Receipt payment={receipt} onClose={() => setReceipt(null)} />}</SchoolShell>;
-}
+  const { schoolName, primaryColor } = useTenantBranding();
+  const [fees, setFees] = useState<FeeRule[]>([]);
+  const [selectedFeeId, setSelectedFeeId] = useState("");
+  const [collectionFeeId, setCollectionFeeId] = useState("");
+  const [collectionBalances, setCollectionBalances] = useState<FeeBalance[]>([]);
+  const [collectionStudentId, setCollectionStudentId] = useState("");
+  const [collectionAmount, setCollectionAmount] = useState("");
+  const [balances, setBalances] = useState<FeeBalance[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [otherPayments, setOtherPayments] = useState<OtherFeePayment[]>([]);
+  const [method, setMethod] = useState("cash");
+  const [loading, setLoading] = useState(true);
+  const [otherPaymentsLoading, setOtherPaymentsLoading] = useState(true);
+  const [balancesLoading, setBalancesLoading] = useState(false);
+  const [collectionBalancesLoading, setCollectionBalancesLoading] = useState(false);
+  const [recordingCollection, setRecordingCollection] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
-function PaymentForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: (data: Omit<Payment, "id" | "date" | "reference" | "receipt" | "status">) => void }) {
-  const [studentName, setStudentName] = useState(students[0]!.name); const [fee, setFee] = useState<Payment["fee"]>("Daily payment"); const [method, setMethod] = useState("Cash"); const selected = students.find((student) => student.name === studentName) ?? students[0]!; const [amount, setAmount] = useState(String(selected.daily));
-  useEffect(() => setAmount(String(fee === "Daily payment" ? selected.daily : selected.school)), [fee, selected.daily, selected.school]);
-  function save(event: FormEvent) { event.preventDefault(); const value = Number(amount); if (value <= 0 || !Number.isFinite(value)) return; onSubmit({ student: selected.name, className: selected.className, fee, amount: value, method }); }
-  const dailyCash = fee === "Daily payment" && method === "Cash"; return <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4 backdrop-blur-sm"><form onSubmit={save} className="glass-panel w-full max-w-md rounded-lg p-6 shadow-2xl"><div className="flex items-start justify-between"><div><h2 className="font-display text-xl font-bold">Record payment</h2><p className="mt-1 text-sm text-muted-foreground">The class fee rule supplies the suggested amount.</p></div><Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close"><X /></Button></div><Field label="Student"><select value={studentName} onChange={(event) => setStudentName(event.target.value)}>{students.map((student) => <option key={student.name}>{student.name} · {student.className}</option>)}</select></Field><div className="mt-4 grid grid-cols-2 gap-3"><Field label="Fee type"><select value={fee} onChange={(event) => setFee(event.target.value as Payment["fee"])}><option>Daily payment</option><option>School fees</option></select></Field><Field label="Amount (GH₵)"><input required type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></Field></div><Field label="Payment method"><select value={method} onChange={(event) => setMethod(event.target.value)}>{["Cash", "Mobile money", "Card", "Bank transfer"].map((item) => <option key={item}>{item}</option>)}</select></Field><div className={cn("mt-4 rounded-md px-3 py-2 text-xs", dailyCash ? "bg-emerald-500/10 text-emerald-700" : "bg-primary/5 text-secondary-foreground")}>{dailyCash ? "This cash daily payment will be recorded now and create a clearance coupon for the teacher. No official receipt is issued." : "This creates a payment request. Official school-fee receipts become available after verification."}</div><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">{dailyCash ? "Record daily payment" : "Create payment request"}</Button></div></form></div>;
-}
+  const loadPayments = useCallback(async () => {
+    const result = await schoolApi<{ payments: Payment[] }>("/api/school/payments");
+    setPayments(result.payments);
+  }, []);
+  const loadOtherPayments = useCallback(async () => {
+    setOtherPaymentsLoading(true);
+    try {
+      const result = await schoolApi<{ payments: OtherFeePayment[] }>("/api/school/other-payments");
+      setOtherPayments(result.payments);
+    } finally {
+      setOtherPaymentsLoading(false);
+    }
+  }, []);
 
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="block text-sm"><span className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</span><span className="block [&_input]:h-10 [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-input [&_input]:bg-background/70 [&_input]:px-3 [&_select]:h-10 [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-input [&_select]:bg-background/70 [&_select]:px-3">{children}</span></label>; }
-function Status({ payment }: { payment: Payment }) { const label = payment.status === "recorded" ? "Daily fee recorded" : payment.status === "verified" ? "Verified" : "Awaiting gateway"; const style = payment.status === "recorded" || payment.status === "verified" ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/10 text-amber-700"; return <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium", style)}>{payment.status !== "pending" && <CheckCircle2 className="size-3.5" />}{label}</span>; }
-function Receipt({ payment, onClose }: { payment: Payment; onClose: () => void }) { return <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4 backdrop-blur-sm"><div className="glass-panel w-full max-w-md rounded-lg p-6 shadow-2xl"><div className="flex items-start justify-between"><div><div className="flex items-center gap-2 text-emerald-700"><CircleCheck className="size-5" /><span className="text-sm font-medium">Payment verified</span></div><h2 className="mt-3 font-display text-xl font-bold">School-fee receipt</h2></div><Button variant="ghost" size="icon" onClick={onClose} aria-label="Close"><X /></Button></div><div className="mt-5 rounded-md border border-border bg-background/70 p-4 text-sm"><p className="font-display text-base font-bold">Harrow Green Academy</p><p className="mt-1 font-mono text-xs text-muted-foreground">{payment.receipt}</p><dl className="mt-5 space-y-3"><Row label="Student" value={payment.student} /><Row label="Payment for" value={payment.fee} /><Row label="Method" value={payment.method} /><Row label="Amount paid" value={`GH₵ ${payment.amount.toFixed(2)}`} /></dl></div><div className="mt-5 flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Done</Button><Button onClick={() => window.print()}><Printer />Print / save PDF</Button></div></div></div>; }
-function Row({ label, value }: { label: string; value: string }) { return <div className="flex justify-between gap-4"><dt className="text-muted-foreground">{label}</dt><dd className="text-right font-medium">{value}</dd></div>; }
-function Metric({ label, value, note }: { label: string; value: string; note: string }) { return <article className="glass-panel rounded-lg p-5"><p className="text-xs font-medium text-muted-foreground">{label}</p><p className="mt-2 font-display text-3xl">{value}</p><p className="mt-1 text-xs text-secondary-foreground">{note}</p></article>; }
+  useEffect(() => {
+    let cancelled = false;
+    void schoolApi<{ fees: FeeRule[] }>("/api/school/fees")
+      .then((result) => {
+        if (cancelled) return;
+        const activeSchoolFees = result.fees.filter((fee) => fee.is_active && schoolFeeTypes.has(fee.fee_type));
+        const activeCollectionFees = result.fees.filter((fee) => fee.is_active && (schoolFeeTypes.has(fee.fee_type) || otherFeeTypes.has(fee.fee_type)));
+        setFees(result.fees);
+        setSelectedFeeId((current) => current || activeSchoolFees[0]?.id || "");
+        setCollectionFeeId((current) => current || activeCollectionFees[0]?.id || "");
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load fee rules");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    void loadPayments().catch((loadError: unknown) => {
+      if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load recorded payments");
+    });
+    void loadOtherPayments().catch((loadError: unknown) => {
+      if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load other-fee receipts");
+    });
+    return () => { cancelled = true; };
+  }, [loadOtherPayments, loadPayments]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCollectionStudentId("");
+    setCollectionAmount("");
+    setCollectionBalances([]);
+    if (!collectionFeeId) {
+      setCollectionBalancesLoading(false);
+      return;
+    }
+    setCollectionBalancesLoading(true);
+    void schoolApi<{ balances: FeeBalance[] }>(`/api/school/payments?fee_id=${encodeURIComponent(collectionFeeId)}`)
+      .then((result) => { if (!cancelled) setCollectionBalances(result.balances); })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load learner balances");
+      })
+      .finally(() => { if (!cancelled) setCollectionBalancesLoading(false); });
+    return () => { cancelled = true; };
+  }, [collectionFeeId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedFeeId) {
+      setBalances([]);
+      return;
+    }
+    setBalancesLoading(true);
+    void schoolApi<{ balances: FeeBalance[] }>(`/api/school/payments?fee_id=${encodeURIComponent(selectedFeeId)}`)
+      .then((result) => { if (!cancelled) setBalances(result.balances); })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load student balances");
+      })
+      .finally(() => { if (!cancelled) setBalancesLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedFeeId]);
+
+  const fee = fees.find((item) => item.id === selectedFeeId);
+  const collectionFee = fees.find((item) => item.id === collectionFeeId);
+  const activeFees = fees.filter((item) => item.is_active && schoolFeeTypes.has(item.fee_type));
+  const activeCollectionFees = fees.filter((item) => item.is_active && (schoolFeeTypes.has(item.fee_type) || otherFeeTypes.has(item.fee_type)));
+  const collectionStudent = collectionBalances.find((item) => item.student_id === collectionStudentId);
+  const collectionIsOtherFee = collectionFee ? otherFeeTypes.has(collectionFee.fee_type) : false;
+  const pendingValidationPayments = otherPayments.filter((payment) => payment.status === "pending");
+  async function recordPayment() {
+    const amount = Number(collectionAmount);
+    if (!collectionFee || !collectionStudent || !Number.isFinite(amount) || amount <= 0 || amount > Number(collectionStudent.balance_due)) {
+      setError("Choose a learner and enter an amount within the remaining fee balance.");
+      return;
+    }
+    setRecordingCollection(true);
+    setError("");
+    setNotice("");
+    try {
+      if (collectionIsOtherFee) {
+        const result = await schoolApi<{ payment: OtherFeePayment & { balance_due: number } }>("/api/school/other-payments", {
+          method: "POST",
+          body: JSON.stringify({ student_id: collectionStudent.student_id, fee_id: collectionFeeId, amount, method }),
+        });
+        const { balance_due, ...payment } = result.payment;
+        setOtherPayments((current) => [payment, ...current.filter((item) => item.id !== payment.id)].slice(0, 200));
+        setCollectionBalances((current) => current.map((item) => item.student_id === collectionStudent.student_id
+          ? { ...item, pending_amount: Number(item.pending_amount) + amount, balance_due: Number(balance_due) }
+          : item));
+        downloadPaymentReceipt({
+          schoolName,
+          primaryColor,
+          receiptNumber: payment.receipt_number ?? payment.id,
+          studentName: `${payment.first_name} ${payment.last_name}`,
+          admissionNumber: payment.admission_number,
+          className: payment.class_name,
+          feeDescription: payment.fee_description,
+          amount: Number(payment.amount),
+          currency: payment.currency,
+          method: payment.method,
+          paidAt: payment.paid_at,
+          status: payment.status,
+          feeCategory: "other_fee",
+          balanceDue: Number(balance_due),
+        });
+        setNotice(`Pending receipt ${payment.receipt_number} downloaded. School-admin validation is required.`);
+      } else {
+        const result = await schoolApi<{ balance_due: number; payment: { receipt_number: string } }>("/api/school/payments", {
+          method: "POST",
+          body: JSON.stringify({ student_id: collectionStudent.student_id, fee_id: collectionFeeId, amount, method }),
+        });
+        downloadPaymentReceipt({
+          schoolName,
+          primaryColor,
+          receiptNumber: result.payment.receipt_number,
+          studentName: `${collectionStudent.first_name} ${collectionStudent.last_name}`,
+          admissionNumber: collectionStudent.admission_number,
+          className: collectionStudent.class_name,
+          feeDescription: collectionFee.description,
+          amount,
+          currency: collectionStudent.currency,
+          method,
+          paidAt: new Date().toISOString(),
+          status: "pending",
+          feeCategory: "school_fee",
+          balanceDue: Number(result.balance_due),
+        });
+        setNotice(`Payment recorded as pending validation. Remaining balance: ${collectionStudent.currency} ${result.balance_due.toFixed(2)}. Receipt ${result.payment.receipt_number} downloaded.`);
+        await loadOtherPayments();
+      }
+      setCollectionAmount("");
+      setCollectionStudentId("");
+      const balanceResult = await schoolApi<{ balances: FeeBalance[] }>(`/api/school/payments?fee_id=${encodeURIComponent(collectionFeeId)}`);
+      setCollectionBalances(balanceResult.balances);
+      if (selectedFeeId === collectionFeeId) setBalances(balanceResult.balances);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not record fee payment");
+    } finally {
+      setRecordingCollection(false);
+    }
+  }
+
+  return <SchoolShell title="Finance" finance><div className="mx-auto max-w-6xl rise">
+    <div>
+      <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><Wallet className="size-5" /></div>
+      <h1 className="font-display text-3xl font-bold">Finance desk</h1>
+      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record configured fee collections, print numbered receipts, and track remaining balances. School, exam, and other-fee receipts remain pending until a different school admin validates them.</p>
+    </div>
+
+    {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p>}
+    {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
+
+    <section className="glass-panel mt-5 rounded-lg p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div><h2 className="font-display text-lg font-bold">Record a fee & issue receipt</h2><p className="mt-1 text-sm text-muted-foreground">Choose any configured fee, learner, amount, and payment method. Every school-fee, exam, and other-fee receipt remains pending until an admin validates it.</p></div>
+        <ReceiptText className="size-5 shrink-0 text-primary" />
+      </div>
+      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Loading configured fees...</p>
+        : activeCollectionFees.length === 0 ? <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">No active school, examination, or other fee rules are configured. Ask a School Admin to configure them first.</p>
+          : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <label className="space-y-1 text-xs font-medium text-muted-foreground sm:col-span-2">Configured fee
+              <select value={collectionFeeId} onChange={(event) => setCollectionFeeId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                {activeCollectionFees.map((item) => <option key={item.id} value={item.id}>{item.class_name} · {item.description} · {item.academic_year_name}{item.term_name ? ` · ${item.term_name}` : ""} · {item.currency} {Number(item.amount).toFixed(2)}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs font-medium text-muted-foreground sm:col-span-2">Learner
+              <select value={collectionStudentId} onChange={(event) => setCollectionStudentId(event.target.value)} disabled={collectionBalancesLoading} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                <option value="">{collectionBalancesLoading ? "Loading learners..." : "Choose a learner"}</option>
+                {collectionBalances.filter((item) => Number(item.balance_due) > 0).map((item) => <option key={item.student_id} value={item.student_id}>{item.first_name} {item.last_name} · {item.admission_number} · due {item.currency} {Number(item.balance_due).toFixed(2)}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs font-medium text-muted-foreground">Amount
+              <input type="number" min="0.01" max={collectionStudent?.balance_due ?? 0} step="0.01" value={collectionAmount} onChange={(event) => setCollectionAmount(event.target.value)} disabled={!collectionStudent || recordingCollection} className="h-10 w-full rounded-md border border-input bg-background px-3 text-right text-sm text-foreground disabled:opacity-60" />
+            </label>
+            <label className="space-y-1 text-xs font-medium text-muted-foreground">Payment method
+              <select value={method} onChange={(event) => setMethod(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"><option value="cash">Cash</option><option value="mobile_money">Mobile money</option><option value="bank_transfer">Bank transfer</option><option value="card">Card</option><option value="other">Other</option></select>
+            </label>
+            <div className="flex items-end sm:col-span-2 lg:col-span-5">
+              <Button disabled={!collectionStudent || !collectionAmount || Number(collectionAmount) > Number(collectionStudent?.balance_due ?? 0) || recordingCollection} onClick={() => void recordPayment()}>{recordingCollection ? "Recording..." : collectionIsOtherFee ? "Record & download pending receipt" : "Record & download receipt"}</Button>
+              {collectionStudent && collectionFee && <p className="ml-3 pb-2 text-xs text-muted-foreground">Remaining balance: {collectionStudent.currency} {Number(collectionStudent.balance_due).toFixed(2)}{collectionIsOtherFee && Number(collectionStudent.pending_amount) > 0 ? ` · pending ${collectionStudent.currency} ${Number(collectionStudent.pending_amount).toFixed(2)}` : ""}</p>}
+            </div>
+          </div>}
+    </section>
+
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Pending validation receipts</h2><p className="mt-1 text-xs text-muted-foreground">Download or print each receipt, including school-fee, exam, and other-fee collections. It remains pending until a school admin validates it.</p></div><Download className="size-5 text-primary" /></div>
+      {otherPaymentsLoading ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">Loading pending receipts...</p>
+        : pendingValidationPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No receipts awaiting school-admin validation.</p>
+        : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm">
+          <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Fee", "Receipt", "Amount", "Method", "Status", "Received", ""].map((heading) => <th key={heading} className="px-4 py-3 font-medium">{heading}</th>)}</tr></thead>
+          <tbody className="divide-y divide-border/70">{pendingValidationPayments.map((payment) => <tr key={payment.id}>
+            <td className="px-4 py-3 font-medium">{payment.first_name} {payment.last_name}<p className="font-mono text-xs text-muted-foreground">{payment.admission_number} · {payment.class_name}</p></td>
+            <td className="px-4 py-3">{payment.fee_description}<p className="text-xs capitalize text-muted-foreground">{payment.category.replaceAll("_", " ")}</p></td>
+            <td className="px-4 py-3 font-mono text-xs">{payment.receipt_number ?? "—"}</td>
+            <td className="px-4 py-3">{payment.currency} {Number(payment.amount).toFixed(2)}</td>
+            <td className="px-4 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td>
+            <td className="px-4 py-3"><span className={payment.status === "verified" ? "text-emerald-700" : payment.status === "voided" ? "text-destructive" : "text-amber-700"}>{payment.status === "verified" ? "Validated" : payment.status === "voided" ? "Rejected" : "Pending validation"}</span>{payment.rejection_reason && <p className="max-w-48 text-xs text-muted-foreground">{payment.rejection_reason}</p>}</td>
+            <td className="px-4 py-3">{new Date(payment.paid_at).toLocaleString()}</td>
+            <td className="px-4 py-3"><Button size="sm" variant="outline" onClick={() => downloadPaymentReceipt({
+              schoolName,
+              primaryColor,
+              receiptNumber: payment.receipt_number ?? payment.id,
+              studentName: `${payment.first_name} ${payment.last_name}`,
+              admissionNumber: payment.admission_number,
+              className: payment.class_name,
+              feeDescription: payment.fee_description,
+              amount: Number(payment.amount),
+              currency: payment.currency,
+              method: payment.method,
+              paidAt: payment.paid_at,
+              status: payment.status,
+              feeCategory: payment.category === "school_fee" ? "school_fee" : "other_fee",
+              balanceDue: payment.balance_due == null ? undefined : Number(payment.balance_due),
+            })}><Download className="mr-2 size-4" />Download receipt</Button></td>
+          </tr>)}</tbody>
+        </table></div>}
+    </section>
+
+    <section className="glass-panel mt-5 rounded-lg p-4 sm:p-5">
+      <h2 className="font-display text-lg font-bold">School fee balances</h2>
+      <p className="mt-1 mb-4 text-sm text-muted-foreground">Review original, paid, and remaining tuition or PTA amounts. Record collections in the single form above.</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <label className="w-full space-y-1 text-xs font-medium text-muted-foreground sm:max-w-2xl">School fee · class · academic period
+          <select value={selectedFeeId} onChange={(event) => setSelectedFeeId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
+            <option value="">Select a configured school fee</option>
+            {activeFees.map((item) => <option key={item.id} value={item.id}>{item.class_name} · {item.description} · {item.academic_year_name}{item.term_name ? ` · ${item.term_name}` : ""} · {item.currency} {Number(item.amount).toFixed(2)}</option>)}
+          </select>
+        </label>
+        {fee && <p className="text-sm text-muted-foreground">Original fee: <strong className="text-foreground">{fee.currency} {Number(fee.amount).toFixed(2)}</strong></p>}
+      </div>
+      {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading school fee rules...</p>
+        : activeFees.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No active tuition or PTA fee rules are configured. Ask the School Admin to set up the fee schedule first.</p>
+          : balancesLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading student balances...</p>
+            : balances.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">No active students are currently enrolled in this fee’s class.</p>
+              : <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {balances.map((student) => {
+                  const remaining = Number(student.balance_due);
+                  const settled = remaining <= 0;
+                  return <article key={student.student_id} className="rounded-lg border border-border bg-background/60 p-4 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="truncate font-semibold">{student.first_name} {student.last_name}</h3>
+                        <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{student.admission_number} · {student.class_name}</p>
+                      </div>
+                      <span className={settled ? "shrink-0 rounded-full bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-700" : "shrink-0 rounded-full bg-amber-600/10 px-2.5 py-1 text-xs font-medium text-amber-800"}>{settled ? "Paid" : "Balance due"}</span>
+                    </div>
+                    <dl className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs sm:grid-cols-5">
+                      <div><dt className="text-muted-foreground">Current term</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.base_amount_due).toFixed(2)}</dd></div>
+                      <div><dt className="text-muted-foreground">Arrears</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.arrears_amount).toFixed(2)}</dd></div>
+                      <div><dt className="text-muted-foreground">Paid</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.paid_amount).toFixed(2)}</dd></div>
+                      <div><dt className="text-muted-foreground">Pending</dt><dd className="mt-1 font-medium">{student.currency} {Number(student.pending_amount).toFixed(2)}</dd></div>
+                      <div><dt className="text-muted-foreground">Remaining</dt><dd className="mt-1 font-semibold">{student.currency} {remaining.toFixed(2)}</dd></div>
+                    </dl>
+                    {student.arrears_sources && <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground"><span className="font-medium text-foreground">Carried from: </span>{student.arrears_sources}</p>}
+                  </article>;
+                })}
+              </div>}
+    </section>
+
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg">
+      <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Recent school payments</h2><p className="mt-1 text-xs text-muted-foreground">Recorded school-fee payments appear in Daily Reconciliation.</p></div><ReceiptText className="size-5 text-primary" /></div>
+      {payments.filter((payment) => payment.category === "school_fee").length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">No school-fee payments have been recorded yet.</p>
+        : <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Fee", "Receipt", "Amount", "Method", "Paid at", ""].map((heading) => <th key={heading} className="px-5 py-3 font-medium">{heading}</th>)}</tr></thead><tbody className="divide-y divide-border/70">        {payments.filter((payment) => payment.category === "school_fee").slice(0, 30).map((payment) => <tr key={payment.id}><td className="px-5 py-3 font-medium">{payment.first_name} {payment.last_name}<p className="font-mono text-xs text-muted-foreground">{payment.admission_number}</p></td><td className="px-5 py-3">{payment.fee_description ?? "School fee"}</td><td className="px-5 py-3 font-mono text-xs">{payment.receipt_number ?? "—"}</td><td className="px-5 py-3">{payment.currency} {Number(payment.amount).toFixed(2)}</td><td className="px-5 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td><td className="px-5 py-3">{new Date(payment.paid_at).toLocaleString()}</td><td className="px-5 py-3"><Button size="sm" variant="outline" onClick={() => downloadPaymentReceipt({ schoolName, primaryColor, receiptNumber: payment.receipt_number ?? payment.id, studentName: `${payment.first_name} ${payment.last_name}`, admissionNumber: payment.admission_number, className: payment.class_name ?? "—", feeDescription: payment.fee_description ?? "School fee", amount: Number(payment.amount), currency: payment.currency, method: payment.method, paidAt: payment.paid_at, status: payment.status, feeCategory: "school_fee" })}><Download className="mr-2 size-4" />Download receipt</Button></td></tr>)}</tbody></table></div>}
+    </section>
+  </div></SchoolShell>;
+}

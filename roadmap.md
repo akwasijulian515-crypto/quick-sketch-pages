@@ -10,3 +10,4 @@
 - [ ] Parent role login + portal
 - [ ] Finance role login + portal
 - [ ] Admin role login + portal
+- [x] Glossy UI + phone tables shown as cards (no sideways scroll)

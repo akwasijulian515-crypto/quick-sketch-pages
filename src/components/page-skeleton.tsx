@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Filter, Plus, Search } from "lucide-react";
+import { Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
@@ -13,7 +13,7 @@ type SkeletonPageProps = {
   columns: string[];
 };
 
-export function PageSkeleton({ title, description, action, icon: Icon, stats, columns }: SkeletonPageProps) {
+export function PageSkeleton({ title, description, action, icon: Icon, stats }: SkeletonPageProps) {
   return (
     <SchoolShell title={title}>
       <div className="mx-auto max-w-6xl rise">
@@ -23,7 +23,7 @@ export function PageSkeleton({ title, description, action, icon: Icon, stats, co
             <h1 className="font-display text-3xl font-bold">{title}</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{description}</p>
           </div>
-          {action ? <Button><Plus />{action}</Button> : null}
+          {action ? <Button disabled><Plus />{action}</Button> : null}
         </div>
 
         <section className="mt-7 grid gap-3 sm:grid-cols-3">
@@ -37,31 +37,10 @@ export function PageSkeleton({ title, description, action, icon: Icon, stats, co
         </section>
 
         <section className="glass-panel mt-4 overflow-hidden rounded-lg">
-          <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3 text-sm text-muted-foreground">
-              <Search className="size-4" /><span>Search {title.toLowerCase()}</span>
-            </div>
-            <Button variant="outline" size="sm"><Filter />Filter</Button>
+          <div className="p-10 text-center">
+            <p className="font-display text-lg font-bold">No live {title.toLowerCase()} data</p>
+            <p className="mt-1 text-sm text-muted-foreground">Connect school records to view this information. Actions are unavailable until the live workflow is connected.</p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left text-sm">
-              <thead className="bg-muted/60 text-xs text-muted-foreground">
-                <tr>{columns.map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr>
-              </thead>
-              <tbody className="divide-y divide-border/70">
-                {[0, 1, 2, 3].map((row) => (
-                  <tr key={row}>
-                    {columns.map((column, index) => (
-                      <td key={column} className="px-5 py-4">
-                        <div className={index === 0 ? "h-3 w-28 rounded bg-primary/15" : "h-3 w-20 rounded bg-muted-foreground/15"} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">Page framework ready for live school records.</div>
         </section>
       </div>
     </SchoolShell>

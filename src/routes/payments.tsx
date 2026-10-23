@@ -1,37 +1,433 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2, CircleAlert, Plus, ReceiptText, Settings2, ShieldCheck } from "lucide-react";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { CheckCircle2, CreditCard, Download, ReceiptText, Wallet, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { getNeonAccessToken } from "../auth/client";
+import { SchoolFeeRules } from "@/components/school-fee-rules";
 import { SchoolShell } from "@/components/school-shell";
-import { cn } from "@/lib/utils";
+import { useTenantBranding } from "@/components/tenant-branding-provider";
+import { Button } from "@/components/ui/button";
+import { downloadPaymentReceipt } from "@/lib/payment-receipt-pdf";
 
-export const Route = createFileRoute("/payments")({ head: () => ({ meta: [{ title: "Payments — Harrow Green" }, { name: "description", content: "Set school fees, review collections, and reconcile daily payments." }] }), component: PaymentsPage });
+export const Route = createFileRoute("/payments")({
+  head: () => ({ meta: [{ title: "Payments — Klasora" }, { name: "description", content: "Manage class fee rules and review recorded payments." }] }),
+  component: PaymentsPage,
+});
 
-const payments = [["HGA-240514-041", "Ama Mensah", "GH₵ 350.00", "Mobile money", "Verified"], ["HGA-240514-040", "Kwame Asare", "GH₵ 20.00", "Mobile money", "Verified"], ["HGA-240514-039", "Esi Owusu", "GH₵ 75.00", "Card", "Verified"], ["HGA-240514-042", "Gloria Mensah", "GH₵ 120.00", "Mobile money", "Pending"]] as const;
-type FeeRule = { id: string; className: string; fee: string; amount: number; frequency: "Daily" | "Termly"; startsOn: string; active: boolean };
-const initialFeeRules: FeeRule[] = [
-  { id: "fee-1", className: "Form 1A", fee: "Daily payment", amount: 15, frequency: "Daily", startsOn: "13 May 2024", active: true },
-  { id: "fee-2", className: "Form 2B", fee: "Daily payment", amount: 20, frequency: "Daily", startsOn: "13 May 2024", active: true },
-  { id: "fee-3", className: "Form 2B", fee: "School fees", amount: 350, frequency: "Termly", startsOn: "6 May 2024", active: true },
-  { id: "fee-4", className: "Form 3C", fee: "School fees", amount: 420, frequency: "Termly", startsOn: "6 May 2024", active: true },
-];
+type Payment = {
+  id: string;
+  receipt_number: string | null;
+  amount: number | string;
+  currency: string;
+  category: string;
+  method: string;
+  status: string;
+  paid_at: string;
+  fee_description: string | null;
+  class_name: string | null;
+  balance_due?: number | string | null;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+};
+
+type FeeRule = {
+  id: string;
+  class_name: string;
+  academic_year_name: string;
+  term_name: string | null;
+  fee_type: string;
+  description: string;
+  amount: number | string;
+  currency: string;
+  is_active: boolean;
+};
+
+type FeeBalance = {
+  student_id: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+  class_name: string;
+  original_amount: number | string;
+  paid_amount: number | string;
+  pending_amount: number | string;
+  balance_due: number | string;
+  currency: string;
+};
+
+type OtherFeePayment = Payment & {
+  fee_description: string;
+  class_name: string;
+  recorded_by: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string | null;
+};
+
+type ReviewTab = "pending" | "verified" | "rejected";
+
+async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await getNeonAccessToken();
+  const url = new URL(path, window.location.origin);
+  const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  if (tenant) url.searchParams.set("tenant", tenant);
+  const headers = new Headers(init?.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
+  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+      ? payload.error
+      : "The school request failed";
+    throw new Error(message);
+  }
+  return payload as T;
+}
 
 function PaymentsPage() {
-  const [view, setView] = useState<"fees" | "payments" | "reconciliation">("fees");
-  const [feeRules, setFeeRules] = useState(initialFeeRules);
-  return <SchoolShell title="Payments" schoolAdmin><div className="mx-auto max-w-6xl rise"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">{view === "fees" ? <Settings2 className="size-5" /> : view === "payments" ? <ReceiptText className="size-5" /> : <ShieldCheck className="size-5" />}</div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Set class fee rules, review collections, and reconcile attendance against daily payments.</p></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Expected today" value="GH₵ 3,020" note="Based on 151 present students" /><Metric label="Received today" value="GH₵ 2,840" note="18 recorded payments" /><Metric label="Variance" value="GH₵ 180" note="6 payments still outstanding" tone="warning" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={view === "fees"} onClick={() => setView("fees")}>Fee setup</Tab><Tab active={view === "payments"} onClick={() => setView("payments")}>Collections</Tab><Tab active={view === "reconciliation"} onClick={() => setView("reconciliation")}>Daily reconciliation</Tab></div>{view === "reconciliation" && <Button size="sm" asChild><Link to="/reconciliation"><ShieldCheck />Open full controls</Link></Button>}</div>{view === "fees" ? <FeeSetup rules={feeRules} onAdd={(rule) => setFeeRules((current) => [rule, ...current])} onToggle={(id) => setFeeRules((current) => current.map((rule) => rule.id === id ? { ...rule, active: !rule.active } : rule))} /> : view === "payments" ? <Collections /> : <ReconciliationSummary />}</section></div></SchoolShell>;
+  const { schoolName, primaryColor } = useTenantBranding();
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [otherPayments, setOtherPayments] = useState<OtherFeePayment[]>([]);
+  const [schoolFees, setSchoolFees] = useState<FeeRule[]>([]);
+  const [selectedSchoolFeeId, setSelectedSchoolFeeId] = useState("");
+  const [feeBalances, setFeeBalances] = useState<FeeBalance[]>([]);
+  const [selectedStudentId, setSelectedStudentId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState("cash");
+  const [loading, setLoading] = useState(true);
+  const [feeBalancesLoading, setFeeBalancesLoading] = useState(false);
+  const [recordingSchoolFee, setRecordingSchoolFee] = useState(false);
+  const [reviewingId, setReviewingId] = useState("");
+  const [reviewTab, setReviewTab] = useState<ReviewTab>("pending");
+  const [error, setError] = useState("");
+  const [schoolFeeError, setSchoolFeeError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [newReceipt, setNewReceipt] = useState<{
+    receiptNumber: string;
+    studentName: string;
+    admissionNumber: string;
+    className: string;
+    feeDescription: string;
+    amount: number;
+    balanceDue: number;
+    currency: string;
+    paidAt: string;
+    method: string;
+    status: string;
+  } | null>(null);
+  const pendingOtherPayments = otherPayments.filter((payment) => payment.status === "pending");
+  const verifiedOtherPayments = otherPayments.filter((payment) => payment.status === "verified");
+  const rejectedOtherPayments = otherPayments.filter((payment) => payment.status === "voided");
+  const visibleReviewPayments = reviewTab === "pending"
+    ? pendingOtherPayments
+    : reviewTab === "verified"
+      ? verifiedOtherPayments
+      : rejectedOtherPayments;
+  const fee = schoolFees.find((item) => item.id === selectedSchoolFeeId);
+  const student = feeBalances.find((item) => item.student_id === selectedStudentId);
+
+  async function refreshPayments() {
+    const result = await schoolApi<{ payments: Payment[] }>("/api/school/payments");
+    setPayments(result.payments);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPayments() {
+      try {
+        const [paymentResult, otherPaymentResult, feeResult] = await Promise.all([
+          schoolApi<{ payments: Payment[] }>("/api/school/payments"),
+          schoolApi<{ payments: OtherFeePayment[] }>("/api/school/other-payments"),
+          schoolApi<{ fees: FeeRule[] }>("/api/school/fees"),
+        ]);
+        if (!cancelled) {
+          setPayments(paymentResult.payments);
+          setOtherPayments(otherPaymentResult.payments);
+          const activeFees = feeResult.fees.filter((item) => item.is_active && ["tuition", "pta"].includes(item.fee_type));
+          setSchoolFees(activeFees);
+          setSelectedSchoolFeeId((current) => current || activeFees[0]?.id || "");
+        }
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load recorded payments");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void loadPayments();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedStudentId("");
+    setAmount("");
+    setFeeBalances([]);
+    if (!selectedSchoolFeeId) {
+      setFeeBalancesLoading(false);
+      return;
+    }
+    setFeeBalancesLoading(true);
+    void schoolApi<{ balances: FeeBalance[] }>(`/api/school/payments?fee_id=${encodeURIComponent(selectedSchoolFeeId)}`)
+      .then((result) => { if (!cancelled) setFeeBalances(result.balances); })
+      .catch((loadError) => {
+        if (!cancelled) setSchoolFeeError(loadError instanceof Error ? loadError.message : "Could not load fee balances");
+      })
+      .finally(() => { if (!cancelled) setFeeBalancesLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedSchoolFeeId]);
+
+  async function recordSchoolFeePayment() {
+    const paymentAmount = Number(amount);
+    if (!fee || !student || !Number.isFinite(paymentAmount) || paymentAmount <= 0 || paymentAmount > Number(student.balance_due)) {
+      setSchoolFeeError("Choose a learner and enter an amount within the remaining school-fee balance.");
+      return;
+    }
+    setRecordingSchoolFee(true);
+    setSchoolFeeError("");
+    setNotice("");
+    setNewReceipt(null);
+    try {
+      const result = await schoolApi<{
+        payment: { receipt_number: string; paid_at: string; status: string };
+        balance_due: number;
+      }>("/api/school/payments", {
+        method: "POST",
+        body: JSON.stringify({ student_id: student.student_id, fee_id: selectedSchoolFeeId, amount: paymentAmount, method }),
+      });
+      setNewReceipt({
+        receiptNumber: result.payment.receipt_number,
+        studentName: `${student.first_name} ${student.last_name}`,
+        admissionNumber: student.admission_number,
+        className: student.class_name,
+        feeDescription: fee.description,
+        amount: paymentAmount,
+        currency: student.currency,
+        paidAt: result.payment.paid_at,
+        method,
+        status: result.payment.status,
+        balanceDue: Number(result.balance_due),
+      });
+      setNotice(result.payment.status === "verified"
+        ? `Payment recorded and verified. Receipt ${result.payment.receipt_number} is ready to download.`
+        : `Payment recorded as pending validation. Receipt ${result.payment.receipt_number} is ready to download.`);
+      setSelectedStudentId("");
+      setAmount("");
+      try {
+        const [balanceResult] = await Promise.all([
+          schoolApi<{ balances: FeeBalance[] }>(`/api/school/payments?fee_id=${encodeURIComponent(selectedSchoolFeeId)}`),
+          refreshPayments(),
+          schoolApi<{ payments: OtherFeePayment[] }>("/api/school/other-payments").then((pendingResult) => setOtherPayments(pendingResult.payments)),
+        ]);
+        setFeeBalances(balanceResult.balances);
+      } catch (refreshError) {
+        setSchoolFeeError(`Payment was recorded, but the lists could not refresh: ${refreshError instanceof Error ? refreshError.message : "Refresh failed"}`);
+      }
+    } catch (saveError) {
+      setSchoolFeeError(saveError instanceof Error ? saveError.message : "Could not record school-fee payment");
+    } finally {
+      setRecordingSchoolFee(false);
+    }
+  }
+
+  function downloadNewReceipt() {
+    if (!newReceipt) return;
+    downloadPaymentReceipt({
+      schoolName,
+      primaryColor,
+      ...newReceipt,
+      feeCategory: "school_fee",
+    });
+  }
+
+  function downloadExistingReceipt(payment: Payment) {
+    downloadPaymentReceipt({
+      schoolName,
+      primaryColor,
+      receiptNumber: payment.receipt_number ?? payment.id,
+      studentName: `${payment.first_name} ${payment.last_name}`,
+      admissionNumber: payment.admission_number,
+      className: payment.class_name ?? "—",
+      feeDescription: payment.fee_description ?? "School fee",
+      amount: Number(payment.amount),
+      currency: payment.currency,
+      method: payment.method,
+      paidAt: payment.paid_at,
+      status: payment.status,
+      feeCategory: "school_fee",
+      balanceDue: payment.balance_due == null ? undefined : Number(payment.balance_due),
+    });
+  }
+
+  async function reviewPayment(payment: OtherFeePayment, action: "approve" | "reject") {
+    const reason = action === "reject"
+      ? window.prompt(`Why are you rejecting receipt ${payment.receipt_number}?`)
+      : null;
+    if (action === "reject" && reason === null) return;
+    if (action === "reject" && !reason?.trim()) {
+      setError("A rejection reason is required.");
+      return;
+    }
+    setReviewingId(payment.id);
+    setError("");
+    try {
+      await schoolApi(`/api/school/payments/${payment.id}/review`, {
+        method: "PATCH",
+        body: JSON.stringify({ action, ...(action === "reject" ? { reason } : {}) }),
+      });
+      try {
+        const [reviewResult, paymentResult] = await Promise.all([
+          schoolApi<{ payments: OtherFeePayment[] }>("/api/school/other-payments"),
+          schoolApi<{ payments: Payment[] }>("/api/school/payments"),
+        ]);
+        setOtherPayments(reviewResult.payments);
+        setPayments(paymentResult.payments);
+      } catch (refreshError) {
+        setError(`Payment was reviewed, but the lists could not refresh: ${refreshError instanceof Error ? refreshError.message : "Refresh failed"}`);
+      }
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : "Could not review payment");
+    } finally {
+      setReviewingId("");
+    }
+  }
+
+  function downloadReviewReceipt(payment: OtherFeePayment) {
+    downloadPaymentReceipt({
+      schoolName,
+      primaryColor,
+      receiptNumber: payment.receipt_number ?? payment.id,
+      studentName: `${payment.first_name} ${payment.last_name}`,
+      admissionNumber: payment.admission_number,
+      className: payment.class_name,
+      feeDescription: payment.fee_description,
+      amount: Number(payment.amount),
+      currency: payment.currency,
+      method: payment.method,
+      paidAt: payment.paid_at,
+      status: payment.status,
+      feeCategory: payment.category === "school_fee" ? "school_fee" : "other_fee",
+      balanceDue: payment.balance_due == null ? undefined : Number(payment.balance_due),
+    });
+  }
+
+  return <SchoolShell title="Payments" schoolAdmin><div className="mx-auto max-w-6xl rise">
+    <div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><CreditCard className="size-5" /></div><h1 className="font-display text-3xl font-bold">Payments & controls</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record school-fee collections, validate Finance receipts independently, and manage this school’s fee rules.</p></div>
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg border-amber-600/30">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Payment validation</h2><p className="mt-1 text-xs text-muted-foreground">Validate school, exam, or other-fee receipts. A different school admin must review the payment; the recorder cannot approve their own receipt.</p></div><span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-900">{pendingOtherPayments.length} pending</span></div>
+      <div role="tablist" aria-label="Payment review status" className="grid grid-cols-3 gap-2 border-b border-border px-3 py-3 sm:flex sm:px-5">
+        {([
+          ["pending", "Pending", pendingOtherPayments.length],
+          ["verified", "Verified", verifiedOtherPayments.length],
+          ["rejected", "Rejected", rejectedOtherPayments.length],
+        ] as const).map(([tab, label, count]) => (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            aria-selected={reviewTab === tab}
+            onClick={() => setReviewTab(tab)}
+            className={`flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center text-xs font-medium transition-colors sm:flex-row sm:gap-1.5 sm:px-4 sm:text-sm ${reviewTab === tab ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          >
+            <span>{label}</span>
+            <span className={`text-base font-bold leading-none sm:ml-1 sm:text-sm sm:font-medium ${reviewTab === tab ? "opacity-90" : "text-foreground"}`}>{count}</span>
+          </button>
+        ))}
+      </div>
+      {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+      {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading review queue...</p>
+        : visibleReviewPayments.length === 0 ? <p className="px-5 py-8 text-center text-sm text-muted-foreground">{reviewTab === "pending" ? "No payments need verification right now." : `No ${reviewTab} payments.`}</p>
+          : <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm">
+            <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Fee type", "Fee", "Receipt", "Amount", "Recorded by", "Status / review", "Action"].map((label) => <th key={label} className="px-4 py-3 font-medium">{label}</th>)}</tr></thead>
+            <tbody className="divide-y divide-border/70">{visibleReviewPayments.map((payment) => <tr key={payment.id} className={payment.status === "pending" ? "bg-amber-50/40" : ""}>
+              <td className="px-4 py-3 font-medium">{payment.first_name} {payment.last_name}<p className="font-mono text-xs text-muted-foreground">{payment.admission_number} · {payment.class_name}</p></td>
+              <td className="px-4 py-3 capitalize">{payment.category.replaceAll("_", " ")}</td>
+              <td className="px-4 py-3">{payment.fee_description}</td>
+              <td className="px-4 py-3 font-mono text-xs">{payment.receipt_number ?? "—"}</td>
+              <td className="px-4 py-3">{payment.currency} {Number(payment.amount).toFixed(2)}<p className="text-xs capitalize text-muted-foreground">{payment.method.replaceAll("_", " ")}</p></td>
+              <td className="px-4 py-3">{payment.recorded_by ?? "Staff account"}</td>
+              <td className="px-4 py-3 capitalize">{payment.status}{payment.reviewed_by && <p className="text-xs text-muted-foreground">{payment.reviewed_by} · {payment.reviewed_at ? new Date(payment.reviewed_at).toLocaleString() : ""}</p>}{payment.rejection_reason && <p className="max-w-48 text-xs text-destructive">{payment.rejection_reason}</p>}</td>
+              <td className="px-4 py-3"><div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => downloadReviewReceipt(payment)}><Download className="mr-1 size-4" />Receipt</Button>
+                {payment.status === "pending" && <>
+                  <Button size="sm" disabled={reviewingId !== ""} onClick={() => void reviewPayment(payment, "approve")}><CheckCircle2 className="mr-1 size-4" />{reviewingId === payment.id ? "Saving..." : "Approve"}</Button>
+                  <Button size="sm" variant="outline" disabled={reviewingId !== ""} onClick={() => void reviewPayment(payment, "reject")}><XCircle className="mr-1 size-4" />Reject</Button>
+                </>}
+              </div></td>
+            </tr>)}</tbody>
+          </table></div>}
+    </section>
+    <section className="glass-panel mt-5 rounded-lg p-4 sm:p-5">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div><h2 className="font-display text-lg font-bold">Record school-fee payment</h2><p className="mt-1 text-sm text-muted-foreground">Payments recorded by a school administrator are verified immediately. Finance-recorded payments remain pending until independently validated. The receipt shows the remaining balance.</p></div>
+            <Wallet className="size-5 shrink-0 text-primary" />
+          </div>
+          {schoolFees.length === 0 ? <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">No active tuition or PTA fee rules are configured. Create one below before recording a school-fee payment.</p>
+            : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <label className="space-y-1 text-xs font-medium text-muted-foreground sm:col-span-2">Configured school fee
+                <select value={selectedSchoolFeeId} onChange={(event) => setSelectedSchoolFeeId(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                  {schoolFees.map((item) => <option key={item.id} value={item.id}>{item.class_name} · {item.description} · {item.academic_year_name}{item.term_name ? ` · ${item.term_name}` : ""} · ${item.currency} ${Number(item.amount).toFixed(2)}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground sm:col-span-2">Learner
+                <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)} disabled={feeBalancesLoading} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                  <option value="">{feeBalancesLoading ? "Loading learners..." : "Choose a learner"}</option>
+                  {feeBalances.filter((item) => Number(item.balance_due) > 0).map((item) => <option key={item.student_id} value={item.student_id}>{item.first_name} {item.last_name} · {item.admission_number} · due {item.currency} {Number(item.balance_due).toFixed(2)}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">Amount
+                <input type="number" min="0.01" max={student?.balance_due ?? 0} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} disabled={!student || recordingSchoolFee} className="h-10 w-full rounded-md border border-input bg-background px-3 text-right text-sm text-foreground disabled:opacity-60" />
+              </label>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">Payment method
+                <select value={method} onChange={(event) => setMethod(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground"><option value="cash">Cash</option><option value="mobile_money">Mobile money</option><option value="bank_transfer">Bank transfer</option><option value="card">Card</option><option value="other">Other</option></select>
+              </label>
+              <div className="flex items-end sm:col-span-2 lg:col-span-5">
+                <Button disabled={!student || !amount || Number(amount) > Number(student?.balance_due ?? 0) || recordingSchoolFee} onClick={() => void recordSchoolFeePayment()}>{recordingSchoolFee ? "Recording..." : "Record school-fee payment"}</Button>
+                {student && <p className="ml-3 pb-2 text-xs text-muted-foreground">Remaining after payment: {student.currency} {Math.max(0, Number(student.balance_due) - (Number(amount) || 0)).toFixed(2)}</p>}
+              </div>
+            </div>}
+      {!feeBalancesLoading && selectedSchoolFeeId && feeBalances.length === 0 && <p className="mt-3 text-sm text-muted-foreground">No active learners are enrolled in the selected fee’s class.</p>}
+      {feeBalances.length > 0 && <div className="mt-5">
+        <h3 className="mb-3 text-sm font-semibold">Learner balances <span className="font-normal text-muted-foreground">· select a tile to record payment</span></h3>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {feeBalances.map((learner) => {
+            const remaining = Number(learner.balance_due);
+            const selected = learner.student_id === selectedStudentId;
+            const settled = remaining <= 0;
+            return <button
+              key={learner.student_id}
+              type="button"
+              onClick={() => {
+                setSelectedStudentId(learner.student_id);
+                setAmount("");
+              }}
+              className={`rounded-lg border p-4 text-left shadow-sm transition-colors ${selected ? "border-primary bg-primary/5 ring-1 ring-primary/30" : "border-border bg-background/60 hover:border-primary/40"} ${settled ? "opacity-80" : ""}`}
+            >
+              <span className="flex items-start justify-between gap-3">
+                <span className="min-w-0">
+                  <span className="block truncate font-semibold">{learner.first_name} {learner.last_name}</span>
+                  <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">{learner.admission_number} · {learner.class_name}</span>
+                </span>
+                <span className={settled ? "shrink-0 rounded-full bg-emerald-600/10 px-2.5 py-1 text-xs font-medium text-emerald-700" : "shrink-0 rounded-full bg-amber-600/10 px-2.5 py-1 text-xs font-medium text-amber-800"}>{settled ? "Paid" : "Balance due"}</span>
+              </span>
+              <span className="mt-4 grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs sm:grid-cols-4">
+                <span><span className="block text-muted-foreground">Original</span><span className="mt-1 block font-medium">{learner.currency} {Number(learner.original_amount).toFixed(2)}</span></span>
+                <span><span className="block text-muted-foreground">Paid</span><span className="mt-1 block font-medium">{learner.currency} {Number(learner.paid_amount).toFixed(2)}</span></span>
+                <span><span className="block text-muted-foreground">Pending</span><span className="mt-1 block font-medium">{learner.currency} {Number(learner.pending_amount).toFixed(2)}</span></span>
+                <span><span className="block text-muted-foreground">Remaining</span><span className="mt-1 block font-semibold">{learner.currency} {remaining.toFixed(2)}</span></span>
+              </span>
+            </button>;
+          })}
+        </div>
+      </div>}
+          {schoolFeeError && <p role="alert" className="mt-3 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{schoolFeeError}</p>}
+          {notice && <div role="status" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800"><span>{notice}</span>{newReceipt && <Button size="sm" variant="outline" onClick={downloadNewReceipt}><Download className="mr-2 size-4" />Download receipt PDF</Button>}</div>}
+    </section>
+    <SchoolFeeRules />
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg"><div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Recorded payments</h2><p className="mt-1 text-xs text-muted-foreground">Latest verified school payments. Download a receipt again whenever needed.</p></div><ReceiptText className="size-5 text-primary" /></div>
+          {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+          {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading payments...</p> : payments.length === 0 ? <p className="px-5 py-10 text-center text-sm text-muted-foreground">No payments have been recorded for this school yet.</p> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Student", "Admission no.", "Fee", "Category", "Amount", "Method", "Status", "Paid at", ""].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{payments.map((payment) => <tr key={payment.id}><td className="px-5 py-3 font-medium">{payment.first_name} {payment.last_name}</td><td className="px-5 py-3 font-mono text-xs">{payment.admission_number}</td><td className="px-5 py-3">{payment.fee_description ?? "—"}{payment.class_name && <p className="text-xs text-muted-foreground">{payment.class_name}</p>}</td><td className="px-5 py-3 capitalize">{payment.category.replaceAll("_", " ")}</td><td className="px-5 py-3">{payment.currency} {Number(payment.amount).toFixed(2)}</td><td className="px-5 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td><td className="px-5 py-3 capitalize">{payment.status}</td><td className="px-5 py-3">{new Date(payment.paid_at).toLocaleString()}</td><td className="px-5 py-3">{payment.category === "school_fee" && payment.status === "verified" && <Button size="sm" variant="outline" onClick={() => downloadExistingReceipt(payment)}><Download className="mr-2 size-4" />Receipt</Button>}</td></tr>)}</tbody></table></div>}
+    </section>
+  </div></SchoolShell>;
 }
-
-function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) { return <button type="button" onClick={onClick} className={cn("rounded px-3 py-1.5 text-xs font-medium transition-colors", active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>{children}</button>; }
-
-function FeeSetup({ rules, onAdd, onToggle }: { rules: FeeRule[]; onAdd: (rule: FeeRule) => void; onToggle: (id: string) => void }) {
-  const [showForm, setShowForm] = useState(false); const [className, setClassName] = useState("Form 1A"); const [fee, setFee] = useState("Daily payment"); const [amount, setAmount] = useState("");
-  function saveRule(event: FormEvent) { event.preventDefault(); const value = Number(amount); if (!Number.isFinite(value) || value <= 0) return; onAdd({ id: crypto.randomUUID(), className, fee, amount: value, frequency: fee === "Daily payment" ? "Daily" : "Termly", startsOn: "Today", active: true }); setAmount(""); setShowForm(false); }
-  return <div className="p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-display text-lg font-bold">Fee setup</h2><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Set the amount Finance should collect for each class. Daily payments create clearance coupons; school-fee payments require an official receipt.</p></div><Button size="sm" onClick={() => setShowForm(true)}><Plus />Add fee rule</Button></div><div className="mt-5 overflow-x-auto rounded-lg border border-border"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Class", "Fee", "Amount", "Frequency", "Effective from", "Status", ""].map((column) => <th key={column} className="px-4 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{rules.map((rule) => <tr key={rule.id} className="hover:bg-muted/30"><td className="px-4 py-3 font-medium">{rule.className}</td><td className="px-4 py-3">{rule.fee}</td><td className="px-4 py-3">GH₵ {rule.amount.toFixed(2)}</td><td className="px-4 py-3">{rule.frequency}</td><td className="px-4 py-3 text-muted-foreground">{rule.startsOn}</td><td className="px-4 py-3"><span className={cn("rounded-full px-2 py-1 text-xs font-medium", rule.active ? "bg-emerald-500/10 text-emerald-700" : "bg-muted text-muted-foreground")}>{rule.active ? "Active" : "Paused"}</span></td><td className="px-4 py-3"><Button size="sm" variant="outline" onClick={() => onToggle(rule.id)}>{rule.active ? "Pause" : "Activate"}</Button></td></tr>)}</tbody></table></div><p className="mt-3 text-xs text-muted-foreground">These are preview rules until the live database is connected. Finance payment entry will use them in the next step.</p>{showForm && <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4 backdrop-blur-sm"><form onSubmit={saveRule} className="glass-panel w-full max-w-md rounded-lg p-6 shadow-2xl"><h2 className="font-display text-xl font-bold">Add fee rule</h2><p className="mt-1 text-sm text-muted-foreground">Set one amount for a class.</p><Field label="Class"><select value={className} onChange={(event) => setClassName(event.target.value)}><option>Form 1A</option><option>Form 2B</option><option>Form 3C</option></select></Field><Field label="Fee type"><select value={fee} onChange={(event) => setFee(event.target.value)}><option>Daily payment</option><option>School fees</option></select></Field><Field label="Amount (GH₵)"><input required type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" /></Field><div className="mt-6 flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setShowForm(false)}>Cancel</Button><Button type="submit">Save fee rule</Button></div></form></div>}</div>;
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="mt-4 block text-sm font-medium">{label}<span className="mt-1 block [&_input]:h-10 [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-input [&_input]:bg-background [&_input]:px-3 [&_select]:h-10 [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-input [&_select]:bg-background [&_select]:px-3">{children}</span></label>; }
-function Collections() { return <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Reference", "Student", "Amount", "Channel", "Status"].map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{payments.map((payment) => <tr key={payment[0]} className="hover:bg-muted/30">{payment.map((cell, index) => <td key={index} className={cn("px-5 py-4", index === 0 ? "font-mono text-xs" : index === 1 ? "font-medium" : "")}>{index === 4 ? <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium", cell === "Verified" ? "bg-emerald-500/10 text-emerald-700" : "bg-amber-500/10 text-amber-700")}>{cell === "Verified" && <CheckCircle2 className="size-3.5" />}{cell}</span> : cell}</td>)}</tr>)}</tbody></table></div>; }
-function ReconciliationSummary() { return <div className="p-5"><div className="grid gap-4 md:grid-cols-2"><div className="rounded-lg border border-border bg-background/60 p-4"><CircleAlert className="size-5 text-amber-600" /><h2 className="mt-3 font-display text-lg font-bold">2 exceptions need review</h2><p className="mt-1 text-sm text-muted-foreground">One present student has an outstanding daily fee; one gateway transaction is still pending verification.</p></div><div className="rounded-lg border border-border bg-background/60 p-4"><ShieldCheck className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Close-day protection</h2><p className="mt-1 text-sm text-muted-foreground">Once approved, payment records lock. Later changes need an Admin override and audit reason.</p></div></div><p className="mt-5 text-xs text-muted-foreground">Use the full controls page to review the complete exception list and close the day.</p></div>; }
-function Metric({ label, value, note, tone }: { label: string; value: string; note: string; tone?: "warning" }) { return <article className={cn("glass-panel rounded-lg p-5", tone === "warning" && "ring-1 ring-amber-500/25")}><p className="text-xs font-medium text-muted-foreground">{label}</p><p className={cn("mt-2 font-display text-3xl", tone === "warning" && "text-amber-700")}>{value}</p><p className="mt-1 text-xs text-secondary-foreground">{note}</p></article>; }

@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils";
 export const Route = createFileRoute("/guest")({
   head: () => ({
     meta: [
-      { title: "Guest help desk — Harrow Green" },
+      { title: "Guest help desk — Klasora" },
       { name: "description", content: "Look up your ward's class, attendance and fees, and pay without an account." },
-      { property: "og:title", content: "Guest help desk — Harrow Green" },
+      { property: "og:title", content: "Guest help desk — Klasora" },
       { property: "og:description", content: "Look up your ward's class, attendance and fees, and pay without an account." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

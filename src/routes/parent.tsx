@@ -1,28 +1,160 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Bell, CreditCard, GraduationCap, HeartHandshake, ReceiptText, UserRoundCheck } from "lucide-react";
-import { useState } from "react";
+import { CreditCard, GraduationCap, ReceiptText, UserRoundCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { fetchWithNeonAuth } from "../auth/client";
 import { SchoolShell } from "@/components/school-shell";
 
-export const Route = createFileRoute("/parent")({ head: () => ({ meta: [{ title: "Parent Portal — Harrow Green" }, { name: "description", content: "Follow your children’s learning, attendance, and fees." }] }), component: ParentPortal });
+export const Route = createFileRoute("/parent")({
+  head: () => ({ meta: [{ title: "Parent Portal — Klasora" }, { name: "description", content: "Follow your children’s learning, attendance, and fees." }] }),
+  component: ParentPortal,
+});
 
-const children = [
-  { name: "Ama Mensah", className: "Form 1A", attendance: "96%", average: "78%", balance: 120, notice: "Science project due Friday" },
-  { name: "Kojo Mensah", className: "Form 3C", attendance: "93%", average: "82%", balance: 220, notice: "Terminal results published" },
-];
+type Child = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  admission_number: string;
+  class_name: string | null;
+  term_name: string | null;
+  academic_year_name: string | null;
+  attendance_present: number;
+  attendance_total: number;
+  balance_due: number | string;
+  currency: string;
+  mark_count: number;
+  term_average: number | string | null;
+};
+type Payment = {
+  id: string;
+  student_name: string;
+  receipt_number: string | null;
+  amount: number | string;
+  currency: string;
+  category: string;
+  paid_at: string;
+  status: string;
+};
 
-function ParentPortal() {
-  const [paying, setPaying] = useState(false);
-  const [paymentStarted, setPaymentStarted] = useState(false);
-  return <SchoolShell title="My children" parentPortal><div className="mx-auto max-w-6xl rise">
-    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><HeartHandshake className="size-5" /></div><h1 className="font-display text-3xl font-bold">Good afternoon, Mrs. Mensah</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Keep up with your children’s attendance, learning progress, school notices, and fee balances.</p></div><Button onClick={() => setPaying(true)}><CreditCard />Pay fees</Button></div>
-    <section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Children" value="2" note="Forms 1A and 3C" /><Metric label="Outstanding balance" value="GH₵ 340" note="Across both children" /><Metric label="New notices" value="3" note="2 need your attention" /></section>
-    <section className="mt-4 grid gap-4 lg:grid-cols-2">{children.map((child) => <article key={child.name} className="glass-panel rounded-lg p-5"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md bg-primary/10 text-primary"><GraduationCap className="size-5" /></div><div><h2 className="font-display text-lg font-bold">{child.name}</h2><p className="text-xs text-muted-foreground">{child.className}</p></div></div><span className={child.balance > 0 ? "rounded-full bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700" : "rounded-full bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-700"}>{child.balance > 0 ? `GH₵ ${child.balance} due` : "Paid"}</span></div><div className="mt-5 grid grid-cols-2 gap-3"><SmallStat icon={UserRoundCheck} label="Attendance" value={child.attendance} /><SmallStat icon={GraduationCap} label="Term average" value={child.average} /></div><div className="mt-4 flex items-start gap-2 border-t border-border pt-4 text-xs text-secondary-foreground"><Bell className="mt-0.5 size-3.5 shrink-0 text-primary" />{child.notice}</div></article>)}</section>
-    <section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-display text-lg font-bold">Recent payment activity</h2><p className="mt-1 text-xs text-muted-foreground">Receipts remain available whenever you need them.</p></div><ReceiptText className="size-5 text-primary" /></div><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-5 py-3 font-medium">Receipt</th><th className="px-5 py-3 font-medium">Child</th><th className="px-5 py-3 font-medium">Payment</th><th className="px-5 py-3 font-medium">Amount</th></tr></thead><tbody className="divide-y divide-border/70"><tr><td className="px-5 py-4 font-mono text-xs">HGA-240510-018</td><td className="px-5 py-4 font-medium">Ama Mensah</td><td className="px-5 py-4">School fees</td><td className="px-5 py-4">GH₵ 300.00</td></tr><tr><td className="px-5 py-4 font-mono text-xs">HGA-240503-009</td><td className="px-5 py-4 font-medium">Kojo Mensah</td><td className="px-5 py-4">Examination fee</td><td className="px-5 py-4">GH₵ 75.00</td></tr></tbody></table></div></section>
-  </div>{paying && <PaymentPanel started={paymentStarted} onStart={() => setPaymentStarted(true)} onClose={() => { setPaying(false); setPaymentStarted(false); }} />}</SchoolShell>;
+async function portalApi<T>(path: string): Promise<T> {
+  const url = new URL(path, window.location.origin);
+  const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  if (tenant) url.searchParams.set("tenant", tenant);
+  const response = await fetchWithNeonAuth(`${url.pathname}${url.search}`);
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+      ? payload.error
+      : "Could not load family records";
+    throw new Error(message);
+  }
+  return payload as T;
 }
 
-function PaymentPanel({ started, onStart, onClose }: { started: boolean; onStart: () => void; onClose: () => void }) { return <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4 backdrop-blur-sm"><div className="glass-panel w-full max-w-md rounded-lg p-6 shadow-2xl">{started ? <><CreditCard className="size-6 text-primary" /><h2 className="mt-4 font-display text-xl font-bold">Secure payment checkout</h2><p className="mt-2 text-sm text-muted-foreground">This is the gateway handoff point. In production, the selected provider securely collects payment and our system waits for its verified callback before issuing a receipt.</p><div className="mt-5 rounded-md border border-primary/20 bg-primary/5 p-4 text-sm"><p className="font-medium">Payment request</p><p className="mt-1 text-muted-foreground">GH₵ 340.00 · Harrow Green Academy</p><p className="mt-3 font-mono text-xs text-secondary-foreground">Reference: HGA-PAY-DEMO-001</p></div><div className="mt-6 flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Cancel</Button><Button onClick={onClose}>Return to portal</Button></div></> : <><CreditCard className="size-6 text-primary" /><h2 className="mt-4 font-display text-xl font-bold">Pay school fees</h2><p className="mt-2 text-sm text-muted-foreground">Your balance is GH₵ 340.00. Payments are sent through the school&apos;s approved provider; the school only receives a verified result.</p><div className="mt-5 space-y-2"><div className="rounded-md border border-border bg-background/70 p-3 text-sm"><p className="font-medium">Mobile money</p><p className="mt-0.5 text-xs text-muted-foreground">Pay with your MoMo number</p></div><div className="rounded-md border border-border bg-background/70 p-3 text-sm"><p className="font-medium">Card or bank transfer</p><p className="mt-0.5 text-xs text-muted-foreground">Securely handled by the payment provider</p></div></div><div className="mt-6 flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Not now</Button><Button onClick={onStart}>Continue to secure payment</Button></div></>}</div></div>; }
-function Metric({ label, value, note }: { label: string; value: string; note: string }) { return <article className="glass-panel rounded-lg p-5"><p className="text-xs font-medium text-muted-foreground">{label}</p><p className="mt-2 font-display text-3xl">{value}</p><p className="mt-1 text-xs text-secondary-foreground">{note}</p></article>; }
-function SmallStat({ icon: Icon, label, value }: { icon: typeof UserRoundCheck; label: string; value: string }) { return <div className="rounded-md bg-secondary/45 p-3"><Icon className="size-4 text-primary" /><p className="mt-2 text-xs text-muted-foreground">{label}</p><p className="mt-0.5 font-display text-lg">{value}</p></div>; }
+function ParentPortal() {
+  const [children, setChildren] = useState<Child[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void portalApi<{ children: Child[]; recent_payments: Payment[] }>("/api/school/portal-data")
+      .then((result) => {
+        if (cancelled) return;
+        setChildren(result.children);
+        setPayments(result.recent_payments);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load family records");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const outstandingBalance = useMemo(
+    () => children.reduce((sum, child) => sum + Number(child.balance_due), 0),
+    [children],
+  );
+  const currency = children[0]?.currency ?? "GHS";
+
+  return (
+    <SchoolShell title="My children" parentPortal>
+      <div className="mx-auto max-w-6xl rise">
+        <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+          <div>
+            <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><GraduationCap className="size-5" /></div>
+            <h1 className="font-display text-3xl font-bold">Your family</h1>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">View linked learners&apos; school records, attendance, results, and payment history.</p>
+          </div>
+          <div className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
+            <CreditCard className="size-4" /> Contact the school to make or arrange a payment.
+          </div>
+        </div>
+
+        {error && <p role="alert" className="mt-5 rounded-md border border-destructive/30 px-4 py-3 text-sm text-destructive">{error}</p>}
+        <section className="mt-7 grid gap-3 sm:grid-cols-3">
+          <Metric label="Linked children" value={loading ? "—" : String(children.length)} note={loading ? "Loading" : "From your linked guardian account"} />
+          <Metric label="Outstanding fees" value={loading ? "—" : `${currency} ${outstandingBalance.toFixed(2)}`} note="Across linked children" />
+          <Metric label="Recent payments" value={loading ? "—" : String(payments.length)} note="Saved school payment records" />
+        </section>
+
+        {loading ? <p className="py-12 text-center text-sm text-muted-foreground">Loading children&apos;s records...</p> : children.length === 0 ? (
+          <section className="glass-panel mt-4 rounded-lg px-5 py-12 text-center">
+            <h2 className="font-display text-lg font-bold">No learner records are linked yet</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Ask the school administrator to link your verified email to the guardian record.</p>
+          </section>
+        ) : (
+          <section className="mt-4 grid gap-4 lg:grid-cols-2">
+            {children.map((child) => {
+              const attendanceRate = Number(child.attendance_total)
+                ? Math.round((Number(child.attendance_present) / Number(child.attendance_total)) * 100)
+                : null;
+              return (
+                <article key={child.id} className="glass-panel rounded-lg p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 className="font-display text-lg font-bold">{child.first_name} {child.last_name}</h2>
+                      <p className="text-xs text-muted-foreground">{child.admission_number} · {child.class_name ?? "No active class"}{child.term_name ? ` · ${child.term_name}` : ""}</p>
+                    </div>
+                    <span className="rounded-full bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700">{child.currency} {Number(child.balance_due).toFixed(2)} due</span>
+                  </div>
+                  <div className="mt-5 grid grid-cols-2 gap-3">
+                    <SmallStat icon={UserRoundCheck} label="Attendance this term" value={attendanceRate === null ? "No entries" : `${attendanceRate}% (${child.attendance_present}/${child.attendance_total})`} />
+                    <SmallStat icon={GraduationCap} label="Term average" value={child.term_average === null ? "No grades" : `${Number(child.term_average).toFixed(1)}%`} />
+                  </div>
+                  {child.academic_year_name && <p className="mt-4 text-xs text-muted-foreground">Academic year: {child.academic_year_name}</p>}
+                </article>
+              );
+            })}
+          </section>
+        )}
+
+        <section className="glass-panel mt-4 overflow-hidden rounded-lg">
+          <div className="flex items-center justify-between border-b border-border px-5 py-4">
+            <div><h2 className="font-display text-lg font-bold">Recent payment activity</h2><p className="mt-1 text-xs text-muted-foreground">Only payments recorded against your linked children are shown.</p></div>
+            <ReceiptText className="size-5 text-primary" />
+          </div>
+          {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading payment history...</p> : payments.length === 0 ? (
+            <p className="px-5 py-8 text-center text-sm text-muted-foreground">No payment records are available yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[620px] text-left text-sm">
+                <thead className="bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-5 py-3 font-medium">Receipt</th><th className="px-5 py-3 font-medium">Child</th><th className="px-5 py-3 font-medium">Payment</th><th className="px-5 py-3 font-medium">Amount</th><th className="px-5 py-3 font-medium">Status</th></tr></thead>
+                <tbody className="divide-y divide-border/70">{payments.map((payment) => <tr key={payment.id}><td className="px-5 py-4 font-mono text-xs">{payment.receipt_number ?? "—"}</td><td className="px-5 py-4 font-medium">{payment.student_name}</td><td className="px-5 py-4 capitalize">{payment.category.replaceAll("_", " ")}</td><td className="px-5 py-4">{payment.currency} {Number(payment.amount).toFixed(2)}</td><td className="px-5 py-4 capitalize">{payment.status}</td></tr>)}</tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
+    </SchoolShell>
+  );
+}
+
+function Metric({ label, value, note }: { label: string; value: string; note: string }) {
+  return <article className="glass-panel rounded-lg p-5"><p className="text-xs font-medium text-muted-foreground">{label}</p><p className="mt-2 font-display text-3xl">{value}</p><p className="mt-1 text-xs text-secondary-foreground">{note}</p></article>;
+}
+
+function SmallStat({ icon: Icon, label, value }: { icon: typeof UserRoundCheck; label: string; value: string }) {
+  return <div className="rounded-md bg-secondary/45 p-3"><Icon className="size-4 text-primary" /><p className="mt-2 text-xs text-muted-foreground">{label}</p><p className="mt-0.5 font-display text-lg">{value}</p></div>;
+}
