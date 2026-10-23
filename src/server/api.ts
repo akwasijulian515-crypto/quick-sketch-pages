@@ -708,7 +708,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         return json({
           class_teachers_can_record_daily_fees:
             rows[0]?.["class_teachers_can_record_daily_fees"] === true,
-          attendance_print_format: String(rows[0]?.["attendance_print_format"] ?? "ges_weekly"),
+          attendance_print_format: String(rows[0]?.["attendance_print_format"] ?? "ges_term_to_date"),
         });
       }
 
@@ -720,7 +720,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (typeof allowClassTeacherFees !== "boolean") {
         return badRequest("Choose whether class teachers may record daily fees");
       }
-      if (printFormat !== "daily_register" && printFormat !== "ges_weekly") {
+      if (printFormat !== "daily_register" && printFormat !== "ges_term_to_date") {
         return badRequest("Choose a supported attendance print format");
       }
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
@@ -1821,6 +1821,85 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           `,
         );
         if (!authorized.length) return json({ error: "You are not assigned as class teacher for this class" }, 403);
+
+        if (url.searchParams.get("term_report") === "true") {
+          const asOfDate = url.searchParams.get("as_of")?.trim() || new Date().toISOString().slice(0, 10);
+          if (!validIsoDate(asOfDate)) return badRequest("Enter a valid report date");
+          if (asOfDate > new Date().toISOString().slice(0, 10)) return badRequest("Attendance reports cannot include future dates");
+          const periodRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              select c.name as class_name, t.name as term_name,
+                     t.starts_on::text as term_starts_on,
+                     least(t.ends_on, ${asOfDate}::date)::text as report_ends_on
+              from classes c
+              join terms t on t.school_id = c.school_id
+                and t.academic_year_id = c.academic_year_id
+                and t.id = coalesce(
+                  c.term_id,
+                  (
+                    select candidate.id
+                    from terms candidate
+                    where candidate.school_id = c.school_id
+                      and candidate.academic_year_id = c.academic_year_id
+                      and candidate.starts_on <= ${asOfDate}::date
+                    order by
+                      case when ${asOfDate}::date between candidate.starts_on and candidate.ends_on then 0 else 1 end,
+                      candidate.starts_on desc
+                    limit 1
+                  )
+                )
+              where c.id = ${classId}::uuid
+                and c.school_id = ${school.schoolId}::uuid
+                and ${asOfDate}::date >= t.starts_on
+            `,
+          );
+          const period = periodRows[0];
+          if (!period) {
+            return json({ error: "No active academic term is configured for this class and report date. Set the class term in School Admin first." }, 409);
+          }
+          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+            tx`
+              select s.attendance_date::text as attendance_date,
+                     st.id as student_id, st.first_name, st.last_name,
+                     st.admission_number, st.gender, r.status
+              from attendance_sessions s
+              join class_enrollments e on e.school_id = s.school_id
+                and e.class_id = s.class_id
+                and e.starts_on <= s.attendance_date
+                and (e.ends_on is null or e.ends_on >= s.attendance_date)
+              join students st on st.id = e.student_id
+                and st.school_id = e.school_id
+              left join attendance_records r on r.school_id = s.school_id
+                and r.attendance_session_id = s.id and r.student_id = st.id
+              where s.school_id = ${school.schoolId}::uuid
+                and s.class_id = ${classId}::uuid
+                and s.attendance_date between ${String(period["term_starts_on"])}::date
+                  and ${String(period["report_ends_on"])}::date
+              order by s.attendance_date, st.last_name, st.first_name, st.admission_number
+            `,
+          );
+          const days = new Map<string, { date: string; students: Record<string, unknown>[] }>();
+          for (const row of rows) {
+            const attendanceDate = String(row["attendance_date"]);
+            const day = days.get(attendanceDate) ?? { date: attendanceDate, students: [] };
+            day.students.push({
+              id: String(row["student_id"]),
+              first_name: String(row["first_name"]),
+              last_name: String(row["last_name"]),
+              admission_number: String(row["admission_number"]),
+              gender: row["gender"] == null ? "" : String(row["gender"]),
+              status: row["status"] == null ? null : String(row["status"]),
+            });
+            days.set(attendanceDate, day);
+          }
+          return json({
+            class_name: String(period["class_name"]),
+            term_name: String(period["term_name"]),
+            term_starts_on: String(period["term_starts_on"]),
+            report_ends_on: String(period["report_ends_on"]),
+            days: [...days.values()],
+          });
+        }
 
         const month = url.searchParams.get("month")?.trim() || null;
         if (month) {

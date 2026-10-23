@@ -38,8 +38,9 @@ type RegisterStudent = {
 
 type PrintDay = { date: string; students: RegisterStudent[] };
 type PrintData = {
-  format: "daily" | "weekly";
+  format: "daily" | "term";
   className: string;
+  termName: string;
   startDate: string;
   endDate: string;
   days: PrintDay[];
@@ -64,16 +65,6 @@ async function attendanceApi<T>(path: string): Promise<T> {
   return payload as T;
 }
 
-function getWeekDates(weekStart: string) {
-  const start = new Date(`${weekStart}T12:00:00`);
-  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(start);
-    date.setDate(start.getDate() + index);
-    return localDateString(date);
-  });
-}
-
 function attendanceMark(status: RegisterStudent["status"]) {
   if (status === "present" || status === "late") return "/";
   if (status === "absent") return "O";
@@ -88,13 +79,66 @@ function genderGroup(gender: string): "boys" | "girls" | "unknown" {
   return "unknown";
 }
 
-function presentCounts(students: RegisterStudent[]) {
+function statusCounts(students: RegisterStudent[]) {
   return students.reduce((counts, student) => {
-    if (student.status === "present" || student.status === "late") {
-      counts[genderGroup(student.gender)] += 1;
-    }
+    const group = genderGroup(student.gender);
+    if (student.status === "present" || student.status === "late") counts[group].present += 1;
+    else if (student.status === "absent") counts[group].absent += 1;
+    else if (student.status === "excused") counts[group].excused += 1;
+    else counts[group].unmarked += 1;
     return counts;
-  }, { boys: 0, girls: 0, unknown: 0 });
+  }, {
+    boys: { present: 0, absent: 0, excused: 0, unmarked: 0 },
+    girls: { present: 0, absent: 0, excused: 0, unmarked: 0 },
+    unknown: { present: 0, absent: 0, excused: 0, unmarked: 0 },
+  });
+}
+
+function termTotals(days: PrintDay[]) {
+  return days.reduce((total, day) => {
+    const dayCounts = statusCounts(day.students);
+    for (const group of ["boys", "girls", "unknown"] as const) {
+      for (const status of ["present", "absent", "excused", "unmarked"] as const) {
+        total[group][status] += dayCounts[group][status];
+      }
+    }
+    return total;
+  }, {
+    boys: { present: 0, absent: 0, excused: 0, unmarked: 0 },
+    girls: { present: 0, absent: 0, excused: 0, unmarked: 0 },
+    unknown: { present: 0, absent: 0, excused: 0, unmarked: 0 },
+  });
+}
+
+function learnerTermTotals(days: PrintDay[]) {
+  const learners = new Map<string, RegisterStudent & {
+    present: number;
+    absent: number;
+    excused: number;
+    unmarked: number;
+    schoolDays: number;
+  }>();
+  for (const day of days) {
+    for (const student of day.students) {
+      const learner = learners.get(student.id) ?? {
+        ...student,
+        present: 0,
+        absent: 0,
+        excused: 0,
+        unmarked: 0,
+        schoolDays: 0,
+      };
+      learner.schoolDays += 1;
+      if (student.status === "present" || student.status === "late") learner.present += 1;
+      else if (student.status === "absent") learner.absent += 1;
+      else if (student.status === "excused") learner.excused += 1;
+      else learner.unmarked += 1;
+      learners.set(student.id, learner);
+    }
+  }
+  return [...learners.values()].sort((a, b) =>
+    a.last_name.localeCompare(b.last_name) || a.first_name.localeCompare(b.first_name),
+  );
 }
 
 function AttendanceOverview() {
@@ -103,19 +147,14 @@ function AttendanceOverview() {
   const [error, setError] = useState("");
   const [date, setDate] = useState(() => localDateString(new Date()));
   const [classId, setClassId] = useState("");
-  const [defaultPrintFormat, setDefaultPrintFormat] = useState<"daily_register" | "ges_weekly">("ges_weekly");
-  const [weekStart, setWeekStart] = useState(() => {
-    const today = new Date();
-    today.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-    return localDateString(today);
-  });
+  const [defaultPrintFormat, setDefaultPrintFormat] = useState<"daily_register" | "ges_term_to_date">("ges_term_to_date");
   const [printError, setPrintError] = useState("");
   const [printing, setPrinting] = useState(false);
   const [printData, setPrintData] = useState<PrintData | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void attendanceApi<{ attendance_print_format: "daily_register" | "ges_weekly" }>("/api/school/workflow-settings")
+    void attendanceApi<{ attendance_print_format: "daily_register" | "ges_term_to_date" }>("/api/school/workflow-settings")
       .then((result) => { if (!cancelled) setDefaultPrintFormat(result.attendance_print_format); })
       .catch((loadError: unknown) => {
         if (!cancelled) setPrintError(loadError instanceof Error ? loadError.message : "Could not load print preferences.");
@@ -188,7 +227,7 @@ function AttendanceOverview() {
         `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
       );
       if (!result.session_id) throw new Error("There is no saved attendance register for this class and date.");
-      setPrintData({ format: "daily", className: schoolClass.name, startDate: date, endDate: date, days: [{ date, students: result.students }] });
+      setPrintData({ format: "daily", className: schoolClass.name, termName: "", startDate: date, endDate: date, days: [{ date, students: result.students }] });
       window.setTimeout(() => window.print(), 100);
     } catch (printCause) {
       setPrintError(printCause instanceof Error ? printCause.message : "Could not prepare the attendance register.");
@@ -197,42 +236,38 @@ function AttendanceOverview() {
     }
   }
 
-  async function printWeeklyRegister() {
+  async function printTermReport() {
     const schoolClass = classes.find((item) => item.id === classId);
     if (!schoolClass) {
       setPrintError("Choose a class before printing.");
       return;
     }
-    const dates = getWeekDates(weekStart);
     setPrinting(true);
     setPrintError("");
     try {
-      const months = [...new Set(dates.map((item) => item.slice(0, 7)))];
-      const monthly = await Promise.all(months.map((month) =>
-        attendanceApi<{ days: { attendance_date: string }[] }>(
-          `/api/school/attendance?class_id=${encodeURIComponent(classId)}&month=${encodeURIComponent(month)}`,
-        ),
-      ));
-      const openDates = [...new Set(monthly.flatMap((result) => result.days.map((item) => item.attendance_date))
-        .filter((item) => item >= dates[0]! && item <= dates[6]!))].sort();
-      if (openDates.length === 0) throw new Error("No saved attendance sessions were found for this class during the selected week.");
-      const dayResults = await Promise.all(openDates.map(async (day) => {
-        const register = await attendanceApi<{ session_id: string | null; students: RegisterStudent[] }>(
-          `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(day)}`,
-        );
-        if (!register.session_id) throw new Error(`The saved register for ${day} could not be loaded.`);
-        return { date: day, students: register.students };
-      }));
+      const report = await attendanceApi<{
+        class_name: string;
+        term_name: string;
+        term_starts_on: string;
+        report_ends_on: string;
+        days: { date: string; students: RegisterStudent[] }[];
+      }>(
+        `/api/school/attendance?class_id=${encodeURIComponent(classId)}&term_report=true&as_of=${encodeURIComponent(date)}`,
+      );
+      if (report.days.length === 0) {
+        throw new Error(`No saved attendance registers were found for ${report.class_name} during ${report.term_name}.`);
+      }
       setPrintData({
-        format: "weekly",
-        className: schoolClass.name,
-        startDate: dates[0]!,
-        endDate: dates[6]!,
-        days: dayResults,
+        format: "term",
+        className: report.class_name || schoolClass.name,
+        termName: report.term_name,
+        startDate: report.term_starts_on,
+        endDate: report.report_ends_on,
+        days: report.days,
       });
       window.setTimeout(() => window.print(), 100);
     } catch (printCause) {
-      setPrintError(printCause instanceof Error ? printCause.message : "Could not prepare the weekly attendance register.");
+      setPrintError(printCause instanceof Error ? printCause.message : "Could not prepare the term-to-date attendance report.");
     } finally {
       setPrinting(false);
     }
@@ -357,7 +392,7 @@ function AttendanceOverview() {
             <h2 className="font-display text-xl font-bold">Print attendance registers</h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Print a saved daily register or a weekly GES-style register. Only dates with a saved class attendance session count as days the school opened.
+            Print one class&apos;s register from the start of its configured term through the report date. Every saved class attendance session counts as a school-open day.
           </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <label className="space-y-1 text-xs font-medium text-muted-foreground">Class
@@ -368,24 +403,24 @@ function AttendanceOverview() {
             <label className="space-y-1 text-xs font-medium text-muted-foreground">Daily register date
               <input type="date" max={localDateString(new Date())} value={date} onChange={(event) => event.target.value && setDate(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" />
             </label>
-            <label className="space-y-1 text-xs font-medium text-muted-foreground">Week (choose any day)
-              <input type="date" max={localDateString(new Date())} value={weekStart} onChange={(event) => event.target.value && setWeekStart(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" />
+            <label className="space-y-1 text-xs font-medium text-muted-foreground">Report through
+              <input type="date" max={localDateString(new Date())} value={date} onChange={(event) => event.target.value && setDate(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" />
             </label>
             <div className="flex flex-wrap items-end gap-2">
-              <Button disabled={printing || loading || !classes.length} onClick={() => void (defaultPrintFormat === "daily_register" ? printDailyRegister() : printWeeklyRegister())}>
-                Print school default ({defaultPrintFormat === "daily_register" ? "Daily" : "Weekly"})
+              <Button disabled={printing || loading || !classes.length} onClick={() => void (defaultPrintFormat === "daily_register" ? printDailyRegister() : printTermReport())}>
+                Print school default ({defaultPrintFormat === "daily_register" ? "Daily" : "Term-to-date"})
               </Button>
               <Button variant="outline" disabled={printing || loading || !classes.length} onClick={() => void printDailyRegister()}>
                 {printing ? "Preparing..." : "Print daily register"}
               </Button>
-              <Button disabled={printing || loading || !classes.length} onClick={() => void printWeeklyRegister()}>
-                {printing ? "Preparing..." : "Print weekly GES-style"}
+              <Button disabled={printing || loading || !classes.length} onClick={() => void printTermReport()}>
+                {printing ? "Preparing..." : "Print term-to-date report"}
               </Button>
             </div>
           </div>
           {printError && <p role="alert" className="mt-3 text-sm text-destructive">{printError}</p>}
           <p className="mt-3 text-xs text-muted-foreground">
-            Weekly marks: / = present or late, O = absent, E = excused, blank = unmarked. Totals count present student-days; unknown or missing gender is listed separately. This layout has not been checked against the official GES form because its reference photo has not been provided.
+            Marks: / = present or late, O = absent, E = excused, blank = unmarked. The report includes a page for every saved open day, learner term totals, daily boys&apos; and girls&apos; counts, and term-wide totals. The layout has not been checked against the official GES form because its reference photo has not been provided.
           </p>
         </section>
       </div>
@@ -395,21 +430,18 @@ function AttendanceOverview() {
 }
 
 function AttendancePrint({ data }: { data: PrintData }) {
-  const weeklyTotals = data.days.reduce((total, day) => {
-    const counts = presentCounts(day.students);
-    return {
-      boys: total.boys + counts.boys,
-      girls: total.girls + counts.girls,
-      unknown: total.unknown + counts.unknown,
-    };
-  }, { boys: 0, girls: 0, unknown: 0 });
+  const totals = termTotals(data.days);
+  const learners = learnerTermTotals(data.days);
+  const enrolledBoys = learners.filter((learner) => genderGroup(learner.gender) === "boys").length;
+  const enrolledGirls = learners.filter((learner) => genderGroup(learner.gender) === "girls").length;
+  const enrolledUnknown = learners.length - enrolledBoys - enrolledGirls;
   return <div className="attendance-print-root">
     {data.days.map((day, index) => {
-      const counts = presentCounts(day.students);
+      const counts = statusCounts(day.students);
       return <article className="attendance-print-page" key={day.date}>
-        <h1>{data.format === "weekly" ? "Weekly Attendance Register" : "Daily Class Attendance Register"}</h1>
+        <h1>{data.format === "term" ? "Term Attendance Register" : "Daily Class Attendance Register"}</h1>
         <p><strong>Class:</strong> {data.className} <span className="print-spacer" /><strong>Date:</strong> {day.date}</p>
-        {data.format === "weekly" && <p>School-open day {index + 1} of {data.days.length} for {data.startDate} to {data.endDate}</p>}
+        {data.format === "term" && <p><strong>Term:</strong> {data.termName} <span className="print-spacer" /><strong>School-open day:</strong> {index + 1} of {data.days.length}</p>}
         <p className="print-legend">/ Present or late &nbsp; O Absent &nbsp; E Excused &nbsp; Blank Unmarked</p>
         <table>
           <thead><tr><th>No.</th><th>Student ID</th><th>Learner name</th><th>Sex</th><th>Mark</th></tr></thead>
@@ -420,27 +452,55 @@ function AttendancePrint({ data }: { data: PrintData }) {
           </tr>)}</tbody>
         </table>
         <div className="print-totals">
-          <span>Boys present: {counts.boys}</span><span>Girls present: {counts.girls}</span>
-          {counts.unknown > 0 && <span>Unclassified gender present: {counts.unknown}</span>}
+          <span>Boys present: {counts.boys.present}</span><span>Girls present: {counts.girls.present}</span>
+          {counts.unknown.present > 0 && <span>Unclassified gender present: {counts.unknown.present}</span>}
+          <span>Boys absent: {counts.boys.absent}</span><span>Girls absent: {counts.girls.absent}</span>
         </div>
       </article>;
     })}
-    {data.format === "weekly" && <article className="attendance-print-page">
-      <h1>Weekly Attendance Summary</h1>
+    {data.format === "term" && <article className="attendance-print-page">
+      <h1>Term-to-date Attendance Summary</h1>
       <p><strong>Class:</strong> {data.className}</p>
-      <p><strong>Week:</strong> {data.startDate} to {data.endDate}</p>
-      <p><strong>Days school opened:</strong> {data.days.length}</p>
+      <p><strong>Term:</strong> {data.termName} ({data.startDate} to {data.endDate})</p>
+      <p><strong>Days school opened / registers saved:</strong> {data.days.length}</p>
       <table>
-        <thead><tr><th>School-open date</th><th>Boys present</th><th>Girls present</th><th>Unclassified gender</th></tr></thead>
+        <thead><tr><th>School-open date</th><th>Boys present</th><th>Girls present</th><th>Boys absent</th><th>Girls absent</th><th>Excused</th><th>Unmarked</th></tr></thead>
         <tbody>
           {data.days.map((day) => {
-            const counts = presentCounts(day.students);
-            return <tr key={day.date}><td>{day.date}</td><td>{counts.boys}</td><td>{counts.girls}</td><td>{counts.unknown}</td></tr>;
+            const counts = statusCounts(day.students);
+            return <tr key={day.date}>
+              <td>{day.date}</td>
+              <td>{counts.boys.present}</td><td>{counts.girls.present}</td>
+              <td>{counts.boys.absent}</td><td>{counts.girls.absent}</td>
+              <td>{counts.boys.excused + counts.girls.excused + counts.unknown.excused}</td>
+              <td>{counts.boys.unmarked + counts.girls.unmarked + counts.unknown.unmarked}</td>
+            </tr>;
           })}
-          <tr><th>Weekly present student-days</th><th>{weeklyTotals.boys}</th><th>{weeklyTotals.girls}</th><th>{weeklyTotals.unknown}</th></tr>
+          <tr>
+            <th>Term total student-days</th>
+            <th>{totals.boys.present}</th><th>{totals.girls.present}</th>
+            <th>{totals.boys.absent}</th><th>{totals.girls.absent}</th>
+            <th>{totals.boys.excused + totals.girls.excused + totals.unknown.excused}</th>
+            <th>{totals.boys.unmarked + totals.girls.unmarked + totals.unknown.unmarked}</th>
+          </tr>
         </tbody>
       </table>
-      <p className="print-footnote">Weekly totals are the sum of daily attendance counts (student-days), not unique learners.</p>
+      <p className="print-footnote">Enrolled learners represented in saved registers: {learners.length} ({enrolledBoys} boys, {enrolledGirls} girls, {enrolledUnknown} unclassified gender).</p>
+      <h2 className="print-subheading">Individual learner totals</h2>
+      <table>
+        <thead><tr><th>No.</th><th>Student ID</th><th>Learner name</th><th>Sex</th><th>Present / late</th><th>Absent</th><th>Excused</th><th>Unmarked</th><th>Attendance %</th></tr></thead>
+        <tbody>{learners.map((learner, index) => {
+          const attendanceRate = learner.schoolDays > 0
+            ? Math.round((learner.present / learner.schoolDays) * 100)
+            : 0;
+          return <tr key={learner.id}>
+            <td>{index + 1}</td><td>{learner.admission_number}</td>
+            <td>{learner.last_name} {learner.first_name}</td><td>{learner.gender || "—"}</td>
+            <td>{learner.present}</td><td>{learner.absent}</td><td>{learner.excused}</td><td>{learner.unmarked}</td><td>{attendanceRate}%</td>
+          </tr>;
+        })}</tbody>
+      </table>
+      <p className="print-footnote">Term totals are attendance student-days across saved school-open registers. Each learner&apos;s attendance percentage uses only saved register days when that learner was enrolled in this class.</p>
     </article>}
   </div>;
 }

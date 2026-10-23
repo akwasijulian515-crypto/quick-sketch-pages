@@ -103,13 +103,13 @@ function SchoolAdminPage() {
 
 type WorkflowSettings = {
   class_teachers_can_record_daily_fees: boolean;
-  attendance_print_format: "daily_register" | "ges_weekly";
+  attendance_print_format: "daily_register" | "ges_term_to_date";
 };
 
 function SchoolWorkflowSettings() {
   const [settings, setSettings] = useState<WorkflowSettings>({
     class_teachers_can_record_daily_fees: false,
-    attendance_print_format: "ges_weekly",
+    attendance_print_format: "ges_term_to_date",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -180,9 +180,9 @@ function SchoolWorkflowSettings() {
           className="block h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
         >
           <option value="daily_register">Daily class register</option>
-          <option value="ges_weekly">Weekly GES-style register</option>
+          <option value="ges_term_to_date">Term-to-date GES-style register</option>
         </select>
-        <span className="block text-xs font-normal text-muted-foreground">The weekly format follows the requested / and O marks. It is not verified against the official GES form until you share its reference photo.</span>
+        <span className="block text-xs font-normal text-muted-foreground">Prints term-to-date attendance for an individual class with daily marks and cumulative totals. The layout is not verified against the official GES form until you share its reference photo.</span>
       </label>
     </div>}
     {!loading && <Button className="mt-4" onClick={() => void saveSettings()} disabled={saving}>{saving ? "Saving..." : "Save settings"}</Button>}
