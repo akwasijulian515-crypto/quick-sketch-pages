@@ -141,6 +141,7 @@ type AttendanceDay = {
   excused_count: number;
   marked_count: number;
 };
+type SchoolHoliday = { date: string; name: string };
 
 function localDateString(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -166,6 +167,7 @@ type TeacherDailyPayment = {
 function TeacherDailyPayments() {
   const [date, setDate] = useState(() => localDateString(new Date()));
   const [students, setStudents] = useState<TeacherDailyPayment[]>([]);
+  const [holiday, setHoliday] = useState<SchoolHoliday | null>(null);
   const [classFilter, setClassFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -178,15 +180,19 @@ function TeacherDailyPayments() {
     let cancelled = false;
     setLoading(true);
     setError("");
-    void teacherApi<{ students: TeacherDailyPayment[] }>(
+    void teacherApi<{ students: TeacherDailyPayment[]; holiday?: SchoolHoliday }>(
       `/api/school/daily-payments?date=${encodeURIComponent(date)}`,
     )
       .then((result) => {
-        if (!cancelled) setStudents(result.students);
+        if (!cancelled) {
+          setStudents(result.students);
+          setHoliday(result.holiday ?? null);
+        }
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
           setStudents([]);
+          setHoliday(null);
           setError(cause instanceof Error ? cause.message : "Could not load daily-fee records");
         }
       })
@@ -292,6 +298,7 @@ function TeacherDailyPayments() {
     </label>
     </div>
     {notice && <p role="status" className="mx-4 mt-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800 sm:mx-5">{notice}</p>}
+    {holiday && !loading && <p role="status" className="mx-4 mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-900 sm:mx-5">{holiday.name} is a school holiday. Daily fees are not collected on this date; existing recorded payments remain in Finance.</p>}
     {error ? (
       <div role="alert" className="p-8 text-center">
         <p className="text-sm text-destructive">{error}</p>
@@ -299,6 +306,8 @@ function TeacherDailyPayments() {
       </div>
     ) : loading ? (
       <p className="py-10 text-center text-sm text-muted-foreground">Loading daily-fee records…</p>
+    ) : holiday ? (
+      <p className="py-10 text-center text-sm text-muted-foreground">No daily-fee register is available on a school holiday.</p>
     ) : visible.length === 0 ? (
       <div className="p-10 text-center">
         <TicketCheck className="mx-auto size-7 text-primary/55" />
@@ -360,6 +369,7 @@ function AttendanceRegister() {
   const [classId, setClassId] = useState("");
   const [date, setDate] = useState(() => localDateString(new Date()));
   const [students, setStudents] = useState<AttendanceStudent[]>([]);
+  const [holiday, setHoliday] = useState<SchoolHoliday | null>(null);
   const [days, setDays] = useState<AttendanceDay[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -402,12 +412,14 @@ function AttendanceRegister() {
     if (!classId) {
       setStudents([]);
       setDays([]);
+      setHoliday(null);
       return;
     }
     setLoading(true);
     setError("");
+    setHoliday(null);
     void Promise.all([
-      teacherApi<{ session_id: string | null; students: AttendanceStudent[] }>(
+      teacherApi<{ session_id: string | null; students: AttendanceStudent[]; holiday?: SchoolHoliday }>(
         `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
       ),
       teacherApi<{ days: AttendanceDay[] }>(
@@ -417,10 +429,14 @@ function AttendanceRegister() {
       .then(([register, monthly]) => {
         if (cancelled) return;
         setStudents(register.students);
+        setHoliday(register.holiday ?? null);
         setDays(monthly.days);
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load attendance");
+        if (!cancelled) {
+          setHoliday(null);
+          setError(loadError instanceof Error ? loadError.message : "Could not load attendance");
+        }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -504,6 +520,12 @@ function AttendanceRegister() {
         <UserRoundCheck className="mx-auto size-7 text-primary/55" />
         <h2 className="mt-3 font-display text-lg font-bold">No class teacher assignments yet</h2>
         <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">Ask your School Admin to assign you as class teacher before you take attendance.</p>
+      </section>
+    ) : !loading && classId && holiday ? (
+      <section className="glass-panel rounded-lg border border-amber-500/30 p-10 text-center">
+        <CalendarDays className="mx-auto size-7 text-amber-700" />
+        <h2 className="mt-3 font-display text-lg font-bold">{holiday.name}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">This date is marked as a school holiday. Attendance cannot be recorded and it is excluded from open-day totals.</p>
       </section>
     ) : !loading && classId && students.length === 0 ? (
       <section className="glass-panel rounded-lg border border-dashed border-border p-10 text-center">

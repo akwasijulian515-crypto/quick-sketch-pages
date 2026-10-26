@@ -28,6 +28,7 @@ type DailyStudent = {
   paid_at: string | null;
   coupon_code: string | null;
 };
+type SchoolHoliday = { date: string; name: string };
 
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getNeonAccessToken();
@@ -55,6 +56,7 @@ function localDateString(date: Date) {
 function DailyPaymentsPage() {
   const [date, setDate] = useState(() => localDateString(new Date()));
   const [students, setStudents] = useState<DailyStudent[]>([]);
+  const [holiday, setHoliday] = useState<SchoolHoliday | null>(null);
   const [method, setMethod] = useState("cash");
   const [loading, setLoading] = useState(true);
   const [recordingStudents, setRecordingStudents] = useState<Set<string>>(() => new Set());
@@ -69,10 +71,12 @@ function DailyPaymentsPage() {
     setLoading(true);
     setError("");
     try {
-      const result = await schoolApi<{ students: DailyStudent[] }>(`/api/school/daily-payments?date=${encodeURIComponent(date)}`);
+      const result = await schoolApi<{ students: DailyStudent[]; holiday?: SchoolHoliday }>(`/api/school/daily-payments?date=${encodeURIComponent(date)}`);
       setStudents(result.students);
+      setHoliday(result.holiday ?? null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load daily-fee roster");
+      setHoliday(null);
     } finally {
       setLoading(false);
     }
@@ -166,6 +170,7 @@ function DailyPaymentsPage() {
         <Banknote className="size-5 text-primary" />
       </div>
       {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading daily-fee register...</p>
+        : holiday ? <div className="px-5 py-10 text-center"><p className="font-medium">{holiday.name} · School holiday</p><p className="mt-1 text-sm text-muted-foreground">Daily fees are not collected on this date. Existing recorded payments remain in Finance.</p></div>
         : visible.length === 0 ? <div className="px-5 py-10 text-center"><p className="text-sm text-muted-foreground">No active learners with a daily fee configured for this date.</p><Button className="mt-3" size="sm" variant="outline" asChild><Link to="/finance">Review fee schedule</Link></Button></div>
           : <>
             <div className="divide-y divide-border/70 md:hidden">

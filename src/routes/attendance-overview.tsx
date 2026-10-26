@@ -25,6 +25,8 @@ type AttendanceClass = {
   late_count: number;
   absent_count: number;
   marked_count: number;
+  is_holiday: boolean;
+  holiday_name: string | null;
 };
 
 type RegisterStudent = {
@@ -239,9 +241,10 @@ function AttendanceOverview() {
     setPrinting(true);
     setPrintError("");
     try {
-      const result = await attendanceApi<{ session_id: string | null; students: RegisterStudent[] }>(
+      const result = await attendanceApi<{ session_id: string | null; students: RegisterStudent[]; holiday?: { date: string; name: string } }>(
         `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
       );
+      if (result.holiday) throw new Error(`${result.holiday.name} is a school holiday; there is no attendance register to print.`);
       if (!result.session_id) throw new Error("There is no saved attendance register for this class and date.");
       setPrintData({ format: "daily", className: schoolClass.name, academicYearName: schoolClass.academic_year_name, termName: "", startDate: date, endDate: date, days: [{ date, students: result.students }] });
       window.setTimeout(() => window.print(), 100);
@@ -325,6 +328,7 @@ function AttendanceOverview() {
             Monitor attendance across the school. Only teachers can make or edit register entries.
           </p>
         </div>
+        {classes.some((item) => item.is_holiday) && <p role="status" className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-900">{date} is a school holiday{classes.find((item) => item.is_holiday)?.holiday_name ? `: ${classes.find((item) => item.is_holiday)?.holiday_name}` : ""}. Attendance totals for this date are excluded.</p>}
         <section className="mt-7 grid gap-3 sm:grid-cols-3">
           <Metric
             label="Present today"
@@ -379,7 +383,9 @@ function AttendanceOverview() {
                   const studentCount = Number(item.student_count);
                   const markedCount = Number(item.marked_count);
                   const status =
-                    studentCount === 0
+                    item.is_holiday
+                      ? "School holiday"
+                      : studentCount === 0
                       ? "No active learners"
                       : markedCount >= studentCount
                         ? "Complete"
@@ -507,7 +513,7 @@ function AttendancePrint({ data }: { data: PrintData }) {
             <th>{total("excused")}</th><th>{total("unmarked")}</th>
           </tr></tfoot>
         </table>
-        <p className="print-footnote">Each class uses its configured term. Only saved attendance sessions are counted as school-open days.</p>
+        <p className="print-footnote">Each class uses its configured term. Saved attendance sessions count as school-open days, excluding dates marked as school holidays.</p>
       </article>
       {data.classes.map((schoolClass) => <ClassAttendancePrint
         key={schoolClass.id}

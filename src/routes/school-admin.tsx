@@ -1,5 +1,5 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { BookOpen, ChevronLeft, ChevronRight, FileText, Link2, Plus, Search, Settings2, ShieldCheck, UsersRound } from "lucide-react";
+import { BookOpen, CalendarDays, ChevronLeft, ChevronRight, FileText, Link2, Plus, Search, Settings2, ShieldCheck, Trash2, UsersRound } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { fetchWithNeonAuth } from "../auth/client";
@@ -99,6 +99,7 @@ function SchoolAdminPage() {
     <DirectoryManager />
     <PortalAccountSetup />
     <SchoolWorkflowSettings />
+    <SchoolHolidays />
     <SchoolFeeRules />
     <SchoolPromotionReview />
     <section className="mt-4 grid gap-4 lg:grid-cols-3"><article className="glass-panel rounded-lg p-5"><Link2 className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Portal account access</h2><p className="mt-1 text-sm text-muted-foreground">Link parent and student sign-ins to their school records and share the generated activation link.</p><Button className="mt-5" variant="outline" asChild><a href="#portal-account-setup"><Link2 />Manage portal accounts</a></Button></article><article className="glass-panel rounded-lg p-5"><FileText className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Terminal reports</h2><p className="mt-1 text-sm text-muted-foreground">Generate, review, and publish student terminal reports for the current term.</p><Button className="mt-5" variant="outline" asChild><Link to="/terminal-reports"><FileText />Open report centre</Link></Button></article><article className="glass-panel rounded-lg p-5"><ShieldCheck className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Daily reconciliation</h2><p className="mt-1 text-sm text-muted-foreground">Review gateway-verified payments, attendance exceptions, and close the collection day.</p><Button className="mt-5" variant="outline" asChild><Link to="/reconciliation"><ShieldCheck />Open controls</Link></Button></article></section>
@@ -190,6 +191,103 @@ function SchoolWorkflowSettings() {
       </label>
     </div>}
     {!loading && <Button className="mt-4" onClick={() => void saveSettings()} disabled={saving}>{saving ? "Saving..." : "Save settings"}</Button>}
+  </section>;
+}
+
+type SchoolHoliday = { date: string; name: string };
+
+function SchoolHolidays() {
+  const [holidays, setHolidays] = useState<SchoolHoliday[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [removingDate, setRemovingDate] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await schoolApi<{ holidays: SchoolHoliday[] }>("/api/school/holidays");
+      setHolidays(result.holidays);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not load school holidays");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function saveHoliday(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const date = String(form.get("date") ?? "");
+    const name = String(form.get("name") ?? "").trim();
+    try {
+      await schoolApi("/api/school/holidays", {
+        method: "POST",
+        body: JSON.stringify({ date, name }),
+      });
+      setNotice(`${name} saved for ${date}. Daily fees and attendance are disabled for that day.`);
+      formElement.reset();
+      await load();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save school holiday");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeHoliday(holiday: SchoolHoliday) {
+    if (!window.confirm(`Remove ${holiday.name} on ${holiday.date}? The date will be treated as a regular school day again.`)) return;
+    setRemovingDate(holiday.date);
+    setError("");
+    setNotice("");
+    try {
+      await schoolApi(`/api/school/holidays?date=${encodeURIComponent(holiday.date)}`, { method: "DELETE" });
+      setNotice(`${holiday.name} was removed from the school calendar.`);
+      await load();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : "Could not remove school holiday");
+    } finally {
+      setRemovingDate("");
+    }
+  }
+
+  return <section className="glass-panel mt-4 rounded-lg p-5">
+    <div className="flex items-center gap-2">
+      <CalendarDays className="size-5 text-primary" />
+      <h2 className="font-display text-xl font-bold">School holidays</h2>
+    </div>
+    <p className="mt-1 text-sm text-muted-foreground">Mark a school-wide holiday. Daily-fee collection and attendance entry will be blocked, and the date will not count as an open school day in attendance totals.</p>
+    {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+    {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
+    <form onSubmit={(event) => void saveHoliday(event)} className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+      <label className="space-y-1 text-xs font-medium text-muted-foreground">Holiday date
+        <Input name="date" type="date" required />
+      </label>
+      <label className="space-y-1 text-xs font-medium text-muted-foreground">Holiday name
+        <Input name="name" required minLength={2} maxLength={120} placeholder="e.g. Founders Day" />
+      </label>
+      <div className="flex items-end"><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Mark holiday"}</Button></div>
+    </form>
+    {loading ? <p className="py-5 text-sm text-muted-foreground">Loading school holidays...</p> : holidays.length === 0 ? (
+      <p className="py-5 text-sm text-muted-foreground">No school holidays have been set.</p>
+    ) : (
+      <ul className="mt-4 divide-y divide-border rounded-md border border-border">
+        {holidays.map((holiday) => <li key={holiday.date} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
+          <div><p className="text-sm font-medium">{holiday.name}</p><p className="text-xs text-muted-foreground">{new Date(`${holiday.date}T00:00:00`).toLocaleDateString()}</p></div>
+          <Button type="button" size="sm" variant="outline" disabled={removingDate === holiday.date} onClick={() => void removeHoliday(holiday)}>
+            <Trash2 />{removingDate === holiday.date ? "Removing..." : "Remove"}
+          </Button>
+        </li>)}
+      </ul>
+    )}
   </section>;
 }
 

@@ -720,6 +720,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/other-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/student-financial-records": { GET: ["school_admin"] },
     "/api/school/daily-payments": { GET: ["school_admin", "finance", "teacher"], POST: ["school_admin", "finance", "teacher"] },
+    "/api/school/holidays": { GET: ["school_admin", "finance", "teacher"], POST: ["school_admin"], DELETE: ["school_admin"] },
     "/api/school/workflow-settings": { GET: ["school_admin", "teacher"], PUT: ["school_admin"] },
     "/api/school/student-attendance": { GET: ["school_admin"] },
     "/api/school/reconciliation": { GET: ["school_admin", "finance"] },
@@ -769,6 +770,53 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       : await requireSchoolAdminContext(request, env);
     if (school instanceof Response) return school;
     const sql = database(env);
+
+    if (url.pathname === "/api/school/holidays") {
+      if (request.method === "GET") {
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select holiday_date::text as date, name
+            from school_holidays
+            where school_id = ${school.schoolId}::uuid
+            order by holiday_date desc
+          `,
+        );
+        return json({ holidays: rows });
+      }
+
+      const holidayDate = url.searchParams.get("date")?.trim();
+      if (request.method === "DELETE") {
+        if (!holidayDate || !validIsoDate(holidayDate)) return badRequest("Choose a valid holiday date");
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            delete from school_holidays
+            where school_id = ${school.schoolId}::uuid and holiday_date = ${holidayDate}::date
+            returning holiday_date::text as date, name
+          `,
+        );
+        if (!rows[0]) return json({ error: "Holiday not found" }, 404);
+        return json({ holiday: rows[0] });
+      }
+
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const date = body["date"];
+      const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+      if (typeof date !== "string" || !validIsoDate(date)) return badRequest("Enter a valid holiday date");
+      if (name.length < 2 || name.length > 120) return badRequest("Holiday name must be between 2 and 120 characters");
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          insert into school_holidays (school_id, holiday_date, name, created_by_user_id)
+          values (${school.schoolId}::uuid, ${date}::date, ${name}, ${school.userId}::uuid)
+          on conflict (school_id, holiday_date) do update
+            set name = excluded.name, created_by_user_id = excluded.created_by_user_id
+          returning holiday_date::text as date, name
+        `,
+      );
+      if (!rows[0]) throw new Error("School holiday was not saved");
+      return json({ holiday: rows[0] });
+    }
 
     if (url.pathname === "/api/school/workflow-settings") {
       if (request.method === "GET") {
@@ -853,6 +901,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               join classes c on c.id = ase.class_id and c.school_id = ase.school_id
               where ar.school_id = ${school.schoolId}::uuid
                 and ar.student_id = ${studentId}::uuid
+                and not exists (
+                  select 1 from school_holidays h
+                  where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                )
             ),
             page_records as (
               select * from filtered_records
@@ -1290,12 +1342,20 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                    where ar.school_id = ${school.schoolId}::uuid and ar.student_id = lc.id
                      and lc.term_id is not null
                      and ase.attendance_date between lc.term_starts_on and current_date
+                     and not exists (
+                       select 1 from school_holidays h
+                       where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                     )
                      and ar.status in ('present', 'late')) as attendance_present,
                   (select count(*)::int from attendance_records ar
                    join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
                    where ar.school_id = ${school.schoolId}::uuid and ar.student_id = lc.id
                      and lc.term_id is not null
-                     and ase.attendance_date between lc.term_starts_on and current_date) as attendance_total,
+                     and ase.attendance_date between lc.term_starts_on and current_date
+                     and not exists (
+                       select 1 from school_holidays h
+                       where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                     )) as attendance_total,
                   (select greatest(coalesce(sum(i.amount_due - coalesce(paid.paid_amount, 0) - coalesce(paid.pending_amount, 0)), 0), 0)::numeric(12,2)
                    from invoices i
                    left join lateral (
@@ -1372,6 +1432,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               where ar.school_id = ${school.schoolId}::uuid and ar.student_id = st.id
                 and term.id is not null
                 and ase.attendance_date between term.starts_on and least(term.ends_on, current_date)
+                and not exists (
+                  select 1 from school_holidays h
+                  where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                )
             ) attendance on true
             left join lateral (
               select greatest(sum(i.amount_due - coalesce(paid.paid_amount, 0) - coalesce(paid.pending_amount, 0)), 0)::numeric(12,2) as balance_due,
@@ -1922,6 +1986,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               join attendance_sessions s on s.school_id = ${school.schoolId}::uuid
                 and s.class_id = cp.class_id
                 and s.attendance_date between cp.starts_on and cp.report_ends_on
+                and not exists (
+                  select 1 from school_holidays h
+                  where h.school_id = s.school_id and h.holiday_date = s.attendance_date
+                )
               join class_enrollments e on e.school_id = s.school_id
                 and e.class_id = s.class_id
                 and e.starts_on <= s.attendance_date
@@ -1983,6 +2051,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           const classes = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
             tx`
               select c.id, c.name, ay.name as academic_year_name,
+                     exists (
+                       select 1 from school_holidays h
+                       where h.school_id = c.school_id and h.holiday_date = ${attendanceDate}::date
+                     ) as is_holiday,
+                     (
+                       select h.name from school_holidays h
+                       where h.school_id = c.school_id and h.holiday_date = ${attendanceDate}::date
+                     ) as holiday_name,
                      (select count(*)::int
                       from class_enrollments e
                       join students st on st.id = e.student_id and st.school_id = e.school_id
@@ -2008,6 +2084,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                   on r.attendance_session_id = s.id and r.school_id = s.school_id
                 where s.school_id = c.school_id and s.class_id = c.id
                   and s.attendance_date = ${attendanceDate}::date
+                  and not exists (
+                    select 1 from school_holidays h
+                    where h.school_id = s.school_id and h.holiday_date = s.attendance_date
+                  )
               ) attendance on true
               where c.school_id = ${school.schoolId}::uuid
                 and (
@@ -2091,6 +2171,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 and s.class_id = ${classId}::uuid
                 and s.attendance_date between ${String(period["term_starts_on"])}::date
                   and ${String(period["report_ends_on"])}::date
+                and not exists (
+                  select 1 from school_holidays h
+                  where h.school_id = s.school_id and h.holiday_date = s.attendance_date
+                )
               order by s.attendance_date, st.last_name, st.first_name, st.admission_number
             `,
           );
@@ -2145,6 +2229,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               left join attendance_records r on r.attendance_session_id = s.id and r.school_id = s.school_id
               where s.attendance_date >= (${month} || '-01')::date
                 and s.attendance_date < ((${month} || '-01')::date + interval '1 month')
+                and not exists (
+                  select 1 from school_holidays h
+                  where h.school_id = s.school_id and h.holiday_date = s.attendance_date
+                )
               group by s.attendance_date
               order by s.attendance_date
             `,
@@ -2156,6 +2244,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         if (!validIsoDate(attendanceDate)) {
           return badRequest("Enter a valid attendance date");
         }
+        const holidays = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select holiday_date::text as date, name
+            from school_holidays
+            where school_id = ${school.schoolId}::uuid and holiday_date = ${attendanceDate}::date
+          `,
+        );
+        if (holidays[0]) return json({ session_id: null, students: [], holiday: holidays[0] });
         const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
           tx`
             with authorized_class as materialized (
@@ -2180,6 +2276,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
             left join attendance_sessions s on s.class_id = c.id and s.school_id = c.school_id
               and s.attendance_date = ${attendanceDate}::date
+              and not exists (
+                select 1 from school_holidays h
+                where h.school_id = s.school_id and h.holiday_date = s.attendance_date
+              )
             left join attendance_records r on r.attendance_session_id = s.id
               and r.student_id = st.id and r.school_id = st.school_id
             order by st.last_name, st.first_name, st.admission_number
@@ -2221,6 +2321,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         if (!["present", "late", "absent", "excused"].includes(String(record["status"]))) return badRequest("Choose present, late, absent, or excused for each learner");
         if (note !== undefined && note !== null && (typeof note !== "string" || note.length > 500)) return badRequest("Attendance notes must be at most 500 characters");
       }
+      const holidayRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select name from school_holidays
+          where school_id = ${school.schoolId}::uuid and holiday_date = ${attendanceDate}::date
+        `,
+      );
+      if (holidayRows[0]) return json({ error: `${String(holidayRows[0]["name"])} is a school holiday; attendance cannot be recorded.` }, 409);
 
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
         tx`
@@ -2257,6 +2364,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             from authorized_class c
             where (select roster_count from valid_roster) = ${records.length}
               and (select count(*) from input_records) = ${records.length}
+              and not exists (
+                select 1 from school_holidays h
+                where h.school_id = c.school_id and h.holiday_date = ${attendanceDate}::date
+              )
             on conflict (class_id, attendance_date) do update
               set taken_by_staff_id = excluded.taken_by_staff_id
             returning id, school_id
@@ -2281,6 +2392,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (!Number(rows[0]?.["authorized_count"] ?? 0)) return json({ error: "You are not assigned as class teacher for this class" }, 403);
       if (Number(rows[0]?.["roster_count"] ?? 0) !== records.length
         || Number(rows[0]?.["saved_count"] ?? 0) !== records.length) {
+        const concurrentHoliday = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select name from school_holidays
+            where school_id = ${school.schoolId}::uuid and holiday_date = ${attendanceDate}::date
+          `,
+        );
+        if (concurrentHoliday[0]) {
+          return json({ error: `${String(concurrentHoliday[0]["name"])} is a school holiday; attendance cannot be recorded.` }, 409);
+        }
         return json({ error: "Attendance was not saved. Refresh the class roster and mark every currently enrolled student." }, 409);
       }
       return json({ session_id: rows[0]?.["session_id"], saved_count: Number(rows[0]?.["saved_count"] ?? 0) });
@@ -2758,6 +2878,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const paymentDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
       if (!validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
       if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee register dates cannot be in the future");
+      const holidayRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select holiday_date::text as date, name
+          from school_holidays
+          where school_id = ${school.schoolId}::uuid and holiday_date = ${paymentDate}::date
+        `,
+      );
+      if (holidayRows[0]) return json({ students: [], date: paymentDate, holiday: holidayRows[0] });
       if (school.role === "teacher") {
         const settings = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
           tx`
@@ -2826,6 +2954,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (typeof paymentDate !== "string" || !validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
       if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee payments cannot be recorded for a future date");
       if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
+      const holidayRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`
+          select name from school_holidays
+          where school_id = ${school.schoolId}::uuid and holiday_date = ${paymentDate}::date
+        `,
+      );
+      if (holidayRows[0]) return json({ error: `${String(holidayRows[0]["name"])} is a school holiday; daily fees cannot be collected.` }, 409);
       if (school.role === "teacher") {
         const authorization = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
           tx`
@@ -2869,6 +3004,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             join class_fees f on f.class_id = c.id and f.school_id = c.school_id
               and f.academic_year_id = ay.id and f.fee_type = 'daily' and f.term_id is null and f.is_active
             where st.id = ${studentId}::uuid and st.school_id = ${school.schoolId}::uuid and st.active
+              and not exists (
+                select 1 from school_holidays h
+                where h.school_id = st.school_id and h.holiday_date = ${paymentDate}::date
+              )
               and (
                 ${school.role !== "teacher"}
                 or c.class_teacher_id in (
@@ -2903,6 +3042,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         `,
       );
       if (!rows[0]) {
+        const concurrentHoliday = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+          tx`
+            select name from school_holidays
+            where school_id = ${school.schoolId}::uuid and holiday_date = ${paymentDate}::date
+          `,
+        );
+        if (concurrentHoliday[0]) {
+          return json({ error: `${String(concurrentHoliday[0]["name"])} is a school holiday; daily fees cannot be collected.` }, 409);
+        }
         return json({ error: "Student is not eligible for this date, no daily fee is configured, or payment is already recorded." }, 409);
       }
       return json({ payment: rows[0] }, 201);
@@ -2929,6 +3077,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               and f.term_id is null and f.is_active
             where ar.school_id = ${school.schoolId}::uuid
               and ase.attendance_date = ${reconciliationDate}::date and ar.status in ('present', 'late')
+              and not exists (
+                select 1 from school_holidays h
+                where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+              )
             group by st.id, f.amount, f.currency
           ),
           expected_by_currency as (
@@ -3279,10 +3431,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                   join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
                   where ar.school_id = rs.school_id and ar.student_id = rs.student_id
                     and ase.class_id = rs.class_id and ase.attendance_date between t.starts_on and t.ends_on
+                    and not exists (
+                      select 1 from school_holidays h
+                      where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                    )
                     and ar.status in ('present', 'late')),
                  (select count(*)::int from attendance_sessions ase
                   where ase.school_id = rs.school_id and ase.class_id = rs.class_id
-                    and ase.attendance_date between t.starts_on and t.ends_on),
+                    and ase.attendance_date between t.starts_on and t.ends_on
+                    and not exists (
+                      select 1 from school_holidays h
+                      where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                    )),
                  ip.teacher_remark,
                  case when ${school.role === "school_admin"} then ip.headteacher_remark else null end,
                  nullif(ip.promotion_status, ''),
