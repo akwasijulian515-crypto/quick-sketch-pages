@@ -94,6 +94,23 @@ export function getNeonAccessToken() {
   return accessTokenPromise;
 }
 
+export async function requestSchoolPasswordReset(email: string) {
+  const client = await ensureNeonAuthClient();
+  if (!client) throw new Error("Neon Auth is not configured for this app");
+
+  const tenant =
+    new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  const resetUrl = new URL("/login", window.location.origin);
+  if (tenant) resetUrl.searchParams.set("tenant", tenant);
+  resetUrl.searchParams.set("mode", "reset");
+
+  const result = await client.requestPasswordReset({
+    email: email.trim().toLowerCase(),
+    redirectTo: resetUrl.toString(),
+  });
+  if (result.error) throw new Error(result.error.message ?? "Could not send the password reset email");
+}
+
 export async function fetchWithNeonAuth(input: RequestInfo | URL, init?: RequestInit) {
   const accessToken = await getNeonAccessToken();
   const requestWithCredential = (credential: string) => {

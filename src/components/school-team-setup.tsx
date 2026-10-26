@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
-import { getNeonAccessToken } from "../auth/client";
+import { getNeonAccessToken, requestSchoolPasswordReset } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -65,6 +65,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -143,6 +144,21 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
     }
   }
 
+  async function sendPasswordReset(member: TeamMember) {
+    if (!window.confirm(`Send a password reset email to ${member.email}?`)) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await requestSchoolPasswordReset(member.email);
+      setNotice(`If ${member.email} has a sign-in account, Neon Auth will send a password reset link.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not send the password reset email");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function assignTeacher(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -199,6 +215,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
     <section id="staff-setup" className="glass-panel mt-4 scroll-mt-6 rounded-lg p-5">
       <div><h2 className="font-display text-xl font-bold">Staff and teaching assignments</h2><p className="mt-1 text-sm text-muted-foreground">Add a teacher or Finance user, then assign teachers to class subjects so they can enter marks.</p></div>
       {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
+      {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
       {activationUrl && <div role={invitationEmail?.sent ? "status" : "alert"} className={`mt-4 break-all rounded-md border px-3 py-2 text-sm ${invitationEmail?.sent ? "border-emerald-600/20 bg-emerald-600/5 text-emerald-800" : "border-amber-600/30 bg-amber-600/5 text-amber-900"}`}><p>{invitationEmail?.sent ? "Invitation email sent." : `Invitation email was not sent. ${invitationEmail?.error ?? "Share the activation link manually."}`}</p><p className="mt-1">Account activation link: <a className="underline" href={activationUrl}>{activationUrl}</a></p></div>}
       <form onSubmit={(event) => void addMember(event)} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="space-y-1 text-xs font-medium text-muted-foreground">Full name<Input name="name" required minLength={2} maxLength={160} /></label>
@@ -232,27 +249,35 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
           </table>
         </div>
       )}
-      {!loading && members.some((member) => member.role === "teacher") && (
+      {!loading && members.length > 0 && (
         <div className="mt-6 overflow-x-auto">
-          <h3 className="mb-2 text-sm font-semibold">Teacher accounts</h3>
+          <h3 className="mb-2 text-sm font-semibold">School accounts</h3>
           <table className="w-full min-w-[620px] text-left text-sm">
             <thead className="border-b text-xs text-muted-foreground">
-              <tr>{["Teacher", "Email", "Status", "Actions"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
+              <tr>{["Member", "Role", "Email", "Status", "Actions"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-border/70">
-              {members.filter((member) => member.role === "teacher").map((member) => (
-                <tr key={`teacher-${member.user_id}`}>
+              {members.map((member) => (
+                <tr key={`account-${member.user_id}-${member.role}`}>
                   <td className="px-3 py-3">{member.display_name}</td>
+                  <td className="px-3 py-3 capitalize">{member.role.replace("_", " ")}</td>
                   <td className="px-3 py-3">{member.email}</td>
                   <td className="px-3 py-3">{member.active ? "Active" : "Archived"}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-wrap gap-2">
-                      <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateTeacher(member, member.active ? "archive" : "restore")}>
-                        {member.active ? "Archive" : "Restore"}
+                      <Button type="button" variant="outline" size="sm" disabled={saving || !member.active} onClick={() => void sendPasswordReset(member)}>
+                        Send reset email
                       </Button>
-                      <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => void updateTeacher(member, "delete")}>
-                        Permanently delete
-                      </Button>
+                      {member.role === "teacher" && (
+                        <>
+                          <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateTeacher(member, member.active ? "archive" : "restore")}>
+                            {member.active ? "Archive" : "Restore"}
+                          </Button>
+                          <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => void updateTeacher(member, "delete")}>
+                            Permanently delete
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
-import { fetchWithNeonAuth } from "../auth/client";
+import { fetchWithNeonAuth, requestSchoolPasswordReset } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -10,6 +10,7 @@ type PortalStudent = {
   admission_number: string;
   class_name: string | null;
   linked: boolean;
+  email: string | null;
 };
 type PortalGuardian = {
   id: string;
@@ -186,6 +187,23 @@ export function PortalAccountSetup() {
     }
   }
 
+  async function sendPasswordReset(name: string, email: string) {
+    if (!window.confirm(`Send a password reset email to ${name} at ${email}?`)) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    setActivationUrl("");
+    setInvitationEmail(null);
+    try {
+      await requestSchoolPasswordReset(email);
+      setNotice(`If ${email} has a sign-in account, Neon Auth will send a password reset link.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not send the password reset email");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const availableStudents = students.filter((student) => !student.linked);
   const availableGuardians = guardians.filter((guardian) => guardian.active && !guardian.linked);
   const selectedGuardian = guardians.find((guardian) => guardian.id === guardianId);
@@ -194,9 +212,7 @@ export function PortalAccountSetup() {
     <section id="portal-account-setup" className="glass-panel mt-4 rounded-lg p-5">
       <div>
         <h2 className="font-display text-xl font-bold">Parent and student portal access</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Add a guardian to an existing student or link verified sign-in accounts to school records. Parent access uses the guardian&apos;s email.
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">Add guardians and link portal sign-ins. Admins can send a secure password reset email to an existing linked account.</p>
       </div>
       {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
       {notice && <p role={invitationEmail?.sent === false ? "alert" : "status"} className={`mt-4 rounded-md border px-3 py-2 text-sm ${invitationEmail?.sent === false ? "border-amber-600/30 bg-amber-600/5 text-amber-900" : "border-emerald-600/20 bg-emerald-600/5 text-emerald-800"}`}>{notice}</p>}
@@ -263,6 +279,32 @@ export function PortalAccountSetup() {
               {availableGuardians.length === 0 && <p className="text-xs text-muted-foreground">Every guardian record is already linked.</p>}
             </form>
           </div>
+          {students.some((student) => student.linked && student.email) && (
+            <div className="overflow-x-auto rounded-md border border-border p-4">
+              <h3 className="mb-2 font-semibold">Linked student accounts</h3>
+              <table className="w-full min-w-[560px] text-left text-sm">
+                <thead className="border-b text-xs text-muted-foreground">
+                  <tr>{["Student", "Email", "Class", "Action"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
+                </thead>
+                <tbody className="divide-y divide-border/70">
+                  {students.filter((student) => student.linked && student.email).map((student) => (
+                    <tr key={student.id}>
+                      <td className="px-3 py-3">{student.name}<p className="text-xs text-muted-foreground">{student.admission_number}</p></td>
+                      <td className="px-3 py-3">{student.email}</td>
+                      <td className="px-3 py-3">{student.class_name ?? "—"}</td>
+                      <td className="px-3 py-3">
+                        <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => {
+                          if (student.email) void sendPasswordReset(student.name, student.email);
+                        }}>
+                          Send reset email
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
       {!loading && guardians.length > 0 && (
@@ -284,6 +326,13 @@ export function PortalAccountSetup() {
                       <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void updateGuardian(guardian, guardian.active ? "archive" : "restore")}>
                         {guardian.active ? "Archive" : "Restore"}
                       </Button>
+                      {guardian.active && guardian.linked && guardian.email && (
+                        <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => {
+                          if (guardian.email) void sendPasswordReset(guardian.name, guardian.email);
+                        }}>
+                          Send reset email
+                        </Button>
+                      )}
                       <Button type="button" variant="destructive" size="sm" disabled={saving} onClick={() => void updateGuardian(guardian, "delete")}>
                         Permanently delete
                       </Button>

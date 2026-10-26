@@ -1076,9 +1076,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 select jsonb_agg(jsonb_build_object(
                   'id', st.id, 'name', st.first_name || ' ' || st.last_name,
                   'admission_number', st.admission_number,
-                  'class_name', c.name, 'linked', st.user_id is not null
+                  'class_name', c.name, 'linked', st.user_id is not null,
+                  'email', linked_user.email
                 ) order by st.last_name, st.first_name, st.admission_number)
                 from students st
+                left join users linked_user on linked_user.id = st.user_id
                 left join lateral (
                   select c.name
                   from class_enrollments e
