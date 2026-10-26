@@ -200,7 +200,15 @@ function LoginPage() {
         email: email.trim().toLowerCase(),
         password,
       });
-      if (result.error) throw new Error(result.error.message);
+      if (result.error) {
+        const authErrorMessage = result.error.message ?? "";
+        if (/^(unauthorized|invalid email or password|invalid credentials)$/i.test(authErrorMessage.trim())) {
+          throw new Error(
+            "We couldn't sign you in. Check your email and password. If you already activated this account, use Forgot password? to reset it. First-time users should choose Activate your account.",
+          );
+        }
+        throw new Error(authErrorMessage || "Sign-in failed");
+      }
       const token = await getNeonAccessToken();
       const previewTenant =
         new URLSearchParams(window.location.search).get("tenant") ??
@@ -220,8 +228,17 @@ function LoginPage() {
           crestUrl?: string | null;
         };
       } | null;
-      if (!response.ok || !payload?.membership?.role)
+      if (!response.ok || !payload?.membership?.role) {
+        if (
+          response.status === 403 &&
+          /does not have access to this school/i.test(payload?.error ?? "")
+        ) {
+          throw new Error(
+            "You signed in, but this email does not have access to this school. Ask the School Admin to check that this account has the correct school role.",
+          );
+        }
         throw new Error(payload?.error ?? "This account has no school access");
+      }
 
       const membership = payload.membership;
       sessionStorage.setItem("hg-role", String(membership.role));
