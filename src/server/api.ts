@@ -1265,7 +1265,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                     where linked_user.id = guardians.user_id
                       and lower(linked_user.email) = excluded.email
                   )
-              returning id, school_id, user_id
+              returning id, school_id, user_id, full_name, email, phone
             ),
             linked_guardian as (
               insert into student_guardians (school_id, student_id, guardian_id, relationship, is_primary)
