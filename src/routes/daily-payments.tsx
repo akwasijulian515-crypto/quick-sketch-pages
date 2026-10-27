@@ -389,6 +389,11 @@ function DailyPaymentsPage() {
               <p className="text-sm text-muted-foreground">
                 No active enrolled learners found for this school and date.
               </p>
+              <p className="mx-auto mt-2 max-w-xl text-xs text-muted-foreground">
+                The multi-day selector and daily-fee actions appear on each learner row. Enroll
+                learners in a class and configure its Daily fee under School Administration → Class
+                fee rules to use them.
+              </p>
               <Button className="mt-3" size="sm" variant="outline" asChild>
                 <Link to="/school-admin">Review School Administration</Link>
               </Button>

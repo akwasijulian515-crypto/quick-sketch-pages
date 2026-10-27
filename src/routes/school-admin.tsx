@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SchoolShell } from "@/components/school-shell";
+import { Switch } from "@/components/ui/switch";
 import { SchoolFeeRules } from "@/components/school-fee-rules";
 import { SchoolPromotionReview } from "@/components/school-promotion-review";
 import { PortalAccountSetup } from "@/components/portal-account-setup";
@@ -284,6 +285,40 @@ function SchoolWorkflowSettings() {
       <p className="mt-1 text-sm text-muted-foreground">
         These settings apply only to this school.
       </p>
+      <div className="mt-4 flex flex-col gap-4 rounded-lg border border-primary/25 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="max-w-3xl">
+          <h3 className="font-semibold">Split daily fees into studies and feeding</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Turn this on to make studies the required daily fee and feeding optional. Set each
+            amount in Class fee rules, then collect studies only or studies plus feeding from each
+            learner&apos;s Daily payments row. The same row supports collecting multiple school
+            days.
+          </p>
+          {!settingsLoaded && !loading && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <span role="alert" className="text-sm text-destructive">
+                Load the saved school settings before changing this option.
+              </span>
+              <Button size="sm" variant="outline" onClick={() => void loadSettings()}>
+                Retry loading settings
+              </Button>
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="text-sm font-medium">
+            {settings.daily_fee_split_enabled ? "On" : "Off"}
+          </span>
+          <Switch
+            aria-label="Split daily fees into studies and feeding"
+            checked={settings.daily_fee_split_enabled}
+            disabled={!settingsLoaded || loading || saving}
+            onCheckedChange={(checked) =>
+              setSettings((current) => ({ ...current, daily_fee_split_enabled: checked }))
+            }
+          />
+        </div>
+      </div>
       {error && (
         <p
           role="alert"
@@ -297,37 +332,12 @@ function SchoolWorkflowSettings() {
       ) : !settingsLoaded ? (
         <div className="mt-4">
           <p className="text-sm text-muted-foreground">
-            The saved settings were not loaded, so changes are unavailable until they can be
+            Other workflow settings are unavailable until the saved school settings can be
             retrieved.
           </p>
-          <Button className="mt-3" variant="outline" onClick={() => void loadSettings()}>
-            Retry loading settings
-          </Button>
         </div>
       ) : (
         <div className="mt-4 grid gap-4 lg:grid-cols-3">
-          <label className="flex items-start gap-3 rounded-md border border-border p-4">
-            <input
-              type="checkbox"
-              checked={settings.daily_fee_split_enabled}
-              onChange={(event) =>
-                setSettings((current) => ({
-                  ...current,
-                  daily_fee_split_enabled: event.target.checked,
-                }))
-              }
-              className="mt-1 size-4 accent-primary"
-            />
-            <span>
-              <span className="block text-sm font-semibold">
-                Split daily fees into studies and feeding
-              </span>
-              <span className="mt-1 block text-xs text-muted-foreground">
-                Studies is required; optional feeding is set with the separate Daily feeding class
-                fee rule.
-              </span>
-            </span>
-          </label>
           <label className="flex items-start gap-3 rounded-md border border-border p-4">
             <input
               type="checkbox"
@@ -376,7 +386,7 @@ function SchoolWorkflowSettings() {
       )}
       {!loading && settingsLoaded && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Button onClick={() => void saveSettings()} disabled={saving}>
+          <Button onClick={() => void saveSettings()} disabled={saving || !settingsLoaded}>
             {saving ? "Saving..." : "Save settings"}
           </Button>
           {notice && <span className="text-sm text-emerald-700">{notice}</span>}
