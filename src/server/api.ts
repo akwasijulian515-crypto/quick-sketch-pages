@@ -1905,25 +1905,261 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         return json({ deleted: true, student_id: rows[0]["id"] });
       }
       if (request.method === "PATCH") {
-        const payload = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-        if (!payload || typeof payload !== "object" || typeof payload["active"] !== "boolean") {
-          return badRequest("Choose whether the student should be active");
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object") {
+          return badRequest("A JSON request body is required");
         }
-        const rows = await withDatabaseContext(
-          sql,
-          { schoolId: school.schoolId },
-          (tx) =>
-            tx`
-            update students
-            set active = ${payload["active"]}
-            where id = ${studentProfileMatch[1]}::uuid
-              and school_id = ${school.schoolId}::uuid
-            returning id, first_name, last_name, admission_number as student_id_number,
-                      case when active then 'active' else 'inactive' end as status
-          `,
-        );
-        if (!rows[0]) return json({ error: "Student not found" }, 404);
-        return json({ student: rows[0] });
+        const body = payload as Record<string, unknown>;
+        if (typeof body["active"] === "boolean" && Object.keys(body).length === 1) {
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
+              update students
+              set active = ${body["active"]}
+              where id = ${studentProfileMatch[1]}::uuid
+                and school_id = ${school.schoolId}::uuid
+              returning id, first_name, last_name, admission_number as student_id_number,
+                        case when active then 'active' else 'inactive' end as status
+            `,
+          );
+          if (!rows[0]) return json({ error: "Student not found" }, 404);
+          return json({ student: rows[0] });
+        }
+
+        const firstName = typeof body["first_name"] === "string" ? body["first_name"].trim() : "";
+        const lastName = typeof body["last_name"] === "string" ? body["last_name"].trim() : "";
+        const admissionNumber =
+          typeof body["admission_number"] === "string" ? body["admission_number"].trim() : "";
+        const classId =
+          body["class_id"] == null || body["class_id"] === "" ? null : body["class_id"];
+        const joinedOn = typeof body["joined_on"] === "string" ? body["joined_on"].trim() : "";
+        const dateOfBirth =
+          typeof body["date_of_birth"] === "string" ? body["date_of_birth"].trim() : "";
+        const gender = typeof body["gender"] === "string" ? body["gender"].trim() : "";
+        const address = typeof body["address"] === "string" ? body["address"].trim() : "";
+        const emergencyContact =
+          typeof body["emergency_contact"] === "string" ? body["emergency_contact"].trim() : "";
+        const medicalNotes =
+          typeof body["medical_notes"] === "string" ? body["medical_notes"].trim() : "";
+        if (!firstName || firstName.length > 100)
+          return badRequest("First name must be 1–100 characters");
+        if (!lastName || lastName.length > 100)
+          return badRequest("Last name must be 1–100 characters");
+        if (!admissionNumber || admissionNumber.length > 100)
+          return badRequest("Student ID must be 1–100 characters");
+        if (!uuidOrNull(classId)) return badRequest("Choose a valid class");
+        if (!validIsoDate(joinedOn)) return badRequest("Enter a valid date joined");
+        if (dateOfBirth && !validIsoDate(dateOfBirth))
+          return badRequest("Enter a valid date of birth");
+        if (gender.length > 40) return badRequest("Gender must be at most 40 characters");
+        if (address.length > 1000) return badRequest("Address must be at most 1000 characters");
+        if (emergencyContact.length > 40)
+          return badRequest("Emergency contact must be at most 40 characters");
+        if (medicalNotes.length > 2000)
+          return badRequest("Medical notes must be at most 2000 characters");
+
+        const guardian =
+          body["guardian"] && typeof body["guardian"] === "object"
+            ? (body["guardian"] as Record<string, unknown>)
+            : {};
+        const guardianName =
+          typeof guardian["full_name"] === "string" ? guardian["full_name"].trim() : "";
+        const guardianPhone = typeof guardian["phone"] === "string" ? guardian["phone"].trim() : "";
+        const guardianEmail =
+          typeof guardian["email"] === "string" ? guardian["email"].trim().toLowerCase() : "";
+        const guardianRelationship =
+          typeof guardian["relationship"] === "string" ? guardian["relationship"].trim() : "";
+        if (
+          guardianName.length > 160 ||
+          guardianPhone.length > 40 ||
+          guardianEmail.length > 254 ||
+          guardianRelationship.length > 60
+        ) {
+          return badRequest("Guardian contact information is too long");
+        }
+        if (guardianEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardianEmail))
+          return badRequest("Enter a valid guardian email address");
+
+        if (classId) {
+          const classRows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
+              select id from classes
+              where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
+              limit 1
+            `,
+          );
+          if (!classRows[0]) return badRequest("The selected class does not exist in this school");
+        }
+
+        try {
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
+              with current_student as materialized (
+                select st.id, st.school_id,
+                       enrollment.id as enrollment_id, enrollment.class_id,
+                       primary_guardian.guardian_id
+                from students st
+                left join lateral (
+                  select e.id, e.class_id
+                  from class_enrollments e
+                  where e.school_id = st.school_id
+                    and e.student_id = st.id
+                    and e.ends_on is null
+                  order by e.starts_on desc
+                  limit 1
+                ) enrollment on true
+                left join lateral (
+                  select sg.guardian_id
+                  from student_guardians sg
+                  where sg.school_id = st.school_id
+                    and sg.student_id = st.id
+                    and sg.is_primary
+                  limit 1
+                ) primary_guardian on true
+                where st.id = ${studentProfileMatch[1]}::uuid
+                  and st.school_id = ${school.schoolId}::uuid
+                for update of st
+              ),
+              requested_class as materialized (
+                select id
+                from classes
+                where id = ${classId}::uuid
+                  and school_id = ${school.schoolId}::uuid
+                  and ${classId}::uuid is not null
+              ),
+              updated_student as (
+                update students st
+                set admission_number = ${admissionNumber},
+                    first_name = ${firstName},
+                    last_name = ${lastName},
+                    joined_on = ${joinedOn}::date,
+                    date_of_birth = nullif(${dateOfBirth}, '')::date,
+                    gender = nullif(${gender}, ''),
+                    address = nullif(${address}, ''),
+                    emergency_contact = nullif(${emergencyContact}, ''),
+                    medical_notes = nullif(${medicalNotes}, '')
+                from current_student current
+                where st.id = current.id
+                  and st.school_id = current.school_id
+                  and (
+                    ${classId}::uuid is null
+                    or exists (select 1 from requested_class)
+                  )
+                returning st.id, st.school_id, st.admission_number, st.first_name,
+                          st.last_name, st.active, st.joined_on, st.date_of_birth,
+                          st.gender, st.address, st.emergency_contact, st.medical_notes
+              ),
+              closed_enrollment as (
+                update class_enrollments enrollment
+                set ends_on = greatest(current_date, enrollment.starts_on)
+                from current_student current, updated_student updated
+                where enrollment.id = current.enrollment_id
+                  and current.class_id is distinct from ${classId}::uuid
+                returning enrollment.id
+              ),
+              added_enrollment as (
+                insert into class_enrollments (school_id, class_id, student_id)
+                select updated.school_id, requested.id, updated.id
+                from updated_student updated
+                cross join requested_class requested
+                cross join (select count(*) from closed_enrollment) close_dependency
+                where not exists (
+                    select 1 from current_student current
+                    where current.class_id = requested.id
+                  )
+                returning id
+              ),
+              updated_primary_guardian as (
+                update guardians guardian
+                set full_name = ${guardianName},
+                    phone = nullif(${guardianPhone}, ''),
+                    email = nullif(${guardianEmail}, ''),
+                    updated_at = now()
+                from current_student current, updated_student updated
+                where guardian.id = current.guardian_id
+                  and ${guardianEmail} = ''
+                  and (${Boolean(guardianName || guardianPhone || guardianEmail)})
+                returning guardian.id, guardian.full_name, guardian.phone, guardian.email
+              ),
+              inserted_guardian as (
+                insert into guardians (school_id, full_name, phone, email)
+                select updated.school_id, ${guardianName}, nullif(${guardianPhone}, ''),
+                       nullif(${guardianEmail}, '')
+                from updated_student updated
+                where ${Boolean(guardianName || guardianPhone || guardianEmail)}
+                  and not exists (select 1 from updated_primary_guardian)
+                on conflict (school_id, email) do update
+                  set full_name = excluded.full_name,
+                      phone = excluded.phone,
+                      updated_at = now()
+                returning id, full_name, phone, email
+              ),
+              chosen_guardian as (
+                select id, full_name, phone, email from updated_primary_guardian
+                union all
+                select id, full_name, phone, email from inserted_guardian
+              ),
+              removed_primary_guardian as (
+                delete from student_guardians link
+                using updated_student updated
+                where link.school_id = updated.school_id
+                  and link.student_id = updated.id
+                  and link.is_primary
+                  and not exists (
+                    select 1 from chosen_guardian chosen where chosen.id = link.guardian_id
+                  )
+                returning link.student_id
+              ),
+              linked_guardian as (
+                insert into student_guardians
+                  (school_id, student_id, guardian_id, relationship, is_primary)
+                select updated.school_id, updated.id, chosen.id,
+                       nullif(${guardianRelationship}, ''), true
+                from updated_student updated
+                cross join chosen_guardian chosen
+                cross join (select count(*) from removed_primary_guardian) removal_dependency
+                on conflict (student_id, guardian_id) do update
+                  set relationship = excluded.relationship, is_primary = true
+                returning student_id
+              )
+              select updated.id, updated.first_name, updated.last_name,
+                     updated.admission_number as student_id_number,
+                     case when updated.active then 'active' else 'inactive' end as status,
+                     updated.joined_on, updated.date_of_birth, updated.gender,
+                     updated.address, updated.emergency_contact, updated.medical_notes,
+                     ${classId}::uuid as class_id, class.name as class_name,
+                     chosen.full_name as guardian_name, chosen.phone as guardian_phone,
+                     chosen.email as guardian_email,
+                     nullif(${guardianRelationship}, '') as guardian_relationship
+              from updated_student updated
+              left join classes class
+                on class.id = ${classId}::uuid and class.school_id = updated.school_id
+              left join chosen_guardian chosen on true
+              limit 1
+            `,
+          );
+          if (!rows[0]) return json({ error: "Student not found" }, 404);
+          return json({ student: rows[0] });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            /students_school_id_admission_number_key|duplicate key/i.test(error.message)
+          ) {
+            return json(
+              { error: "That student ID or guardian email is already in use at this school" },
+              409,
+            );
+          }
+          throw error;
+        }
       }
       const rows = await withDatabaseContext(
         sql,
@@ -1933,9 +2169,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           select st.id, st.first_name, st.last_name,
                  st.admission_number as student_id_number,
                  case when st.active then 'active' else 'inactive' end as status,
-                 st.date_of_birth, st.gender, st.address, st.emergency_contact,
+                 st.joined_on, st.date_of_birth, st.gender, st.address, st.emergency_contact,
                  st.medical_notes, c.name as class_name,
+                 enrollment.class_id,
                  g.full_name as guardian_name, g.phone as guardian_phone,
+                 g.email as guardian_email,
                  sg.relationship as guardian_relationship
           from students st
           left join lateral (

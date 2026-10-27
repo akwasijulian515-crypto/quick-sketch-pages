@@ -27,14 +27,19 @@ type StudentStatus = "Active" | "Inactive";
 
 type Student = {
   id: string;
+  firstName: string;
+  lastName: string;
   name: string;
   studentId: string;
+  classId: string;
   className: string;
   status: StudentStatus;
+  joinedOn: string;
   dob: string;
   gender: string;
   guardian: string;
   phone: string;
+  guardianEmail: string;
   address: string;
   emergencyContact: string;
   medicalNote: string;
@@ -46,7 +51,9 @@ type StudentRecord = {
   first_name: string;
   last_name: string;
   student_id_number: string;
+  class_id?: string | null;
   status: string;
+  joined_on?: string | null;
   class_name: string | null;
   date_of_birth?: string | null;
   gender?: string | null;
@@ -55,6 +62,7 @@ type StudentRecord = {
   medical_notes?: string | null;
   guardian_name?: string | null;
   guardian_phone?: string | null;
+  guardian_email?: string | null;
   guardian_relationship?: string | null;
 };
 
@@ -126,14 +134,19 @@ function mapStudent(record: StudentRecord): Student {
   const dob = record.date_of_birth?.slice(0, 10) ?? "";
   return {
     id: record.id,
+    firstName: record.first_name,
+    lastName: record.last_name,
     name: `${record.first_name} ${record.last_name}`.trim(),
     studentId: record.student_id_number,
+    classId: record.class_id ?? "",
     className: record.class_name ?? "Unassigned",
     status: record.status.toLowerCase() === "active" ? "Active" : "Inactive",
+    joinedOn: record.joined_on?.slice(0, 10) ?? "",
     dob,
     gender: record.gender ?? "",
     guardian: record.guardian_name ?? "",
     phone: record.guardian_phone ?? "",
+    guardianEmail: record.guardian_email ?? "",
     address: record.address ?? "",
     emergencyContact: record.emergency_contact ?? "",
     medicalNote: record.medical_notes ?? "",
@@ -217,7 +230,8 @@ function parseBulkAdmissionRows(text: string): { rows: BulkAdmissionRow[]; error
   const rows: BulkAdmissionRow[] = [];
   const errors: string[] = [];
 
-  if (parsed.length - 1 > 200) throw new Error("A spreadsheet can contain at most 200 student rows.");
+  if (parsed.length - 1 > 200)
+    throw new Error("A spreadsheet can contain at most 200 student rows.");
 
   parsed.slice(1).forEach((values, index) => {
     const rowNumber = index + 2;
@@ -273,7 +287,9 @@ export default function StudentsPage() {
   const [showAdmission, setShowAdmission] = useState(false);
   const [showBulkAdmission, setShowBulkAdmission] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [selectedProfileTab, setSelectedProfileTab] = useState<"Overview" | "Fees" | "Attendance">("Overview");
+  const [selectedProfileTab, setSelectedProfileTab] = useState<"Overview" | "Fees" | "Attendance">(
+    "Overview",
+  );
   const [notice, setNotice] = useState("");
   const [canManageStudents, setCanManageStudents] = useState(false);
   const [attendanceDate, setAttendanceDate] = useState(() => localDateString(new Date()));
@@ -450,7 +466,7 @@ export default function StudentsPage() {
               onClick={() => setShowBulkAdmission(true)}
               className="admin-btn-secondary flex items-center gap-2"
             >
-              <Upload className="w-4 h-4" />               Import file
+              <Upload className="w-4 h-4" /> Import file
             </button>
           )}
         </div>
@@ -852,15 +868,21 @@ export default function StudentsPage() {
                     <thead className="bg-muted/30 text-left text-xs text-muted-foreground">
                       <tr>
                         {["Student", "Student ID", "Class", "Status", "Note"].map((label) => (
-                          <th key={label} className="px-5 py-3 font-medium">{label}</th>
+                          <th key={label} className="px-5 py-3 font-medium">
+                            {label}
+                          </th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/50">
                       {attendanceRecords.map((record) => (
                         <tr key={record.student_id}>
-                          <td className="px-5 py-3 font-medium">{record.first_name} {record.last_name}</td>
-                          <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{record.admission_number}</td>
+                          <td className="px-5 py-3 font-medium">
+                            {record.first_name} {record.last_name}
+                          </td>
+                          <td className="px-5 py-3 font-mono text-xs text-muted-foreground">
+                            {record.admission_number}
+                          </td>
                           <td className="px-5 py-3">{record.class_name}</td>
                           <td className="px-5 py-3 capitalize">{record.attendance_status}</td>
                           <td className="px-5 py-3 text-muted-foreground">{record.note || "—"}</td>
@@ -876,14 +898,21 @@ export default function StudentsPage() {
                         </tr>
                       )}
                       {attendanceLoading && attendanceRecords.length === 0 && (
-                        <tr><td colSpan={5} className="px-5 py-12 text-center text-muted-foreground">Loading attendance records…</td></tr>
+                        <tr>
+                          <td colSpan={5} className="px-5 py-12 text-center text-muted-foreground">
+                            Loading attendance records…
+                          </td>
+                        </tr>
                       )}
                     </tbody>
                   </table>
                 </div>
                 {attendanceRecords.length < attendanceTotal && !attendanceLoading && (
                   <div className="border-t border-border p-4 text-center">
-                    <button className="admin-btn-secondary" onClick={() => setPage((current) => current + 1)}>
+                    <button
+                      className="admin-btn-secondary"
+                      onClick={() => setPage((current) => current + 1)}
+                    >
                       Load more attendance records
                     </button>
                   </div>
@@ -915,6 +944,15 @@ export default function StudentsPage() {
             student={selectedStudent}
             initialTab={selectedProfileTab}
             canManageStudents={canManageStudents}
+            classes={classes}
+            onStudentUpdated={(updatedStudent) => {
+              setStudents((current) =>
+                current.map((item) => (item.id === updatedStudent.id ? updatedStudent : item)),
+              );
+              setSelectedStudent(updatedStudent);
+              setPage(1);
+              setReloadCount((count) => count + 1);
+            }}
             onStatusChange={(studentId, status) => {
               setStudents((current) =>
                 current.map((item) => (item.id === studentId ? { ...item, status } : item)),
@@ -1258,7 +1296,8 @@ function BulkAdmissionModal({
         <div className="p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              Use a spreadsheet with first_name and last_name columns. CSV, Excel .xls, and .xlsx are supported.
+              Use a spreadsheet with first_name and last_name columns. CSV, Excel .xls, and .xlsx
+              are supported.
             </p>
             <button
               type="button"
@@ -1399,6 +1438,8 @@ function StudentProfile({
   student,
   initialTab,
   canManageStudents,
+  classes,
+  onStudentUpdated,
   onStatusChange,
   onDelete,
   onClose,
@@ -1406,6 +1447,8 @@ function StudentProfile({
   student: Student;
   initialTab: "Overview" | "Fees" | "Attendance";
   canManageStudents: boolean;
+  classes: ClassOption[];
+  onStudentUpdated: (student: Student) => void;
   onStatusChange: (studentId: string, status: StudentStatus) => void;
   onDelete: (studentId: string) => void;
   onClose: () => void;
@@ -1416,6 +1459,8 @@ function StudentProfile({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [savingStatus, setSavingStatus] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [savingDetails, setSavingDetails] = useState(false);
   const [deletingStudent, setDeletingStudent] = useState(false);
   const [statusNotice, setStatusNotice] = useState("");
   const [exportingRecord, setExportingRecord] = useState(false);
@@ -1480,6 +1525,49 @@ function StudentProfile({
     }
   }
 
+  async function saveStudentDetails(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    setSavingDetails(true);
+    setError("");
+    setStatusNotice("");
+    try {
+      const result = await schoolApi<{ student: StudentRecord }>(
+        `/api/school/students/${encodeURIComponent(student.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            first_name: String(data.get("first_name") ?? "").trim(),
+            last_name: String(data.get("last_name") ?? "").trim(),
+            admission_number: String(data.get("admission_number") ?? "").trim(),
+            class_id: String(data.get("class_id") ?? ""),
+            joined_on: String(data.get("joined_on") ?? ""),
+            date_of_birth: String(data.get("date_of_birth") ?? ""),
+            gender: String(data.get("gender") ?? "").trim(),
+            address: String(data.get("address") ?? "").trim(),
+            emergency_contact: String(data.get("emergency_contact") ?? "").trim(),
+            medical_notes: String(data.get("medical_notes") ?? "").trim(),
+            guardian: {
+              full_name: String(data.get("guardian_name") ?? "").trim(),
+              phone: String(data.get("guardian_phone") ?? "").trim(),
+              email: String(data.get("guardian_email") ?? "").trim(),
+              relationship: String(data.get("guardian_relationship") ?? "").trim(),
+            },
+          }),
+        },
+      );
+      const updated = mapStudent(result.student);
+      setDetails(updated);
+      onStudentUpdated(updated);
+      setEditingDetails(false);
+      setStatusNotice("Student details saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update student details");
+    } finally {
+      setSavingDetails(false);
+    }
+  }
+
   async function permanentlyDeleteStudent() {
     const confirmation = window.prompt(
       `Permanent deletion cannot be undone and is blocked for students with academic or financial history.\nType ${profile.studentId} to continue.`,
@@ -1490,10 +1578,14 @@ function StudentProfile({
     setError("");
     setStatusNotice("");
     try {
-      await schoolApi(`/api/school/students/${encodeURIComponent(student.id)}`, { method: "DELETE" });
+      await schoolApi(`/api/school/students/${encodeURIComponent(student.id)}`, {
+        method: "DELETE",
+      });
       onDelete(student.id);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not permanently delete this student");
+      setError(
+        cause instanceof Error ? cause.message : "Could not permanently delete this student",
+      );
     } finally {
       setDeletingStudent(false);
     }
@@ -1510,10 +1602,9 @@ function StudentProfile({
         fetchAllProfileRecords<GradeHistoryRecord>(
           `/api/school/students/${encodeURIComponent(student.id)}/history/grades`,
         ),
-        fetchAllProfileRecords<ProfileFinancialRecord>(
-          "/api/school/student-financial-records",
-          { student_id: student.id },
-        ),
+        fetchAllProfileRecords<ProfileFinancialRecord>("/api/school/student-financial-records", {
+          student_id: student.id,
+        }),
       ]);
       downloadStudentRecordPdf({
         schoolName,
@@ -1526,7 +1617,9 @@ function StudentProfile({
         financialBalances: finances.fee_balances,
       });
     } catch (cause) {
-      setExportError(cause instanceof Error ? cause.message : "Could not download this student record");
+      setExportError(
+        cause instanceof Error ? cause.message : "Could not download this student record",
+      );
     } finally {
       setExportingRecord(false);
     }
@@ -1610,48 +1703,239 @@ function StudentProfile({
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading saved profile details…</p>
           ) : activeTab === "Overview" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <InfoCard
-                icon={CalendarDays}
-                label="Date of Birth"
-                value={profile.dob || "Not recorded"}
-              />
-              <InfoCard
-                icon={GraduationCap}
-                label="Gender"
-                value={profile.gender || "Not recorded"}
-              />
-              <InfoCard
-                icon={Users}
-                label="Guardian"
-                value={profile.guardian || "Not recorded"}
-                {...(profile.guardianRelationship ? { sub: profile.guardianRelationship } : {})}
-              />
-              <InfoCard
-                icon={Phone}
-                label="Guardian Phone"
-                value={profile.phone || "Not recorded"}
-              />
-              <InfoCard icon={MapPin} label="Address" value={profile.address || "Not recorded"} />
-              <InfoCard
-                icon={Phone}
-                label="Emergency Contact"
-                value={profile.emergencyContact || "Not recorded"}
-              />
-              <InfoCard
-                icon={Heart}
-                label="Medical Notes"
-                value={profile.medicalNote || "None recorded"}
-              />
-            </div>
+            editingDetails ? (
+              <form className="space-y-4" onSubmit={(event) => void saveStudentDetails(event)}>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    First name
+                    <input
+                      name="first_name"
+                      required
+                      maxLength={100}
+                      defaultValue={profile.firstName}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Last name
+                    <input
+                      name="last_name"
+                      required
+                      maxLength={100}
+                      defaultValue={profile.lastName}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Student ID
+                    <input
+                      name="admission_number"
+                      required
+                      maxLength={100}
+                      defaultValue={profile.studentId}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Class
+                    <select name="class_id" defaultValue={profile.classId} className="admin-input">
+                      <option value="">Unassigned</option>
+                      {profile.classId && !classes.some((item) => item.id === profile.classId) && (
+                        <option value={profile.classId}>{profile.className}</option>
+                      )}
+                      {classes.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                          {item.academic_year_name ? ` · ${item.academic_year_name}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Date joined
+                    <input
+                      name="joined_on"
+                      type="date"
+                      required
+                      defaultValue={profile.joinedOn}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Date of birth
+                    <input
+                      name="date_of_birth"
+                      type="date"
+                      defaultValue={profile.dob}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Gender
+                    <input
+                      name="gender"
+                      maxLength={40}
+                      defaultValue={profile.gender}
+                      placeholder="Gender"
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Guardian name
+                    <input
+                      name="guardian_name"
+                      maxLength={160}
+                      defaultValue={profile.guardian}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Guardian phone
+                    <input
+                      name="guardian_phone"
+                      maxLength={40}
+                      defaultValue={profile.phone}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Guardian email
+                    <input
+                      name="guardian_email"
+                      type="email"
+                      maxLength={254}
+                      defaultValue={profile.guardianEmail}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Guardian relationship
+                    <input
+                      name="guardian_relationship"
+                      maxLength={60}
+                      defaultValue={profile.guardianRelationship}
+                      placeholder="Parent/guardian"
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground sm:col-span-2">
+                    Address
+                    <textarea
+                      name="address"
+                      maxLength={1000}
+                      defaultValue={profile.address}
+                      rows={2}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Emergency contact
+                    <input
+                      name="emergency_contact"
+                      maxLength={40}
+                      defaultValue={profile.emergencyContact}
+                      className="admin-input"
+                    />
+                  </label>
+                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                    Medical notes
+                    <textarea
+                      name="medical_notes"
+                      maxLength={2000}
+                      defaultValue={profile.medicalNote}
+                      rows={2}
+                      className="admin-input"
+                    />
+                  </label>
+                </div>
+                <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setEditingDetails(false)}
+                    disabled={savingDetails}
+                    className="admin-btn-secondary"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingDetails}
+                    className="admin-btn-primary disabled:opacity-50"
+                  >
+                    {savingDetails ? "Saving…" : "Save student details"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <InfoCard
+                    icon={CalendarDays}
+                    label="Date of Birth"
+                    value={profile.dob || "Not recorded"}
+                  />
+                  <InfoCard
+                    icon={GraduationCap}
+                    label="Gender"
+                    value={profile.gender || "Not recorded"}
+                  />
+                  <InfoCard
+                    icon={Users}
+                    label="Guardian"
+                    value={profile.guardian || "Not recorded"}
+                    {...(profile.guardianRelationship ? { sub: profile.guardianRelationship } : {})}
+                  />
+                  <InfoCard
+                    icon={Phone}
+                    label="Guardian Phone"
+                    value={profile.phone || "Not recorded"}
+                  />
+                  <InfoCard
+                    icon={MapPin}
+                    label="Address"
+                    value={profile.address || "Not recorded"}
+                  />
+                  <InfoCard
+                    icon={Phone}
+                    label="Emergency Contact"
+                    value={profile.emergencyContact || "Not recorded"}
+                  />
+                  <InfoCard
+                    icon={Heart}
+                    label="Medical Notes"
+                    value={profile.medicalNote || "None recorded"}
+                  />
+                </div>
+                {canManageStudents && (
+                  <div className="mt-5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError("");
+                        setStatusNotice("");
+                        setEditingDetails(true);
+                      }}
+                      disabled={!details}
+                      className="admin-btn-primary"
+                    >
+                      Edit student details
+                    </button>
+                  </div>
+                )}
+              </>
+            )
           ) : activeTab === "Attendance" ? (
-            <ProfileHistory key={`${student.id}-attendance`} studentId={student.id} type="attendance" />
+            <ProfileHistory
+              key={`${student.id}-attendance`}
+              studentId={student.id}
+              type="attendance"
+            />
           ) : activeTab === "Grades" ? (
             <ProfileHistory key={`${student.id}-grades`} studentId={student.id} type="grades" />
           ) : (
             <ProfileFees key={`${student.id}-fees`} studentId={student.id} />
           )}
-          {canManageStudents && (
+          {canManageStudents && !editingDetails && (
             <div className="mt-6 border-t border-border pt-4">
               <div className="flex flex-wrap gap-2">
                 <button
@@ -1682,7 +1966,9 @@ function StudentProfile({
               <p className="mt-2 text-xs text-muted-foreground">
                 {profile.status === "Active"
                   ? "Deactivation keeps this student’s record and history but removes them from active school workflows."
-                  : "Reactivation restores this student to active school workflows."} Permanent deletion requires typing the student ID and is blocked when history exists.
+                  : "Reactivation restores this student to active school workflows."}{" "}
+                Permanent deletion requires typing the student ID and is blocked when history
+                exists.
               </p>
             </div>
           )}
@@ -1777,13 +2063,17 @@ async function fetchAllProfileRecords<T>(
   let pageCount = 1;
   do {
     const params = new URLSearchParams({ ...extraParams, page: String(page), page_size: "100" });
-    const result = await schoolApi<ProfilePage<T> & {
-      totals?: ProfileFinancialReport["totals"];
-      fee_balances?: ProfileFinancialReport["fee_balances"];
-    }>(
-      `${path}?${params}`,
-    );
-    if (!Array.isArray(result.records) || !Number.isInteger(result.page_count) || result.page_count < 0) {
+    const result = await schoolApi<
+      ProfilePage<T> & {
+        totals?: ProfileFinancialReport["totals"];
+        fee_balances?: ProfileFinancialReport["fee_balances"];
+      }
+    >(`${path}?${params}`);
+    if (
+      !Array.isArray(result.records) ||
+      !Number.isInteger(result.page_count) ||
+      result.page_count < 0
+    ) {
       throw new Error("The student record export returned an invalid page");
     }
     records.push(...result.records);
@@ -1798,7 +2088,9 @@ async function fetchAllProfileRecords<T>(
 }
 
 function ProfileHistory({ studentId, type }: { studentId: string; type: "attendance" | "grades" }) {
-  const [report, setReport] = useState<ProfilePage<AttendanceHistoryRecord | GradeHistoryRecord> | null>(null);
+  const [report, setReport] = useState<ProfilePage<
+    AttendanceHistoryRecord | GradeHistoryRecord
+  > | null>(null);
   const [summary, setSummary] = useState<Record<string, number>>({});
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -1809,9 +2101,11 @@ function ProfileHistory({ studentId, type }: { studentId: string; type: "attenda
     setLoading(true);
     setError("");
     const params = new URLSearchParams({ page: String(page), page_size: "20" });
-    void schoolApi<ProfilePage<AttendanceHistoryRecord | GradeHistoryRecord> & { summary?: Record<string, number> }>(
-      `/api/school/students/${encodeURIComponent(studentId)}/history/${type}?${params}`,
-    )
+    void schoolApi<
+      ProfilePage<AttendanceHistoryRecord | GradeHistoryRecord> & {
+        summary?: Record<string, number>;
+      }
+    >(`/api/school/students/${encodeURIComponent(studentId)}/history/${type}?${params}`)
       .then((result) => {
         if (!cancelled) {
           setReport(result);
@@ -1827,11 +2121,19 @@ function ProfileHistory({ studentId, type }: { studentId: string; type: "attenda
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [page, studentId, type]);
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading saved {type} records…</p>;
-  if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+  if (loading)
+    return <p className="text-sm text-muted-foreground">Loading saved {type} records…</p>;
+  if (error)
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        {error}
+      </p>
+    );
   if (!report) return null;
 
   return (
@@ -1855,7 +2157,12 @@ function ProfileHistory({ studentId, type }: { studentId: string; type: "attenda
             {type === "attendance" ? (
               <>
                 <thead className="bg-muted/40 text-muted-foreground">
-                  <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Class</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Note</th></tr>
+                  <tr>
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Class</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Note</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {(report.records as AttendanceHistoryRecord[]).map((record) => (
@@ -1871,12 +2178,26 @@ function ProfileHistory({ studentId, type }: { studentId: string; type: "attenda
             ) : (
               <>
                 <thead className="bg-muted/40 text-muted-foreground">
-                  <tr><th className="px-3 py-2">Subject / period</th><th className="px-3 py-2">Class test</th><th className="px-3 py-2">Project</th><th className="px-3 py-2">Homework</th><th className="px-3 py-2">Group</th><th className="px-3 py-2">Exam</th><th className="px-3 py-2">Total</th><th className="px-3 py-2">Level</th></tr>
+                  <tr>
+                    <th className="px-3 py-2">Subject / period</th>
+                    <th className="px-3 py-2">Class test</th>
+                    <th className="px-3 py-2">Project</th>
+                    <th className="px-3 py-2">Homework</th>
+                    <th className="px-3 py-2">Group</th>
+                    <th className="px-3 py-2">Exam</th>
+                    <th className="px-3 py-2">Total</th>
+                    <th className="px-3 py-2">Level</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {(report.records as GradeHistoryRecord[]).map((record) => (
                     <tr key={record.id} className="border-t border-border/60">
-                      <td className="px-3 py-2"><span className="font-medium">{record.subject_name}</span><span className="block text-muted-foreground">{record.class_name} · {record.term_name} · {record.academic_year_name}</span></td>
+                      <td className="px-3 py-2">
+                        <span className="font-medium">{record.subject_name}</span>
+                        <span className="block text-muted-foreground">
+                          {record.class_name} · {record.term_name} · {record.academic_year_name}
+                        </span>
+                      </td>
                       <td className="px-3 py-2">{record.class_test_score ?? "—"}</td>
                       <td className="px-3 py-2">{record.project_score ?? "—"}</td>
                       <td className="px-3 py-2">{record.homework_score ?? "—"}</td>
@@ -1907,21 +2228,39 @@ function ProfileFees({ studentId }: { studentId: string }) {
     let cancelled = false;
     setLoading(true);
     setError("");
-    const params = new URLSearchParams({ student_id: studentId, page: String(page), page_size: "20" });
+    const params = new URLSearchParams({
+      student_id: studentId,
+      page: String(page),
+      page_size: "20",
+    });
     void schoolApi<ProfileFinancialReport>(`/api/school/student-financial-records?${params}`)
-      .then((result) => { if (!cancelled) setReport(result); })
+      .then((result) => {
+        if (!cancelled) setReport(result);
+      })
       .catch((cause: unknown) => {
         if (!cancelled) {
           setReport(null);
-          setError(cause instanceof Error ? cause.message : "Could not load student financial records");
+          setError(
+            cause instanceof Error ? cause.message : "Could not load student financial records",
+          );
         }
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [page, studentId]);
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading saved payment history…</p>;
-  if (error) return <p role="alert" className="text-sm text-destructive">{error}</p>;
+  if (loading)
+    return <p className="text-sm text-muted-foreground">Loading saved payment history…</p>;
+  if (error)
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        {error}
+      </p>
+    );
   if (!report) return null;
 
   return (
@@ -1929,13 +2268,23 @@ function ProfileFees({ studentId }: { studentId: string }) {
       <div className="mb-4 flex flex-wrap gap-3">
         {report.totals.length === 0 ? (
           <p className="text-sm text-muted-foreground">No payment records yet.</p>
-        ) : report.totals.map((total) => (
-          <div key={total.currency} className="rounded-lg border border-border px-3 py-2">
-            <p className="text-xs text-muted-foreground">{total.currency} · {total.payment_count} records</p>
-            <p className="text-sm font-semibold">{formatProfileAmount(total.verified_amount, total.currency)} verified</p>
-            {Number(total.pending_amount) > 0 && <p className="text-xs text-muted-foreground">{formatProfileAmount(total.pending_amount, total.currency)} pending</p>}
-          </div>
-        ))}
+        ) : (
+          report.totals.map((total) => (
+            <div key={total.currency} className="rounded-lg border border-border px-3 py-2">
+              <p className="text-xs text-muted-foreground">
+                {total.currency} · {total.payment_count} records
+              </p>
+              <p className="text-sm font-semibold">
+                {formatProfileAmount(total.verified_amount, total.currency)} verified
+              </p>
+              {Number(total.pending_amount) > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {formatProfileAmount(total.pending_amount, total.currency)} pending
+                </p>
+              )}
+            </div>
+          ))
+        )}
       </div>
       {report.records.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
@@ -1945,14 +2294,32 @@ function ProfileFees({ studentId }: { studentId: string }) {
         <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[620px] text-left text-xs">
             <thead className="bg-muted/40 text-muted-foreground">
-              <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">Fee</th><th className="px-3 py-2">Amount</th><th className="px-3 py-2">Method</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Receipt</th></tr>
+              <tr>
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Fee</th>
+                <th className="px-3 py-2">Amount</th>
+                <th className="px-3 py-2">Method</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Receipt</th>
+              </tr>
             </thead>
             <tbody>
               {report.records.map((record) => (
                 <tr key={record.id} className="border-t border-border/60">
-                  <td className="px-3 py-2">{(record.daily_fee_date || record.paid_at).slice(0, 10)}</td>
-                  <td className="px-3 py-2"><span className="font-medium">{record.fee_description}</span><span className="block text-muted-foreground">{[record.class_name, record.term_name, record.academic_year_name].filter(Boolean).join(" · ") || record.category.replaceAll("_", " ")}</span></td>
-                  <td className="px-3 py-2">{formatProfileAmount(record.amount, record.currency)}</td>
+                  <td className="px-3 py-2">
+                    {(record.daily_fee_date || record.paid_at).slice(0, 10)}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="font-medium">{record.fee_description}</span>
+                    <span className="block text-muted-foreground">
+                      {[record.class_name, record.term_name, record.academic_year_name]
+                        .filter(Boolean)
+                        .join(" · ") || record.category.replaceAll("_", " ")}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    {formatProfileAmount(record.amount, record.currency)}
+                  </td>
                   <td className="px-3 py-2 capitalize">{record.method.replaceAll("_", " ")}</td>
                   <td className="px-3 py-2 capitalize">{record.status}</td>
                   <td className="px-3 py-2 font-mono">{record.receipt_number || "Not issued"}</td>
@@ -1979,11 +2346,31 @@ function ProfilePager({
   const last = Math.min(report.page * report.page_size, report.total_count);
   return (
     <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-      <span>Showing {first}–{last} of {report.total_count}</span>
+      <span>
+        Showing {first}–{last} of {report.total_count}
+      </span>
       <div className="flex items-center gap-2">
-        <button type="button" aria-label="Previous page" disabled={report.page <= 1} onClick={() => onPageChange(report.page - 1)} className="rounded border border-border p-1 disabled:opacity-40"><ChevronLeft className="size-4" /></button>
-        <span>Page {report.page} of {report.page_count}</span>
-        <button type="button" aria-label="Next page" disabled={report.page >= report.page_count} onClick={() => onPageChange(report.page + 1)} className="rounded border border-border p-1 disabled:opacity-40"><ChevronRight className="size-4" /></button>
+        <button
+          type="button"
+          aria-label="Previous page"
+          disabled={report.page <= 1}
+          onClick={() => onPageChange(report.page - 1)}
+          className="rounded border border-border p-1 disabled:opacity-40"
+        >
+          <ChevronLeft className="size-4" />
+        </button>
+        <span>
+          Page {report.page} of {report.page_count}
+        </span>
+        <button
+          type="button"
+          aria-label="Next page"
+          disabled={report.page >= report.page_count}
+          onClick={() => onPageChange(report.page + 1)}
+          className="rounded border border-border p-1 disabled:opacity-40"
+        >
+          <ChevronRight className="size-4" />
+        </button>
       </div>
     </div>
   );
