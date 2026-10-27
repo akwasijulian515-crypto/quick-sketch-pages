@@ -403,6 +403,34 @@ function SchoolWorkflowSettings() {
     }
   }
 
+  async function handleSplitFeeToggle(enabled: boolean) {
+    if (enabled) {
+      setSettings((current) => ({ ...current, daily_fee_split_enabled: true }));
+      setError("");
+      setNotice("");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await schoolApi<WorkflowSettings>("/api/school/workflow-settings", {
+        method: "PUT",
+        body: JSON.stringify({ ...settings, daily_fee_split_enabled: false }),
+      });
+      setSettings(result);
+      window.dispatchEvent(new Event("school-workflow-settings-updated"));
+      setNotice("Split fees turned off. Daily payments now use one combined fee.");
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : "Could not turn off split daily fees",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="glass-panel mt-4 rounded-lg p-5">
       <div className="flex items-center gap-2">
@@ -439,9 +467,7 @@ function SchoolWorkflowSettings() {
             aria-label="Split daily fees into studies and feeding"
             checked={settings.daily_fee_split_enabled}
             disabled={!settingsLoaded || loading || saving}
-            onCheckedChange={(checked) =>
-              setSettings((current) => ({ ...current, daily_fee_split_enabled: checked }))
-            }
+            onCheckedChange={(checked) => void handleSplitFeeToggle(checked)}
           />
         </div>
       </div>
