@@ -148,7 +148,7 @@ export function SchoolFeeRules() {
       <p className="mt-3 text-xs text-muted-foreground">
         {dailyFeeSplitEnabled
           ? "Daily is the required studies fee. Add a Daily feeding rule for optional feeding collections."
-          : "Daily fee splitting is managed in School workflow settings."}
+          : "With daily-fee splitting off, Daily and Daily feeding rules are collected together as one Daily fee."}
       </p>
       {error && (
         <p

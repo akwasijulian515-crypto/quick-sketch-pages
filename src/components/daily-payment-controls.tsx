@@ -85,7 +85,7 @@ export function DailyPaymentControls({
           disabled={busy}
           onClick={() => onRecord(schoolDays, false)}
         >
-          {busy ? "Recording..." : `${paid ? "Record more" : "Record"} · ${recordLabel}`}
+          {busy ? "Recording..." : `${paid ? "Record more · " : ""}Daily fee · ${recordLabel}`}
         </Button>
       )}
     </div>

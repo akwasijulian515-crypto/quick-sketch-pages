@@ -3387,7 +3387,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                  case when ${dailyFeeSplitEnabled} then coalesce(feeding.amount, 0) else 0 end as feeding_fee_amount,
                  (${dailyFeeSplitEnabled} and feeding.id is not null) as feeding_fee_configured,
                  f.id is not null as daily_fee_configured,
-                 f.amount + case when ${dailyFeeSplitEnabled} then coalesce(feeding.amount, 0) else 0 end as fee_amount,
+                 f.amount + coalesce(feeding.amount, 0) as fee_amount,
                  coalesce(f.currency, p.currency) as currency,
                  attendance.status as attendance_status,
                  p.id as payment_id, p.amount as payment_amount,
@@ -3405,7 +3405,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           left join class_fees feeding on feeding.school_id = c.school_id and feeding.class_id = c.id
             and feeding.academic_year_id = ay.id and feeding.fee_type = 'daily_feeding'
             and feeding.term_id is null and feeding.is_active
-            and ${dailyFeeSplitEnabled}
           left join lateral (
             select ar.status
             from attendance_records ar
@@ -3560,7 +3559,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           ),
           eligible_days as materialized (
             select d.payment_date, s.school_id, s.student_id, s.staff_id,
-                   daily_rule.amount as studies_fee_amount, daily_rule.currency,
+                   case when s.daily_fee_split_enabled then daily_rule.amount
+                     else daily_rule.amount + coalesce(feeding.amount, 0)
+                   end as studies_fee_amount,
+                   daily_rule.currency,
                    s.daily_fee_split_enabled, feeding.amount as feeding_fee_amount,
                    feeding.currency as feeding_fee_currency
             from student s
@@ -3585,7 +3587,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               where f.school_id = s.school_id and f.class_id = daily_rule.class_id
                 and f.academic_year_id = daily_rule.academic_year_id
                 and f.fee_type = 'daily_feeding' and f.term_id is null and f.is_active
-                and s.daily_fee_split_enabled
               limit 1
             ) feeding on true
             where not exists (
@@ -3598,6 +3599,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                   and existing.daily_fee_date = d.payment_date and existing.category = 'daily_fee'
               )
               and daily_rule.amount > 0
+              and (
+                s.daily_fee_split_enabled
+                or feeding.amount is null
+                or feeding.currency = daily_rule.currency
+              )
               and (
                 not ${includeFeeding}
                 or (s.daily_fee_split_enabled and feeding.amount is not null
