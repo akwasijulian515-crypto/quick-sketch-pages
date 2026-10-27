@@ -63,16 +63,6 @@ type ClassTeacher = {
   active: boolean;
 };
 
-type Student = {
-  id: string;
-  first_name: string;
-  last_name: string;
-  student_id_number: string;
-  status: "active" | "inactive";
-  class_id: string | null;
-  class_name: string | null;
-};
-
 type AcademicYear = {
   id: string;
   name: string;
@@ -560,9 +550,6 @@ function DirectoryManager() {
   const [editedClassName, setEditedClassName] = useState("");
   const [editedClassTeacher, setEditedClassTeacher] = useState("");
   const [classYearId, setClassYearId] = useState("");
-  const [rosterClass, setRosterClass] = useState<SchoolClass | null>(null);
-  const [roster, setRoster] = useState<Student[]>([]);
-  const [rosterLoading, setRosterLoading] = useState(false);
 
   const loadClasses = useCallback(async () => {
     const result = await schoolApi<{ classes: SchoolClass[] }>("/api/school/classes");
@@ -651,23 +638,6 @@ function DirectoryManager() {
     }
   }
 
-  async function openRoster(schoolClass: SchoolClass) {
-    setRosterClass(schoolClass);
-    setRoster([]);
-    setRosterLoading(true);
-    setError("");
-    try {
-      const result = await schoolApi<{ students: Student[] }>(
-        `/api/school/classes/${encodeURIComponent(schoolClass.id)}/roster`,
-      );
-      setRoster(result.students);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load class roster");
-    } finally {
-      setRosterLoading(false);
-    }
-  }
-
   const filteredYears = academicYears;
   const currentYear = filteredYears.find((year) => year.is_current) ?? filteredYears[0];
   const selectedYear = filteredYears.find((year) => year.id === classYearId) ?? currentYear;
@@ -698,7 +668,7 @@ function DirectoryManager() {
               <h2 className="font-display text-xl font-bold">Classes</h2>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              Create classes for your academic years and review their rosters.
+              Create classes for your academic years and assign their class teachers.
             </p>
           </div>
           <Button onClick={() => setClassDialogOpen(true)}>
@@ -739,9 +709,6 @@ function DirectoryManager() {
                     </td>
                     <td className="px-3 py-3 text-right">
                       <div className="flex justify-end gap-2">
-                        <Button size="sm" variant="outline" onClick={() => void openRoster(item)}>
-                          Roster
-                        </Button>
                         <Button
                           size="sm"
                           variant="outline"
@@ -895,38 +862,6 @@ function DirectoryManager() {
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={rosterClass !== null}
-        onOpenChange={(open) => {
-          if (!open) setRosterClass(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{rosterClass ? `${rosterClass.name} roster` : "Class roster"}</DialogTitle>
-            <DialogDescription>Active students currently assigned to this class.</DialogDescription>
-          </DialogHeader>
-          {rosterLoading ? (
-            <p className="py-5 text-sm text-muted-foreground">Loading roster...</p>
-          ) : roster.length ? (
-            <ul className="max-h-72 divide-y divide-border overflow-y-auto">
-              {roster.map((student) => (
-                <li key={student.id} className="flex justify-between gap-3 py-3 text-sm">
-                  <span>
-                    {student.first_name} {student.last_name}
-                  </span>
-                  <span className="text-muted-foreground">{student.student_id_number}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="py-5 text-sm text-muted-foreground">
-              No active students are enrolled in this class yet.
-            </p>
-          )}
         </DialogContent>
       </Dialog>
     </section>
