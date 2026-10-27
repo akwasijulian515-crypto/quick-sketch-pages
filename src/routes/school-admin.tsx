@@ -173,9 +173,9 @@ function SchoolAdminPage() {
             note="Saved report records"
           />
         </section>
+        <SchoolWorkflowSettings />
         <DirectoryManager />
         <PortalAccountSetup />
-        <SchoolWorkflowSettings />
         <SchoolHolidays />
         <SchoolFeeRules />
         <SchoolPromotionReview />
