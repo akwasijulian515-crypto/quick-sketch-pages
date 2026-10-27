@@ -222,6 +222,14 @@ type WorkflowSettings = {
   daily_fee_split_enabled: boolean;
 };
 
+type SplitFeeClass = { id: string; name: string };
+type SplitFeeAcademicYear = { id: string; name: string; is_current: boolean };
+type SplitFeeRule = {
+  fee_type: "daily" | "daily_feeding";
+  amount: number | string;
+  currency: string;
+};
+
 function SchoolWorkflowSettings() {
   const [settings, setSettings] = useState<WorkflowSettings>({
     class_teachers_can_record_daily_fees: false,
@@ -233,6 +241,16 @@ function SchoolWorkflowSettings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [splitFeeClasses, setSplitFeeClasses] = useState<SplitFeeClass[]>([]);
+  const [splitFeeYears, setSplitFeeYears] = useState<SplitFeeAcademicYear[]>([]);
+  const [splitFeeClassId, setSplitFeeClassId] = useState("");
+  const [splitFeeYearId, setSplitFeeYearId] = useState("");
+  const [studiesAmount, setStudiesAmount] = useState("");
+  const [feedingAmount, setFeedingAmount] = useState("");
+  const [splitFeeCurrency, setSplitFeeCurrency] = useState("GHS");
+  const [splitFeeOptionsLoading, setSplitFeeOptionsLoading] = useState(false);
+  const [splitFeeRulesLoading, setSplitFeeRulesLoading] = useState(false);
+  const [splitFeeError, setSplitFeeError] = useState("");
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -255,22 +273,131 @@ function SchoolWorkflowSettings() {
     void loadSettings();
   }, [loadSettings]);
 
+  useEffect(() => {
+    if (!settingsLoaded || !settings.daily_fee_split_enabled) return;
+    let cancelled = false;
+    setSplitFeeOptionsLoading(true);
+    setSplitFeeError("");
+    void Promise.all([
+      schoolApi<{ classes: SplitFeeClass[] }>("/api/school/classes"),
+      schoolApi<{ academic_years: SplitFeeAcademicYear[] }>("/api/school/academic-periods"),
+    ])
+      .then(([classResult, yearResult]) => {
+        if (cancelled) return;
+        setSplitFeeClasses(classResult.classes);
+        setSplitFeeYears(yearResult.academic_years);
+        setSplitFeeClassId((current) => current || classResult.classes[0]?.id || "");
+        const currentYear =
+          yearResult.academic_years.find((year) => year.is_current) ?? yearResult.academic_years[0];
+        setSplitFeeYearId((current) => current || currentYear?.id || "");
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setSplitFeeError(
+            loadError instanceof Error ? loadError.message : "Could not load classes and years",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSplitFeeOptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.daily_fee_split_enabled, settingsLoaded]);
+
+  useEffect(() => {
+    if (!settings.daily_fee_split_enabled || !splitFeeClassId || !splitFeeYearId) return;
+    let cancelled = false;
+    setSplitFeeRulesLoading(true);
+    setSplitFeeError("");
+    const query = new URLSearchParams({
+      class_id: splitFeeClassId,
+      academic_year_id: splitFeeYearId,
+    });
+    void schoolApi<{ fees: SplitFeeRule[] }>(`/api/school/fees?${query}`)
+      .then(({ fees }) => {
+        if (cancelled) return;
+        const studies = fees.find((fee) => fee.fee_type === "daily");
+        const feeding = fees.find((fee) => fee.fee_type === "daily_feeding");
+        setStudiesAmount(studies ? String(studies.amount) : "");
+        setFeedingAmount(feeding ? String(feeding.amount) : "");
+        setSplitFeeCurrency(studies?.currency ?? feeding?.currency ?? "GHS");
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setSplitFeeError(
+            loadError instanceof Error ? loadError.message : "Could not load daily fee rules",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSplitFeeRulesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.daily_fee_split_enabled, splitFeeClassId, splitFeeYearId]);
+
   async function saveSettings() {
+    if (settings.daily_fee_split_enabled) {
+      const studies = Number(studiesAmount);
+      const feeding = Number(feedingAmount);
+      if (!splitFeeClassId || !splitFeeYearId) {
+        setSplitFeeError("Choose a class and academic year for the split daily fees.");
+        return;
+      }
+      if (!Number.isFinite(studies) || studies <= 0 || !Number.isFinite(feeding) || feeding <= 0) {
+        setSplitFeeError("Enter a positive amount for both studies and feeding.");
+        return;
+      }
+      if (splitFeeCurrency.trim().length !== 3) {
+        setSplitFeeError("Enter a three-letter currency code.");
+        return;
+      }
+    }
     setSaving(true);
     setError("");
+    setSplitFeeError("");
     setNotice("");
     try {
+      if (settings.daily_fee_split_enabled) {
+        const feeRule = async (
+          feeType: "daily" | "daily_feeding",
+          description: string,
+          amount: number,
+        ) =>
+          schoolApi("/api/school/fees", {
+            method: "POST",
+            body: JSON.stringify({
+              class_id: splitFeeClassId,
+              academic_year_id: splitFeeYearId,
+              term_id: null,
+              fee_type: feeType,
+              description,
+              amount,
+              currency: splitFeeCurrency.trim().toUpperCase(),
+            }),
+          });
+        await feeRule("daily", "Daily studies fee", Number(studiesAmount));
+        await feeRule("daily_feeding", "Daily feeding fee", Number(feedingAmount));
+      }
       const result = await schoolApi<WorkflowSettings>("/api/school/workflow-settings", {
         method: "PUT",
         body: JSON.stringify(settings),
       });
       setSettings(result);
       window.dispatchEvent(new Event("school-workflow-settings-updated"));
-      setNotice("School workflow settings saved.");
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error ? saveError.message : "Could not save school workflow settings",
+      setNotice(
+        settings.daily_fee_split_enabled
+          ? "Split fees and school workflow settings saved."
+          : "School workflow settings saved.",
       );
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error ? saveError.message : "Could not save school workflow settings";
+      if (settings.daily_fee_split_enabled) setSplitFeeError(message);
+      else setError(message);
     } finally {
       setSaving(false);
     }
@@ -289,10 +416,9 @@ function SchoolWorkflowSettings() {
         <div className="max-w-3xl">
           <h3 className="font-semibold">Split daily fees into studies and feeding</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Turn this on to make studies the required daily fee and feeding optional. Set each
-            amount in Class fee rules, then collect studies only or studies plus feeding from each
-            learner&apos;s Daily payments row. The same row supports collecting multiple school
-            days.
+            When enabled, enter both amounts for each class and academic year below. Record studies
+            only or studies plus feeding from each learner&apos;s row. When disabled, the system
+            collects one combined Daily fee.
           </p>
           {!settingsLoaded && !loading && (
             <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -319,6 +445,100 @@ function SchoolWorkflowSettings() {
           />
         </div>
       </div>
+      {settingsLoaded && settings.daily_fee_split_enabled && (
+        <div className="mt-4 rounded-lg border border-border p-4">
+          <h3 className="font-semibold">Split daily fee amounts</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Enter the studies and feeding amounts for a class. Saving settings also saves these
+            amounts as the class&apos;s daily fee rules. Repeat for each class that uses split fees.
+          </p>
+          {splitFeeError && (
+            <p role="alert" className="mt-3 text-sm text-destructive">
+              {splitFeeError}
+            </p>
+          )}
+          {splitFeeOptionsLoading ? (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Loading classes and academic years...
+            </p>
+          ) : (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                Class
+                <select
+                  value={splitFeeClassId}
+                  onChange={(event) => setSplitFeeClassId(event.target.value)}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                >
+                  <option value="">Select class</option>
+                  {splitFeeClasses.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                Academic year
+                <select
+                  value={splitFeeYearId}
+                  onChange={(event) => setSplitFeeYearId(event.target.value)}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                >
+                  <option value="">Select academic year</option>
+                  {splitFeeYears.map((year) => (
+                    <option key={year.id} value={year.id}>
+                      {year.name}
+                      {year.is_current ? " (Current)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                Studies amount
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={studiesAmount}
+                  onChange={(event) => setStudiesAmount(event.target.value)}
+                  disabled={splitFeeRulesLoading}
+                  placeholder="0.00"
+                />
+              </label>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                Feeding amount
+                <Input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={feedingAmount}
+                  onChange={(event) => setFeedingAmount(event.target.value)}
+                  disabled={splitFeeRulesLoading}
+                  placeholder="0.00"
+                />
+              </label>
+              <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                Currency
+                <Input
+                  value={splitFeeCurrency}
+                  onChange={(event) => setSplitFeeCurrency(event.target.value)}
+                  maxLength={3}
+                  placeholder="GHS"
+                />
+              </label>
+              {splitFeeRulesLoading && (
+                <p className="text-xs text-muted-foreground sm:col-span-2 lg:col-span-5">
+                  Loading saved amounts for this class and year...
+                </p>
+              )}
+            </div>
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">
+            Studies is required. Feeding can be included or left out when recording the payment.
+          </p>
+        </div>
+      )}
       {error && (
         <p
           role="alert"
@@ -386,8 +606,23 @@ function SchoolWorkflowSettings() {
       )}
       {!loading && settingsLoaded && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Button onClick={() => void saveSettings()} disabled={saving || !settingsLoaded}>
-            {saving ? "Saving..." : "Save settings"}
+          <Button
+            onClick={() => void saveSettings()}
+            disabled={
+              saving ||
+              !settingsLoaded ||
+              (settings.daily_fee_split_enabled &&
+                (splitFeeOptionsLoading ||
+                  splitFeeRulesLoading ||
+                  !splitFeeClassId ||
+                  !splitFeeYearId))
+            }
+          >
+            {saving
+              ? "Saving..."
+              : settings.daily_fee_split_enabled
+                ? "Save split fees and settings"
+                : "Save settings"}
           </Button>
           {notice && <span className="text-sm text-emerald-700">{notice}</span>}
         </div>
