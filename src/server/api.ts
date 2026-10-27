@@ -3350,8 +3350,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const paymentDate =
         url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
       if (!validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
-      if (paymentDate > new Date().toISOString().slice(0, 10))
-        return badRequest("Daily-fee register dates cannot be in the future");
       const holidayRows = await withDatabaseContext(
         sql,
         { schoolId: school.schoolId },
@@ -3362,30 +3360,26 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           where school_id = ${school.schoolId}::uuid and holiday_date = ${paymentDate}::date
         `,
       );
-      if (holidayRows[0]) return json({ students: [], date: paymentDate, holiday: holidayRows[0] });
-      const settings = await withDatabaseContext(
-        sql,
-        { schoolId: school.schoolId },
-        (tx) =>
-          tx`
-          select daily_fee_split_enabled
-          from school_workflow_settings where school_id = ${school.schoolId}::uuid
-        `,
-      );
-      const dailyFeeSplitEnabled = settings[0]?.["daily_fee_split_enabled"] === true;
       const rows = await withDatabaseContext(
         sql,
         { schoolId: school.schoolId },
         (tx) =>
           tx`
+          with workflow as materialized (
+            select coalesce((
+              select daily_fee_split_enabled
+              from school_workflow_settings
+              where school_id = ${school.schoolId}::uuid
+            ), false) as daily_fee_split_enabled
+          )
           select distinct on (st.id)
                  st.id as student_id, st.first_name, st.last_name, st.admission_number,
                  c.id as class_id, c.name as class_name,
                  ay.name as academic_year_name,
-                 ${dailyFeeSplitEnabled} as daily_fee_split_enabled,
+                 workflow.daily_fee_split_enabled,
                  f.amount as studies_fee_amount,
-                 case when ${dailyFeeSplitEnabled} then coalesce(feeding.amount, 0) else 0 end as feeding_fee_amount,
-                 (${dailyFeeSplitEnabled} and feeding.id is not null) as feeding_fee_configured,
+                 case when workflow.daily_fee_split_enabled then coalesce(feeding.amount, 0) else 0 end as feeding_fee_amount,
+                 (workflow.daily_fee_split_enabled and feeding.id is not null) as feeding_fee_configured,
                  f.id is not null as daily_fee_configured,
                  f.amount + coalesce(feeding.amount, 0) as fee_amount,
                  coalesce(f.currency, p.currency) as currency,
@@ -3394,7 +3388,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                  p.daily_fee_studies_amount, p.daily_fee_feeding_amount,
                  p.method, p.paid_at,
                  coupon.code as coupon_code
-          from class_enrollments e
+          from workflow
+          cross join class_enrollments e
           join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
           join classes c on c.id = e.class_id and c.school_id = e.school_id
           join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
@@ -3430,7 +3425,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           order by st.id, e.starts_on desc
         `,
       );
-      return json({ students: rows, date: paymentDate });
+      return json({ students: rows, date: paymentDate, holiday: holidayRows[0] ?? null });
     }
 
     if (url.pathname === "/api/school/daily-payments" && request.method === "POST") {
@@ -3446,8 +3441,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
       if (typeof paymentDate !== "string" || !validIsoDate(paymentDate))
         return badRequest("Enter a valid payment date");
-      if (paymentDate > new Date().toISOString().slice(0, 10))
-        return badRequest("Daily-fee payments cannot be recorded for a future date");
       if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method)))
         return badRequest("Choose a valid payment method");
       if (body["include_feeding"] !== undefined && typeof body["include_feeding"] !== "boolean") {
@@ -3461,22 +3454,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       ) {
         return badRequest("Choose between 1 and 30 school days to cover");
       }
-      const holidayRows = await withDatabaseContext(
-        sql,
-        { schoolId: school.schoolId },
-        (tx) =>
-          tx`
-          select name from school_holidays
-          where school_id = ${school.schoolId}::uuid and holiday_date = ${paymentDate}::date
-        `,
-      );
-      if (holidayRows[0])
-        return json(
-          {
-            error: `${String(holidayRows[0]["name"])} is a school holiday; daily fees cannot be collected.`,
-          },
-          409,
-        );
       if (school.role === "teacher") {
         const authorization = await withDatabaseContext(
           sql,
@@ -3514,24 +3491,23 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           );
         }
       }
-      if (holidayRows[0]) {
-        return json(
-          {
-            error: `${String(holidayRows[0]["name"])} is a school holiday; daily fees cannot be collected.`,
-          },
-          409,
-        );
-      }
       const resultRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
         tx`select pg_advisory_xact_lock(hashtextextended(${`${school.schoolId}:${studentId}`}, 0))`,
         tx`
-          with student as materialized (
+          with workflow as materialized (
+            select coalesce((
+              select daily_fee_split_enabled
+              from school_workflow_settings
+              where school_id = ${school.schoolId}::uuid
+            ), false) as daily_fee_split_enabled
+          ),
+          student as materialized (
             select st.id as student_id, st.school_id,
-                   coalesce(workflow.daily_fee_split_enabled, false) as daily_fee_split_enabled,
+                   workflow_setting.daily_fee_split_enabled,
                    (select id from staff_profiles where school_id = st.school_id
                     and user_id = ${school.userId}::uuid limit 1) as staff_id
             from students st
-            left join school_workflow_settings workflow on workflow.school_id = st.school_id
+            cross join workflow workflow_setting
             where st.id = ${studentId}::uuid and st.school_id = ${school.schoolId}::uuid and st.active
               and (
                 ${school.role !== "teacher"}
@@ -3551,11 +3527,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             select generated.date::date as payment_date
             from generate_series(
               ${paymentDate}::date,
-              ${paymentDate}::date - interval '1825 days',
-              interval '-1 day'
+              ${paymentDate}::date + interval '1825 days',
+              interval '1 day'
             ) as generated(date)
             where extract(isodow from generated.date) between 1 and 5
-              and (${schoolDays} > 1 or generated.date::date = ${paymentDate}::date)
           ),
           eligible_days as materialized (
             select d.payment_date, s.school_id, s.student_id, s.staff_id,
@@ -3578,6 +3553,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 and f.term_id is null and f.is_active
               where e.school_id = s.school_id and e.student_id = s.student_id
                 and e.starts_on <= d.payment_date and (e.ends_on is null or e.ends_on >= d.payment_date)
+                and (
+                  ${school.role !== "teacher"}
+                  or c.class_teacher_id in (
+                    select sp.id from staff_profiles sp
+                    where sp.school_id = c.school_id and sp.user_id = ${school.userId}::uuid
+                  )
+                )
               order by e.starts_on desc
               limit 1
             ) daily_rule on true
@@ -3610,11 +3592,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 or (s.daily_fee_split_enabled and feeding.amount is not null
                   and feeding.currency = daily_rule.currency)
               )
-            order by d.payment_date desc
+            order by d.payment_date
             limit ${Number(schoolDays)}
           ),
           payment_days as materialized (
-            select * from eligible_days order by payment_date desc limit ${Number(schoolDays)}
+            select * from eligible_days order by payment_date limit ${Number(schoolDays)}
           ),
           recorded as (
             insert into payments
@@ -3642,7 +3624,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             from recorded r join student s on s.school_id = r.school_id and s.student_id = r.student_id
             returning payment_id, code
           )
-          select (select count(*)::int from payment_days) as available_days,
+          select (select daily_fee_split_enabled from workflow) as split_enabled,
+                 (select count(*)::int from payment_days) as available_days,
                  (select count(distinct currency)::int from payment_days) as currency_count,
                  coalesce((
                    select json_agg(json_build_object(
@@ -3650,7 +3633,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                      'date', r.daily_fee_date, 'method', r.method, 'coupon_code', coupon.code,
                      'daily_fee_studies_amount', r.daily_fee_studies_amount,
                      'daily_fee_feeding_amount', r.daily_fee_feeding_amount
-                   ) order by r.daily_fee_date desc)
+                   ) order by r.daily_fee_date)
                    from recorded r join issued_coupons coupon on coupon.payment_id = r.id
                  ), '[]'::json) as payments
         `,
@@ -3658,10 +3641,16 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const result = resultRows[0];
       if (!result)
         return json({ error: "Daily payment could not be recorded. Refresh and try again." }, 409);
+      if (includeFeeding && result["split_enabled"] !== true) {
+        return json(
+          { error: "Split daily fees are turned off. Refresh the register and use Mark Paid." },
+          409,
+        );
+      }
       if (Number(result["available_days"] ?? 0) !== Number(schoolDays)) {
         return json(
           {
-            error: `Only ${Number(result["available_days"] ?? 0)} unpaid eligible school day(s) were found in the last five years.`,
+            error: `Only ${Number(result["available_days"] ?? 0)} eligible school day(s) are available starting from ${paymentDate}. Check enrollment, fee setup, holidays, and existing records.`,
             available_days: Number(result["available_days"] ?? 0),
           },
           409,

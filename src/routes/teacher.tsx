@@ -273,9 +273,11 @@ function TeacherDailyPayments() {
     void Promise.all([
       teacherApi<{ students: TeacherDailyPayment[]; holiday?: SchoolHoliday }>(
         `/api/school/daily-payments?date=${encodeURIComponent(date)}`,
+        { cache: "no-store" },
       ),
       teacherApi<{ class_teachers_can_record_daily_fees: boolean }>(
         "/api/school/workflow-settings",
+        { cache: "no-store" },
       ),
     ])
       .then(([result, settings]) => {
@@ -299,6 +301,26 @@ function TeacherDailyPayments() {
       cancelled = true;
     };
   }, [date, retry]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") setRetry((current) => current + 1);
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("school-workflow-settings-updated", refresh);
+    const channel =
+      typeof BroadcastChannel === "undefined"
+        ? null
+        : new BroadcastChannel("school-workflow-settings");
+    channel?.addEventListener("message", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("school-workflow-settings-updated", refresh);
+      channel?.close();
+    };
+  }, []);
 
   const classes = useMemo(
     () =>
@@ -359,7 +381,7 @@ function TeacherDailyPayments() {
           <h2 className="font-display text-xl font-bold">Daily fees and coupons</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             {canRecordDailyFees
-              ? "Record one or more unpaid school days for learners in your assigned classes."
+              ? "Start on the selected date and record that day plus upcoming school days. Weekends, holidays, and dates already recorded are skipped."
               : "Read-only daily payment status for your assigned classes. Ask your School Admin to enable teacher collections if needed."}
           </p>
         </div>
@@ -368,7 +390,6 @@ function TeacherDailyPayments() {
             Date
             <input
               type="date"
-              max={localDateString(new Date())}
               value={date}
               onChange={(event) => event.target.value && setDate(event.target.value)}
               className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
@@ -396,7 +417,7 @@ function TeacherDailyPayments() {
           {loading ? "—" : `${paidCount} paid`}
         </span>
         <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-          {loading ? "—" : `${visible.length - paidCount} unpaid`}
+          {loading ? "—" : `${visible.length - paidCount} not recorded`}
         </span>
         <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">
           {date}
@@ -488,7 +509,7 @@ function TeacherDailyPayments() {
                   <span
                     className={`rounded-full px-2.5 py-1 text-xs font-medium ${student.payment_id ? "bg-emerald-600/10 text-emerald-700" : "bg-muted text-muted-foreground"}`}
                   >
-                    {student.payment_id ? "Paid" : "Unpaid"}
+                    {student.payment_id ? "Paid" : "Not recorded"}
                   </span>
                 </div>
                 <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
@@ -579,7 +600,7 @@ function TeacherDailyPayments() {
                       {student.payment_id ? (
                         <span className="text-emerald-700">Paid</span>
                       ) : (
-                        <span className="text-muted-foreground">Unpaid</span>
+                        <span className="text-muted-foreground">Not recorded</span>
                       )}
                     </td>
                     <td className="px-5 py-3 font-mono text-xs text-muted-foreground">

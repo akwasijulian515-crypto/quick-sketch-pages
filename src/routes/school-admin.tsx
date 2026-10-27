@@ -230,6 +230,14 @@ type SplitFeeRule = {
   currency: string;
 };
 
+function notifyWorkflowSettingsChanged() {
+  window.dispatchEvent(new Event("school-workflow-settings-updated"));
+  if (typeof BroadcastChannel === "undefined") return;
+  const channel = new BroadcastChannel("school-workflow-settings");
+  channel.postMessage("updated");
+  channel.close();
+}
+
 function SchoolWorkflowSettings() {
   const [settings, setSettings] = useState<WorkflowSettings>({
     class_teachers_can_record_daily_fees: false,
@@ -387,7 +395,7 @@ function SchoolWorkflowSettings() {
         body: JSON.stringify(settings),
       });
       setSettings(result);
-      window.dispatchEvent(new Event("school-workflow-settings-updated"));
+      notifyWorkflowSettingsChanged();
       setNotice(
         settings.daily_fee_split_enabled
           ? "Split fees and school workflow settings saved."
@@ -420,7 +428,7 @@ function SchoolWorkflowSettings() {
         body: JSON.stringify({ ...settings, daily_fee_split_enabled: false }),
       });
       setSettings(result);
-      window.dispatchEvent(new Event("school-workflow-settings-updated"));
+      notifyWorkflowSettingsChanged();
       setNotice("Split fees turned off. Daily payments now use one combined fee.");
     } catch (saveError) {
       setError(

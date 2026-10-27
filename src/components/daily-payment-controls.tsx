@@ -48,8 +48,8 @@ export function DailyPaymentControls({
         </select>
       </label>
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Earlier unpaid school days are included; weekends, holidays, and already-paid days are
-        skipped.
+        Starting from the selected date, this covers upcoming school days. Weekends, holidays, and
+        dates already recorded are skipped.
       </p>
       {splitEnabled ? (
         <div className="flex flex-col items-stretch gap-1.5">

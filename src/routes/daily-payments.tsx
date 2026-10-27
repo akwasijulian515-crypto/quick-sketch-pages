@@ -98,8 +98,10 @@ function DailyPaymentsPage() {
   } | null>(null);
   const activeDate = useRef(date);
   activeDate.current = date;
+  const rosterRequestId = useRef(0);
 
   const loadStudents = useCallback(async () => {
+    const requestId = ++rosterRequestId.current;
     setLoading(true);
     setError("");
     try {
@@ -107,13 +109,15 @@ function DailyPaymentsPage() {
         `/api/school/daily-payments?date=${encodeURIComponent(date)}`,
         { cache: "no-store" },
       );
+      if (requestId !== rosterRequestId.current) return;
       setStudents(result.students);
       setHoliday(result.holiday ?? null);
     } catch (loadError) {
+      if (requestId !== rosterRequestId.current) return;
       setError(loadError instanceof Error ? loadError.message : "Could not load daily-fee roster");
       setHoliday(null);
     } finally {
-      setLoading(false);
+      if (requestId === rosterRequestId.current) setLoading(false);
     }
   }, [date]);
 
@@ -127,9 +131,17 @@ function DailyPaymentsPage() {
     };
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("school-workflow-settings-updated", refresh);
+    const channel =
+      typeof BroadcastChannel === "undefined"
+        ? null
+        : new BroadcastChannel("school-workflow-settings");
+    channel?.addEventListener("message", refresh);
     return () => {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("school-workflow-settings-updated", refresh);
+      channel?.close();
     };
   }, [loadStudents]);
 
@@ -239,7 +251,7 @@ function DailyPaymentsPage() {
       </span>
     ) : (
       <span className="inline-flex items-center rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring-1 ring-border">
-        Not paid
+        Not recorded
       </span>
     );
   }
@@ -288,16 +300,15 @@ function DailyPaymentsPage() {
             </div>
             <h1 className="font-display text-3xl font-bold">Daily payments</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              Record one or more unpaid school days from each learner’s row. Multi-day collections
-              skip weekends, school holidays, and already-paid dates. When fees are split, studies
-              is required and feeding is optional.
+              Start on the selected date and record that day plus upcoming school days. Multi-day
+              collections skip weekends, school holidays, and dates already recorded. When fees are
+              split, studies is required and feeding is optional.
             </p>
           </div>
           <label className="space-y-1 text-xs font-medium text-muted-foreground">
             Payment date
             <input
               type="date"
-              max={localDateString(new Date())}
               value={date}
               onChange={(event) => event.target.value && setDate(event.target.value)}
               className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
@@ -325,7 +336,7 @@ function DailyPaymentsPage() {
               {paidCount} paid
             </span>
             <span className="rounded-md bg-muted px-2.5 py-1 text-muted-foreground">
-              {visible.length - paidCount} unpaid
+              {visible.length - paidCount} not recorded
             </span>
             <label className="ml-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
               Method
@@ -385,18 +396,16 @@ function DailyPaymentsPage() {
             </div>
             <Banknote className="size-5 text-primary" />
           </div>
+          {holiday && (
+            <p className="border-b border-border bg-muted/40 px-5 py-3 text-sm text-muted-foreground">
+              {holiday.name} is a school holiday. Multi-day recording will start on the next
+              eligible school day.
+            </p>
+          )}
           {loading ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
               Loading daily-fee register...
             </p>
-          ) : holiday ? (
-            <div className="px-5 py-10 text-center">
-              <p className="font-medium">{holiday.name} · School holiday</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Daily fees are not collected on this date. Existing recorded payments remain in
-                Finance.
-              </p>
-            </div>
           ) : visible.length === 0 ? (
             <div className="px-5 py-10 text-center">
               <p className="text-sm text-muted-foreground">
