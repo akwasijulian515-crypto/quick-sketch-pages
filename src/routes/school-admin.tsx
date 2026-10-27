@@ -228,31 +228,31 @@ function SchoolWorkflowSettings() {
     daily_fee_split_enabled: false,
   });
   const [loading, setLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  useEffect(() => {
-    let cancelled = false;
-    void schoolApi<WorkflowSettings>("/api/school/workflow-settings")
-      .then((result) => {
-        if (!cancelled) setSettings(result);
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled)
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Could not load school workflow settings",
-          );
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await schoolApi<WorkflowSettings>("/api/school/workflow-settings");
+      setSettings(result);
+      setSettingsLoaded(true);
+    } catch (loadError: unknown) {
+      setSettingsLoaded(false);
+      setError(
+        loadError instanceof Error ? loadError.message : "Could not load school workflow settings",
+      );
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
 
   async function saveSettings() {
     setSaving(true);
@@ -294,6 +294,16 @@ function SchoolWorkflowSettings() {
       )}
       {loading ? (
         <p className="py-5 text-sm text-muted-foreground">Loading workflow settings...</p>
+      ) : !settingsLoaded ? (
+        <div className="mt-4">
+          <p className="text-sm text-muted-foreground">
+            The saved settings were not loaded, so changes are unavailable until they can be
+            retrieved.
+          </p>
+          <Button className="mt-3" variant="outline" onClick={() => void loadSettings()}>
+            Retry loading settings
+          </Button>
+        </div>
       ) : (
         <div className="mt-4 grid gap-4 lg:grid-cols-3">
           <label className="flex items-start gap-3 rounded-md border border-border p-4">
@@ -364,7 +374,7 @@ function SchoolWorkflowSettings() {
           </label>
         </div>
       )}
-      {!loading && (
+      {!loading && settingsLoaded && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button onClick={() => void saveSettings()} disabled={saving}>
             {saving ? "Saving..." : "Save settings"}
