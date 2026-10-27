@@ -1681,7 +1681,7 @@ function StudentProfile({
             </button>
           ))}
         </div>
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           {error && (
             <p role="alert" className="mb-4 text-sm text-destructive">
               {error}
@@ -1704,41 +1704,45 @@ function StudentProfile({
             <p className="text-sm text-muted-foreground">Loading saved profile details…</p>
           ) : activeTab === "Overview" ? (
             editingDetails ? (
-              <form className="space-y-4" onSubmit={(event) => void saveStudentDetails(event)}>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+              <form className="space-y-5" onSubmit={(event) => void saveStudentDetails(event)}>
+                <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     First name
                     <input
                       name="first_name"
                       required
                       maxLength={100}
                       defaultValue={profile.firstName}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Last name
                     <input
                       name="last_name"
                       required
                       maxLength={100}
                       defaultValue={profile.lastName}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Student ID
                     <input
                       name="admission_number"
                       required
                       maxLength={100}
                       defaultValue={profile.studentId}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Class
-                    <select name="class_id" defaultValue={profile.classId} className="admin-input">
+                    <select
+                      name="class_id"
+                      defaultValue={profile.classId}
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
+                    >
                       <option value="">Unassigned</option>
                       {profile.classId && !classes.some((item) => item.id === profile.classId) && (
                         <option value={profile.classId}>{profile.className}</option>
@@ -1751,100 +1755,105 @@ function StudentProfile({
                       ))}
                     </select>
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Date joined
                     <input
                       name="joined_on"
                       type="date"
                       required
                       defaultValue={profile.joinedOn}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Date of birth
                     <input
                       name="date_of_birth"
                       type="date"
                       defaultValue={profile.dob}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Gender
-                    <input
+                    <select
                       name="gender"
-                      maxLength={40}
                       defaultValue={profile.gender}
-                      placeholder="Gender"
-                      className="admin-input"
-                    />
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <option value="">Select gender</option>
+                      {profile.gender && !["Male", "Female"].includes(profile.gender) && (
+                        <option value={profile.gender}>{profile.gender}</option>
+                      )}
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Guardian name
                     <input
                       name="guardian_name"
                       maxLength={160}
                       defaultValue={profile.guardian}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Guardian phone
                     <input
                       name="guardian_phone"
                       maxLength={40}
                       defaultValue={profile.phone}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Guardian email
                     <input
                       name="guardian_email"
                       type="email"
                       maxLength={254}
                       defaultValue={profile.guardianEmail}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Guardian relationship
                     <input
                       name="guardian_relationship"
                       maxLength={60}
                       defaultValue={profile.guardianRelationship}
                       placeholder="Parent/guardian"
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground sm:col-span-2">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground sm:col-span-2">
                     Address
                     <textarea
                       name="address"
                       maxLength={1000}
                       defaultValue={profile.address}
                       rows={2}
-                      className="admin-input"
+                      className="min-h-20 w-full min-w-0 resize-y rounded-md border border-input bg-background px-3 py-2 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Emergency contact
                     <input
                       name="emergency_contact"
                       maxLength={40}
                       defaultValue={profile.emergencyContact}
-                      className="admin-input"
+                      className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
-                  <label className="space-y-1 text-xs font-medium text-muted-foreground">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     Medical notes
                     <textarea
                       name="medical_notes"
                       maxLength={2000}
                       defaultValue={profile.medicalNote}
                       rows={2}
-                      className="admin-input"
+                      className="min-h-20 w-full min-w-0 resize-y rounded-md border border-input bg-background px-3 py-2 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </label>
                 </div>
@@ -1853,14 +1862,14 @@ function StudentProfile({
                     type="button"
                     onClick={() => setEditingDetails(false)}
                     disabled={savingDetails}
-                    className="admin-btn-secondary"
+                    className="inline-flex min-h-10 w-full items-center justify-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted disabled:opacity-50 sm:w-auto"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={savingDetails}
-                    className="admin-btn-primary disabled:opacity-50"
+                    className="inline-flex min-h-10 w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-50 sm:w-auto"
                   >
                     {savingDetails ? "Saving…" : "Save student details"}
                   </button>
