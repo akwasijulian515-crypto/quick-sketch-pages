@@ -3597,6 +3597,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 select 1 from payments existing
                 where existing.school_id = s.school_id and existing.student_id = s.student_id
                   and existing.daily_fee_date = d.payment_date and existing.category = 'daily_fee'
+                  and existing.status = 'verified'
               )
               and daily_rule.amount > 0
               and (

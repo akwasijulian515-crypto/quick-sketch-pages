@@ -105,6 +105,7 @@ function DailyPaymentsPage() {
     try {
       const result = await schoolApi<{ students: DailyStudent[]; holiday?: SchoolHoliday }>(
         `/api/school/daily-payments?date=${encodeURIComponent(date)}`,
+        { cache: "no-store" },
       );
       setStudents(result.students);
       setHoliday(result.holiday ?? null);
@@ -118,6 +119,18 @@ function DailyPaymentsPage() {
 
   useEffect(() => {
     void loadStudents();
+  }, [loadStudents]);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") void loadStudents();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [loadStudents]);
 
   const classes = useMemo(
