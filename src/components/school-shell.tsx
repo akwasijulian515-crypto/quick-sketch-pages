@@ -11,7 +11,6 @@ import {
   Banknote,
   School,
   ScrollText,
-  TicketCheck,
   UserRoundCheck,
   UsersRound,
   ShieldCheck,
@@ -33,7 +32,6 @@ const navigation = [
   { label: "Teachers", to: "/teachers", icon: UsersRound, group: "Academics" },
   { label: "Payments", to: "/payments", icon: ReceiptText, group: "Finance" },
   { label: "Daily payments", to: "/daily-payments", icon: Banknote, group: "Finance" },
-  { label: "Coupons", to: "/coupons", icon: TicketCheck, group: "Finance" },
 ] as const;
 
 const platformNavigation = [
@@ -53,7 +51,6 @@ const schoolAdminNavigation = [
   { label: "Daily payments", to: "/daily-payments", icon: Banknote, group: "Finance" },
   { label: "Financial records", to: "/student-finances", icon: FileText, group: "Finance" },
   { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck, group: "Finance" },
-  { label: "Coupons", to: "/coupons", icon: TicketCheck, group: "Finance" },
   { label: "School administration", to: "/school-admin", icon: School, group: "Administration" },
 ] as const;
 

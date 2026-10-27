@@ -7,7 +7,6 @@ import {
   FileText,
   Link2,
   Plus,
-  Search,
   Settings2,
   ShieldCheck,
   Trash2,
@@ -550,13 +549,8 @@ function SchoolHolidays() {
 
 function DirectoryManager() {
   const [classes, setClasses] = useState<SchoolClass[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [teachers, setTeachers] = useState<ClassTeacher[]>([]);
-  const [search, setSearch] = useState("");
-  const [classFilter, setClassFilter] = useState("");
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -565,12 +559,10 @@ function DirectoryManager() {
   const [classBeingEdited, setClassBeingEdited] = useState<SchoolClass | null>(null);
   const [editedClassName, setEditedClassName] = useState("");
   const [editedClassTeacher, setEditedClassTeacher] = useState("");
-  const [studentDialogOpen, setStudentDialogOpen] = useState(false);
   const [classYearId, setClassYearId] = useState("");
   const [rosterClass, setRosterClass] = useState<SchoolClass | null>(null);
   const [roster, setRoster] = useState<Student[]>([]);
   const [rosterLoading, setRosterLoading] = useState(false);
-  const pageSize = 10;
 
   const loadClasses = useCallback(async () => {
     const result = await schoolApi<{ classes: SchoolClass[] }>("/api/school/classes");
@@ -593,45 +585,21 @@ function DirectoryManager() {
     );
   }, []);
 
-  const loadStudents = useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-    if (search.trim()) params.set("search", search.trim());
-    if (classFilter) params.set("class_id", classFilter);
-    const result = await schoolApi<{ students: Student[]; total: number }>(
-      `/api/school/students?${params}`,
-    );
-    setStudents(result.students);
-    setTotal(result.total);
-  }, [page, search, classFilter]);
-
   const reloadDirectory = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      await Promise.all([loadClasses(), loadAcademicYears(), loadStudents(), loadTeachers()]);
+      await Promise.all([loadClasses(), loadAcademicYears(), loadTeachers()]);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load school records");
     } finally {
       setLoading(false);
     }
-  }, [loadAcademicYears, loadClasses, loadStudents, loadTeachers]);
+  }, [loadAcademicYears, loadClasses, loadTeachers]);
 
   useEffect(() => {
     void reloadDirectory();
   }, [reloadDirectory]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [search, classFilter]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadStudents().catch((loadError: unknown) => {
-        setError(loadError instanceof Error ? loadError.message : "Could not load students");
-      });
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [loadStudents]);
 
   async function submitClass(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -683,37 +651,6 @@ function DirectoryManager() {
     }
   }
 
-  async function submitStudent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSaving(true);
-    setError("");
-    setNotice("");
-    const form = new FormData(event.currentTarget);
-    try {
-      const result = await schoolApi<{ student: Student }>("/api/school/students", {
-        method: "POST",
-        body: JSON.stringify({
-          first_name: form.get("first_name"),
-          last_name: form.get("last_name"),
-          class_id: form.get("class_id") || null,
-          guardian: {
-            full_name: form.get("guardian_name"),
-            phone: form.get("guardian_phone"),
-            email: form.get("guardian_email"),
-          },
-        }),
-      });
-      setStudentDialogOpen(false);
-      setPage(1);
-      setNotice(`Student added. Generated ID: ${result.student.student_id_number}.`);
-      await Promise.all([loadClasses(), loadStudents()]);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Could not add student");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function openRoster(schoolClass: SchoolClass) {
     setRosterClass(schoolClass);
     setRoster([]);
@@ -735,8 +672,6 @@ function DirectoryManager() {
   const currentYear = filteredYears.find((year) => year.is_current) ?? filteredYears[0];
   const selectedYear = filteredYears.find((year) => year.id === classYearId) ?? currentYear;
   const visibleYears = filteredYears.length ? filteredYears : [];
-  const maxPage = Math.max(1, Math.ceil(total / pageSize));
-
   return (
     <section className="mt-7 space-y-4">
       {error && (
@@ -828,119 +763,19 @@ function DirectoryManager() {
         )}
       </article>
 
-      <article className="glass-panel rounded-lg p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <UsersRound className="size-5 text-primary" />
-              <h2 className="font-display text-xl font-bold">Students</h2>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Search, filter, and manage your school&apos;s student directory.
-            </p>
-          </div>
-          <Button onClick={() => setStudentDialogOpen(true)}>
-            <Plus />
-            Add Student
-          </Button>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_15rem]">
-          <label className="relative">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search students..."
-              className="pl-9"
-              aria-label="Search students"
-            />
-          </label>
-          <select
-            value={classFilter}
-            onChange={(event) => setClassFilter(event.target.value)}
-            aria-label="Filter students by class"
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="">All classes</option>
-            {classes.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        {loading ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">Loading students...</p>
-        ) : students.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">
-            No students enrolled yet.
-          </p>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[560px] text-left text-sm">
-              <thead className="border-b text-xs text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Student</th>
-                  <th className="px-3 py-2 font-medium">Student ID</th>
-                  <th className="px-3 py-2 font-medium">Class</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/70">
-                {students.map((student) => (
-                  <tr key={student.id}>
-                    <td className="px-3 py-3 font-medium">
-                      {student.first_name} {student.last_name}
-                    </td>
-                    <td className="px-3 py-3">{student.student_id_number}</td>
-                    <td className="px-3 py-3">{student.class_name ?? "Unassigned"}</td>
-                    <td className="px-3 py-3">
-                      <span
-                        className={
-                          student.status === "active"
-                            ? "rounded-full bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700"
-                            : "rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground"
-                        }
-                      >
-                        {student.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/70 pt-3 text-xs text-muted-foreground">
-          <span>
-            {total
-              ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}`
-              : "0 students"}
-          </span>
+      <article className="glass-panel flex flex-col gap-3 rounded-lg p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page <= 1 || loading}
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
-              aria-label="Previous page"
-            >
-              <ChevronLeft />
-            </Button>
-            <span>
-              Page {page} of {maxPage}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page >= maxPage || loading}
-              onClick={() => setPage((current) => current + 1)}
-              aria-label="Next page"
-            >
-              <ChevronRight />
-            </Button>
+            <UsersRound className="size-5 text-primary" />
+            <h2 className="font-display text-xl font-bold">Student directory</h2>
           </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Search, admit, and manage students from the Students page.
+          </p>
         </div>
+        <Button variant="outline" asChild>
+          <Link to="/students">Open Students</Link>
+        </Button>
       </article>
 
       <Dialog
@@ -1003,67 +838,6 @@ function DirectoryManager() {
             <DialogFooter>
               <Button type="submit" disabled={saving}>
                 {saving ? "Saving..." : "Create class"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={studentDialogOpen} onOpenChange={setStudentDialogOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Add student</DialogTitle>
-            <DialogDescription>
-              Add a student record and optionally assign a class and guardian contact. The student
-              ID is generated from your school&apos;s initials.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={(event) => void submitStudent(event)} className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <FormField label="First name">
-                <Input name="first_name" required maxLength={100} autoComplete="given-name" />
-              </FormField>
-              <FormField label="Last name">
-                <Input name="last_name" required maxLength={100} autoComplete="family-name" />
-              </FormField>
-            </div>
-            <FormField label="Class assignment">
-              <select
-                name="class_id"
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="">Unassigned</option>
-                {classes.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-            <div className="border-t border-border/70 pt-3">
-              <h3 className="text-sm font-medium">Guardian contact (optional)</h3>
-              <div className="mt-3 space-y-3">
-                <FormField label="Guardian name">
-                  <Input name="guardian_name" maxLength={160} autoComplete="name" />
-                </FormField>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <FormField label="Phone">
-                    <Input name="guardian_phone" maxLength={40} type="tel" autoComplete="tel" />
-                  </FormField>
-                  <FormField label="Email">
-                    <Input
-                      name="guardian_email"
-                      maxLength={254}
-                      type="email"
-                      autoComplete="email"
-                    />
-                  </FormField>
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={saving}>
-                {saving ? "Saving..." : "Add student"}
               </Button>
             </DialogFooter>
           </form>
