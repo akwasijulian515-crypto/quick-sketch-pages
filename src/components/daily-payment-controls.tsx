@@ -61,16 +61,20 @@ export function DailyPaymentControls({
           >
             {busy ? "Recording..." : `Studies only · ${recordLabel}`}
           </Button>
-          {feedingConfigured && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => onRecord(schoolDays, true)}
-            >
-              Studies + feeding · {recordLabel}
-            </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={busy || !feedingConfigured}
+            onClick={() => onRecord(schoolDays, true)}
+          >
+            Studies + feeding · {recordLabel}
+          </Button>
+          {!feedingConfigured && (
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Add an active Daily feeding fee rule for this class in School Admin → Class fee rules
+              to enable this option.
+            </p>
           )}
         </div>
       ) : (
