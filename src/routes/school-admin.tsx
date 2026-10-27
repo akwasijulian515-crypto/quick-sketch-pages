@@ -1,5 +1,18 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { BookOpen, CalendarDays, ChevronLeft, ChevronRight, FileText, Link2, Plus, Search, Settings2, ShieldCheck, Trash2, UsersRound } from "lucide-react";
+import {
+  BookOpen,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Link2,
+  Plus,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Trash2,
+  UsersRound,
+} from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { fetchWithNeonAuth } from "../auth/client";
@@ -19,7 +32,15 @@ import { SchoolPromotionReview } from "@/components/school-promotion-review";
 import { PortalAccountSetup } from "@/components/portal-account-setup";
 
 export const Route = createFileRoute("/school-admin")({
-  head: () => ({ meta: [{ title: "School Admin — Klasora" }, { name: "description", content: "Manage school records, portal access, and terminal reports." }] }),
+  head: () => ({
+    meta: [
+      { title: "School Admin — Klasora" },
+      {
+        name: "description",
+        content: "Manage school records, portal access, and terminal reports.",
+      },
+    ],
+  }),
   component: SchoolAdminPage,
 });
 
@@ -36,7 +57,12 @@ type SchoolClass = {
   student_count: number;
 };
 
-type ClassTeacher = { staff_profile_id: string | null; display_name: string; role: string; active: boolean };
+type ClassTeacher = {
+  staff_profile_id: string | null;
+  display_name: string;
+  role: string;
+  active: boolean;
+};
 
 type Student = {
   id: string;
@@ -57,16 +83,22 @@ type AcademicYear = {
 
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
   const url = new URL(path, window.location.origin);
-  const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  const tenant =
+    new URLSearchParams(window.location.search).get("tenant") ??
+    sessionStorage.getItem("hg-school");
   if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await fetchWithNeonAuth(`${url.pathname}${url.search}`, { ...init, headers });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const error = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
-      ? payload.error
-      : "The school request failed";
+    const error =
+      payload &&
+      typeof payload === "object" &&
+      "error" in payload &&
+      typeof payload.error === "string"
+        ? payload.error
+        : "The school request failed";
     throw new Error(error);
   }
   return payload as T;
@@ -85,36 +117,126 @@ function SchoolAdminPage() {
   useEffect(() => {
     let cancelled = false;
     void schoolApi<typeof summary>("/api/school/admin-summary")
-      .then((result) => { if (!cancelled) setSummary(result); })
+      .then((result) => {
+        if (!cancelled) setSummary(result);
+      })
       .catch((error: unknown) => {
-        if (!cancelled) setSummaryError(error instanceof Error ? error.message : "Could not load school summary");
+        if (!cancelled)
+          setSummaryError(error instanceof Error ? error.message : "Could not load school summary");
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  return <SchoolShell title="School Admin" schoolAdmin><div className="mx-auto max-w-6xl rise">
-    <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><UsersRound className="size-5" /></div><h1 className="font-display text-3xl font-bold">School administration</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Manage your school&apos;s people, portal access, and terminal reporting. Attendance remains a teacher responsibility.</p></div></div>
-    {summaryError && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-4 py-3 text-sm text-destructive">{summaryError}</p>}
-    <section className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><Card label="School accounts" value={summary ? String(summary.active_users) : "—"} note={summary ? `${summary.linked_student_accounts} student and ${summary.linked_parent_accounts} parent portals linked` : "Loading saved accounts"} /><Card label="Pending activations" value={summary ? String(summary.pending_activations) : "—"} note="Accounts awaiting email verification" /><Card label="Terminal reports" value={summary ? String(summary.terminal_reports) : "—"} note="Saved report records" /></section>
-    <DirectoryManager />
-    <PortalAccountSetup />
-    <SchoolWorkflowSettings />
-    <SchoolHolidays />
-    <SchoolFeeRules />
-    <SchoolPromotionReview />
-    <section className="mt-4 grid gap-4 lg:grid-cols-3"><article className="glass-panel rounded-lg p-5"><Link2 className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Portal account access</h2><p className="mt-1 text-sm text-muted-foreground">Link parent and student sign-ins to their school records and share the generated activation link.</p><Button className="mt-5" variant="outline" asChild><a href="#portal-account-setup"><Link2 />Manage portal accounts</a></Button></article><article className="glass-panel rounded-lg p-5"><FileText className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Terminal reports</h2><p className="mt-1 text-sm text-muted-foreground">Generate, review, and publish student terminal reports for the current term.</p><Button className="mt-5" variant="outline" asChild><Link to="/terminal-reports"><FileText />Open report centre</Link></Button></article><article className="glass-panel rounded-lg p-5"><ShieldCheck className="size-5 text-primary" /><h2 className="mt-3 font-display text-lg font-bold">Daily reconciliation</h2><p className="mt-1 text-sm text-muted-foreground">Review gateway-verified payments, attendance exceptions, and close the collection day.</p><Button className="mt-5" variant="outline" asChild><Link to="/reconciliation"><ShieldCheck />Open controls</Link></Button></article></section>
-  </div></SchoolShell>;
+  return (
+    <SchoolShell title="School Admin" schoolAdmin>
+      <div className="mx-auto max-w-6xl rise">
+        <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
+          <div>
+            <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">
+              <UsersRound className="size-5" />
+            </div>
+            <h1 className="font-display text-3xl font-bold">School administration</h1>
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              Manage your school&apos;s people, portal access, and terminal reporting. Attendance
+              remains a teacher responsibility.
+            </p>
+          </div>
+        </div>
+        {summaryError && (
+          <p
+            role="alert"
+            className="mt-4 rounded-md border border-destructive/30 px-4 py-3 text-sm text-destructive"
+          >
+            {summaryError}
+          </p>
+        )}
+        <section className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Card
+            label="School accounts"
+            value={summary ? String(summary.active_users) : "—"}
+            note={
+              summary
+                ? `${summary.linked_student_accounts} student and ${summary.linked_parent_accounts} parent portals linked`
+                : "Loading saved accounts"
+            }
+          />
+          <Card
+            label="Pending activations"
+            value={summary ? String(summary.pending_activations) : "—"}
+            note="Accounts awaiting email verification"
+          />
+          <Card
+            label="Terminal reports"
+            value={summary ? String(summary.terminal_reports) : "—"}
+            note="Saved report records"
+          />
+        </section>
+        <DirectoryManager />
+        <PortalAccountSetup />
+        <SchoolWorkflowSettings />
+        <SchoolHolidays />
+        <SchoolFeeRules />
+        <SchoolPromotionReview />
+        <section className="mt-4 grid gap-4 lg:grid-cols-3">
+          <article className="glass-panel rounded-lg p-5">
+            <Link2 className="size-5 text-primary" />
+            <h2 className="mt-3 font-display text-lg font-bold">Portal account access</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Link parent and student sign-ins to their school records and share the generated
+              activation link.
+            </p>
+            <Button className="mt-5" variant="outline" asChild>
+              <a href="#portal-account-setup">
+                <Link2 />
+                Manage portal accounts
+              </a>
+            </Button>
+          </article>
+          <article className="glass-panel rounded-lg p-5">
+            <FileText className="size-5 text-primary" />
+            <h2 className="mt-3 font-display text-lg font-bold">Terminal reports</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Generate, review, and publish student terminal reports for the current term.
+            </p>
+            <Button className="mt-5" variant="outline" asChild>
+              <Link to="/terminal-reports">
+                <FileText />
+                Open report centre
+              </Link>
+            </Button>
+          </article>
+          <article className="glass-panel rounded-lg p-5">
+            <ShieldCheck className="size-5 text-primary" />
+            <h2 className="mt-3 font-display text-lg font-bold">Daily reconciliation</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Review gateway-verified payments, attendance exceptions, and close the collection day.
+            </p>
+            <Button className="mt-5" variant="outline" asChild>
+              <Link to="/reconciliation">
+                <ShieldCheck />
+                Open controls
+              </Link>
+            </Button>
+          </article>
+        </section>
+      </div>
+    </SchoolShell>
+  );
 }
 
 type WorkflowSettings = {
   class_teachers_can_record_daily_fees: boolean;
   attendance_print_format: "daily_register" | "ges_term_to_date";
+  daily_fee_split_enabled: boolean;
 };
 
 function SchoolWorkflowSettings() {
   const [settings, setSettings] = useState<WorkflowSettings>({
     class_teachers_can_record_daily_fees: false,
     attendance_print_format: "ges_term_to_date",
+    daily_fee_split_enabled: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -124,12 +246,23 @@ function SchoolWorkflowSettings() {
   useEffect(() => {
     let cancelled = false;
     void schoolApi<WorkflowSettings>("/api/school/workflow-settings")
-      .then((result) => { if (!cancelled) setSettings(result); })
-      .catch((loadError: unknown) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load school workflow settings");
+      .then((result) => {
+        if (!cancelled) setSettings(result);
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .catch((loadError: unknown) => {
+        if (!cancelled)
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Could not load school workflow settings",
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function saveSettings() {
@@ -142,56 +275,116 @@ function SchoolWorkflowSettings() {
         body: JSON.stringify(settings),
       });
       setSettings(result);
+      window.dispatchEvent(new Event("school-workflow-settings-updated"));
       setNotice("School workflow settings saved.");
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Could not save school workflow settings");
+      setError(
+        saveError instanceof Error ? saveError.message : "Could not save school workflow settings",
+      );
     } finally {
       setSaving(false);
     }
   }
 
-  return <section className="glass-panel mt-4 rounded-lg p-5">
-    <div className="flex items-center gap-2">
-      <Settings2 className="size-5 text-primary" />
-      <h2 className="font-display text-xl font-bold">School workflow settings</h2>
-    </div>
-    <p className="mt-1 text-sm text-muted-foreground">These settings apply only to this school.</p>
-    {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
-    {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
-    {loading ? <p className="py-5 text-sm text-muted-foreground">Loading workflow settings...</p> : <div className="mt-4 grid gap-4 lg:grid-cols-2">
-      <label className="flex items-start gap-3 rounded-md border border-border p-4">
-        <input
-          type="checkbox"
-          checked={settings.class_teachers_can_record_daily_fees}
-          onChange={(event) => setSettings((current) => ({
-            ...current,
-            class_teachers_can_record_daily_fees: event.target.checked,
-          }))}
-          className="mt-1 size-4 accent-primary"
-        />
-        <span>
-          <span className="block text-sm font-semibold">Allow assigned class teachers to record daily fees</span>
-          <span className="mt-1 block text-xs text-muted-foreground">Teachers can confirm the configured daily amount and payment method for learners in their assigned class. Recorded collections appear in Finance.</span>
-        </span>
-      </label>
-      <label className="space-y-2 text-sm font-medium">
-        Default attendance print format
-        <select
-          value={settings.attendance_print_format}
-          onChange={(event) => setSettings((current) => ({
-            ...current,
-            attendance_print_format: event.target.value as WorkflowSettings["attendance_print_format"],
-          }))}
-          className="block h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+  return (
+    <section className="glass-panel mt-4 rounded-lg p-5">
+      <div className="flex items-center gap-2">
+        <Settings2 className="size-5 text-primary" />
+        <h2 className="font-display text-xl font-bold">School workflow settings</h2>
+      </div>
+      <p className="mt-1 text-sm text-muted-foreground">
+        These settings apply only to this school.
+      </p>
+      {error && (
+        <p
+          role="alert"
+          className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive"
         >
-          <option value="daily_register">Daily class register</option>
-          <option value="ges_term_to_date">Whole-school term-to-date GES-style register</option>
-        </select>
-        <span className="block text-xs font-normal text-muted-foreground">The school-wide option includes every class, its configured term, saved daily marks, and cumulative totals. The layout is not verified against the official GES form until you share its reference photo.</span>
-      </label>
-    </div>}
-    {!loading && <Button className="mt-4" onClick={() => void saveSettings()} disabled={saving}>{saving ? "Saving..." : "Save settings"}</Button>}
-  </section>;
+          {error}
+        </p>
+      )}
+      {loading ? (
+        <p className="py-5 text-sm text-muted-foreground">Loading workflow settings...</p>
+      ) : (
+        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <label className="flex items-start gap-3 rounded-md border border-border p-4">
+            <input
+              type="checkbox"
+              checked={settings.daily_fee_split_enabled}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  daily_fee_split_enabled: event.target.checked,
+                }))
+              }
+              className="mt-1 size-4 accent-primary"
+            />
+            <span>
+              <span className="block text-sm font-semibold">
+                Split daily fees into studies and feeding
+              </span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                Studies is required; optional feeding is set with the separate Daily feeding class
+                fee rule.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-3 rounded-md border border-border p-4">
+            <input
+              type="checkbox"
+              checked={settings.class_teachers_can_record_daily_fees}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  class_teachers_can_record_daily_fees: event.target.checked,
+                }))
+              }
+              className="mt-1 size-4 accent-primary"
+            />
+            <span>
+              <span className="block text-sm font-semibold">
+                Allow assigned class teachers to record daily fees
+              </span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                Teachers can confirm the configured daily amount and payment method for learners in
+                their assigned class. Recorded collections appear in Finance.
+              </span>
+            </span>
+          </label>
+          <label className="space-y-2 text-sm font-medium">
+            Default attendance print format
+            <select
+              value={settings.attendance_print_format}
+              onChange={(event) =>
+                setSettings((current) => ({
+                  ...current,
+                  attendance_print_format: event.target
+                    .value as WorkflowSettings["attendance_print_format"],
+                }))
+              }
+              className="block h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="daily_register">Daily class register</option>
+              <option value="ges_term_to_date">Whole-school term-to-date GES-style register</option>
+            </select>
+            <span className="block text-xs font-normal text-muted-foreground">
+              The school-wide option includes every class, its configured term, saved daily marks,
+              and cumulative totals. The layout is not verified against the official GES form until
+              you share its reference photo.
+            </span>
+          </label>
+        </div>
+      )}
+      {!loading && (
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button onClick={() => void saveSettings()} disabled={saving}>
+            {saving ? "Saving..." : "Save settings"}
+          </Button>
+          {notice && <span className="text-sm text-emerald-700">{notice}</span>}
+        </div>
+      )}
+    </section>
+  );
 }
 
 type SchoolHoliday = { date: string; name: string };
@@ -217,7 +410,9 @@ function SchoolHolidays() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   async function saveHoliday(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -244,51 +439,113 @@ function SchoolHolidays() {
   }
 
   async function removeHoliday(holiday: SchoolHoliday) {
-    if (!window.confirm(`Remove ${holiday.name} on ${holiday.date}? The date will be treated as a regular school day again.`)) return;
+    if (
+      !window.confirm(
+        `Remove ${holiday.name} on ${holiday.date}? The date will be treated as a regular school day again.`,
+      )
+    )
+      return;
     setRemovingDate(holiday.date);
     setError("");
     setNotice("");
     try {
-      await schoolApi(`/api/school/holidays?date=${encodeURIComponent(holiday.date)}`, { method: "DELETE" });
+      await schoolApi(`/api/school/holidays?date=${encodeURIComponent(holiday.date)}`, {
+        method: "DELETE",
+      });
       setNotice(`${holiday.name} was removed from the school calendar.`);
       await load();
     } catch (removeError) {
-      setError(removeError instanceof Error ? removeError.message : "Could not remove school holiday");
+      setError(
+        removeError instanceof Error ? removeError.message : "Could not remove school holiday",
+      );
     } finally {
       setRemovingDate("");
     }
   }
 
-  return <section className="glass-panel mt-4 rounded-lg p-5">
-    <div className="flex items-center gap-2">
-      <CalendarDays className="size-5 text-primary" />
-      <h2 className="font-display text-xl font-bold">School holidays</h2>
-    </div>
-    <p className="mt-1 text-sm text-muted-foreground">Mark a school-wide holiday. Daily-fee collection and attendance entry will be blocked, and the date will not count as an open school day in attendance totals.</p>
-    {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
-    {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
-    <form onSubmit={(event) => void saveHoliday(event)} className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
-      <label className="space-y-1 text-xs font-medium text-muted-foreground">Holiday date
-        <Input name="date" type="date" required />
-      </label>
-      <label className="space-y-1 text-xs font-medium text-muted-foreground">Holiday name
-        <Input name="name" required minLength={2} maxLength={120} placeholder="e.g. Founders Day" />
-      </label>
-      <div className="flex items-end"><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Mark holiday"}</Button></div>
-    </form>
-    {loading ? <p className="py-5 text-sm text-muted-foreground">Loading school holidays...</p> : holidays.length === 0 ? (
-      <p className="py-5 text-sm text-muted-foreground">No school holidays have been set.</p>
-    ) : (
-      <ul className="mt-4 divide-y divide-border rounded-md border border-border">
-        {holidays.map((holiday) => <li key={holiday.date} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
-          <div><p className="text-sm font-medium">{holiday.name}</p><p className="text-xs text-muted-foreground">{new Date(`${holiday.date}T00:00:00`).toLocaleDateString()}</p></div>
-          <Button type="button" size="sm" variant="outline" disabled={removingDate === holiday.date} onClick={() => void removeHoliday(holiday)}>
-            <Trash2 />{removingDate === holiday.date ? "Removing..." : "Remove"}
+  return (
+    <section className="glass-panel mt-4 rounded-lg p-5">
+      <div className="flex items-center gap-2">
+        <CalendarDays className="size-5 text-primary" />
+        <h2 className="font-display text-xl font-bold">School holidays</h2>
+      </div>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Mark a school-wide holiday. Daily-fee collection and attendance entry will be blocked, and
+        the date will not count as an open school day in attendance totals.
+      </p>
+      {error && (
+        <p
+          role="alert"
+          className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive"
+        >
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p
+          role="status"
+          className="mt-4 rounded-md border border-emerald-600/20 px-3 py-2 text-sm text-emerald-800"
+        >
+          {notice}
+        </p>
+      )}
+      <form
+        onSubmit={(event) => void saveHoliday(event)}
+        className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"
+      >
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">
+          Holiday date
+          <Input name="date" type="date" required />
+        </label>
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">
+          Holiday name
+          <Input
+            name="name"
+            required
+            minLength={2}
+            maxLength={120}
+            placeholder="e.g. Founders Day"
+          />
+        </label>
+        <div className="flex items-end">
+          <Button type="submit" disabled={saving}>
+            {saving ? "Saving..." : "Mark holiday"}
           </Button>
-        </li>)}
-      </ul>
-    )}
-  </section>;
+        </div>
+      </form>
+      {loading ? (
+        <p className="py-5 text-sm text-muted-foreground">Loading school holidays...</p>
+      ) : holidays.length === 0 ? (
+        <p className="py-5 text-sm text-muted-foreground">No school holidays have been set.</p>
+      ) : (
+        <ul className="mt-4 divide-y divide-border rounded-md border border-border">
+          {holidays.map((holiday) => (
+            <li
+              key={holiday.date}
+              className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5"
+            >
+              <div>
+                <p className="text-sm font-medium">{holiday.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {new Date(`${holiday.date}T00:00:00`).toLocaleDateString()}
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={removingDate === holiday.date}
+                onClick={() => void removeHoliday(holiday)}
+              >
+                <Trash2 />
+                {removingDate === holiday.date ? "Removing..." : "Remove"}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function DirectoryManager() {
@@ -321,20 +578,28 @@ function DirectoryManager() {
   }, []);
 
   const loadAcademicYears = useCallback(async () => {
-    const result = await schoolApi<{ academic_years: AcademicYear[] }>("/api/school/academic-periods");
+    const result = await schoolApi<{ academic_years: AcademicYear[] }>(
+      "/api/school/academic-periods",
+    );
     setAcademicYears(result.academic_years);
   }, []);
 
   const loadTeachers = useCallback(async () => {
     const result = await schoolApi<{ team: ClassTeacher[] }>("/api/school/team");
-    setTeachers(result.team.filter((member) => member.role === "teacher" && member.active && member.staff_profile_id));
+    setTeachers(
+      result.team.filter(
+        (member) => member.role === "teacher" && member.active && member.staff_profile_id,
+      ),
+    );
   }, []);
 
   const loadStudents = useCallback(async () => {
     const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
     if (search.trim()) params.set("search", search.trim());
     if (classFilter) params.set("class_id", classFilter);
-    const result = await schoolApi<{ students: Student[]; total: number }>(`/api/school/students?${params}`);
+    const result = await schoolApi<{ students: Student[]; total: number }>(
+      `/api/school/students?${params}`,
+    );
     setStudents(result.students);
     setTotal(result.total);
   }, [page, search, classFilter]);
@@ -455,7 +720,9 @@ function DirectoryManager() {
     setRosterLoading(true);
     setError("");
     try {
-      const result = await schoolApi<{ students: Student[] }>(`/api/school/classes/${encodeURIComponent(schoolClass.id)}/roster`);
+      const result = await schoolApi<{ students: Student[] }>(
+        `/api/school/classes/${encodeURIComponent(schoolClass.id)}/roster`,
+      );
       setRoster(result.students);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load class roster");
@@ -470,92 +737,443 @@ function DirectoryManager() {
   const visibleYears = filteredYears.length ? filteredYears : [];
   const maxPage = Math.max(1, Math.ceil(total / pageSize));
 
-  return <section className="mt-7 space-y-4">
-    {error && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p>}
-    {notice && <p role="status" className="rounded-md border border-emerald-600/20 bg-emerald-600/5 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
-    <article className="glass-panel rounded-lg p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div><div className="flex items-center gap-2"><BookOpen className="size-5 text-primary" /><h2 className="font-display text-xl font-bold">Classes</h2></div><p className="mt-1 text-sm text-muted-foreground">Create classes for your academic years and review their rosters.</p></div>
-        <Button onClick={() => setClassDialogOpen(true)}><Plus />Add Class</Button>
-      </div>
-      {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading classes...</p> : classes.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">No classes created yet. Click &apos;Add Class&apos; to start</p> : <div className="mt-4 overflow-x-auto">
-        <table className="w-full min-w-[640px] text-left text-sm">
-          <thead className="border-b text-xs text-muted-foreground"><tr><th className="px-3 py-2 font-medium">Class</th><th className="px-3 py-2 font-medium">Grade level</th><th className="px-3 py-2 font-medium">Academic year</th><th className="px-3 py-2 font-medium">Term</th><th className="px-3 py-2 font-medium">Class teacher</th><th className="px-3 py-2 text-right font-medium">Students</th><th className="px-3 py-2" /></tr></thead>
-          <tbody className="divide-y divide-border/70">{classes.map((item) => <tr key={item.id}><td className="px-3 py-3 font-medium">{item.name}</td><td className="px-3 py-3">{item.grade_level}</td><td className="px-3 py-3">{item.academic_year_name}</td><td className="px-3 py-3">{item.term_name ?? "—"}</td><td className="px-3 py-3">{item.class_teacher_name ?? "Unassigned"}</td><td className="px-3 py-3 text-right tabular-nums">{Number(item.student_count)}</td><td className="px-3 py-3 text-right"><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => void openRoster(item)}>Roster</Button><Button size="sm" variant="outline" onClick={() => { setClassBeingEdited(item); setEditedClassName(item.name); setEditedClassTeacher(item.class_teacher_id ?? ""); }}>Edit</Button></div></td></tr>)}</tbody>
-        </table>
-      </div>}
-    </article>
+  return (
+    <section className="mt-7 space-y-4">
+      {error && (
+        <p
+          role="alert"
+          className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+        >
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p
+          role="status"
+          className="rounded-md border border-emerald-600/20 bg-emerald-600/5 px-4 py-3 text-sm text-emerald-800"
+        >
+          {notice}
+        </p>
+      )}
+      <article className="glass-panel rounded-lg p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <BookOpen className="size-5 text-primary" />
+              <h2 className="font-display text-xl font-bold">Classes</h2>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Create classes for your academic years and review their rosters.
+            </p>
+          </div>
+          <Button onClick={() => setClassDialogOpen(true)}>
+            <Plus />
+            Add Class
+          </Button>
+        </div>
+        {loading ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Loading classes...</p>
+        ) : classes.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            No classes created yet. Click &apos;Add Class&apos; to start
+          </p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead className="border-b text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Class</th>
+                  <th className="px-3 py-2 font-medium">Grade level</th>
+                  <th className="px-3 py-2 font-medium">Academic year</th>
+                  <th className="px-3 py-2 font-medium">Term</th>
+                  <th className="px-3 py-2 font-medium">Class teacher</th>
+                  <th className="px-3 py-2 text-right font-medium">Students</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/70">
+                {classes.map((item) => (
+                  <tr key={item.id}>
+                    <td className="px-3 py-3 font-medium">{item.name}</td>
+                    <td className="px-3 py-3">{item.grade_level}</td>
+                    <td className="px-3 py-3">{item.academic_year_name}</td>
+                    <td className="px-3 py-3">{item.term_name ?? "—"}</td>
+                    <td className="px-3 py-3">{item.class_teacher_name ?? "Unassigned"}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      {Number(item.student_count)}
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="outline" onClick={() => void openRoster(item)}>
+                          Roster
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setClassBeingEdited(item);
+                            setEditedClassName(item.name);
+                            setEditedClassTeacher(item.class_teacher_id ?? "");
+                          }}
+                        >
+                          Edit
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </article>
 
-    <article className="glass-panel rounded-lg p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div><div className="flex items-center gap-2"><UsersRound className="size-5 text-primary" /><h2 className="font-display text-xl font-bold">Students</h2></div><p className="mt-1 text-sm text-muted-foreground">Search, filter, and manage your school&apos;s student directory.</p></div>
-        <Button onClick={() => setStudentDialogOpen(true)}><Plus />Add Student</Button>
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_15rem]">
-        <label className="relative"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search students..." className="pl-9" aria-label="Search students" /></label>
-        <select value={classFilter} onChange={(event) => setClassFilter(event.target.value)} aria-label="Filter students by class" className="h-9 rounded-md border border-input bg-background px-3 text-sm">
-          <option value="">All classes</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </div>
-      {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading students...</p> : students.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">No students enrolled yet.</p> : <div className="mt-4 overflow-x-auto">
-        <table className="w-full min-w-[560px] text-left text-sm">
-          <thead className="border-b text-xs text-muted-foreground"><tr><th className="px-3 py-2 font-medium">Student</th><th className="px-3 py-2 font-medium">Student ID</th><th className="px-3 py-2 font-medium">Class</th><th className="px-3 py-2 font-medium">Status</th></tr></thead>
-          <tbody className="divide-y divide-border/70">{students.map((student) => <tr key={student.id}><td className="px-3 py-3 font-medium">{student.first_name} {student.last_name}</td><td className="px-3 py-3">{student.student_id_number}</td><td className="px-3 py-3">{student.class_name ?? "Unassigned"}</td><td className="px-3 py-3"><span className={student.status === "active" ? "rounded-full bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700" : "rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground"}>{student.status}</span></td></tr>)}</tbody>
-        </table>
-      </div>}
-      <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/70 pt-3 text-xs text-muted-foreground">
-        <span>{total ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}` : "0 students"}</span>
-        <div className="flex items-center gap-2"><Button size="sm" variant="outline" disabled={page <= 1 || loading} onClick={() => setPage((current) => Math.max(1, current - 1))} aria-label="Previous page"><ChevronLeft /></Button><span>Page {page} of {maxPage}</span><Button size="sm" variant="outline" disabled={page >= maxPage || loading} onClick={() => setPage((current) => current + 1)} aria-label="Next page"><ChevronRight /></Button></div>
-      </div>
-    </article>
+      <article className="glass-panel rounded-lg p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <UsersRound className="size-5 text-primary" />
+              <h2 className="font-display text-xl font-bold">Students</h2>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Search, filter, and manage your school&apos;s student directory.
+            </p>
+          </div>
+          <Button onClick={() => setStudentDialogOpen(true)}>
+            <Plus />
+            Add Student
+          </Button>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_15rem]">
+          <label className="relative">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search students..."
+              className="pl-9"
+              aria-label="Search students"
+            />
+          </label>
+          <select
+            value={classFilter}
+            onChange={(event) => setClassFilter(event.target.value)}
+            aria-label="Filter students by class"
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">All classes</option>
+            {classes.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        {loading ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Loading students...</p>
+        ) : students.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            No students enrolled yet.
+          </p>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead className="border-b text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Student</th>
+                  <th className="px-3 py-2 font-medium">Student ID</th>
+                  <th className="px-3 py-2 font-medium">Class</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/70">
+                {students.map((student) => (
+                  <tr key={student.id}>
+                    <td className="px-3 py-3 font-medium">
+                      {student.first_name} {student.last_name}
+                    </td>
+                    <td className="px-3 py-3">{student.student_id_number}</td>
+                    <td className="px-3 py-3">{student.class_name ?? "Unassigned"}</td>
+                    <td className="px-3 py-3">
+                      <span
+                        className={
+                          student.status === "active"
+                            ? "rounded-full bg-emerald-500/10 px-2 py-1 text-xs text-emerald-700"
+                            : "rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground"
+                        }
+                      >
+                        {student.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/70 pt-3 text-xs text-muted-foreground">
+          <span>
+            {total
+              ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}`
+              : "0 students"}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              aria-label="Previous page"
+            >
+              <ChevronLeft />
+            </Button>
+            <span>
+              Page {page} of {maxPage}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={page >= maxPage || loading}
+              onClick={() => setPage((current) => current + 1)}
+              aria-label="Next page"
+            >
+              <ChevronRight />
+            </Button>
+          </div>
+        </div>
+      </article>
 
-    <Dialog open={classDialogOpen} onOpenChange={(open) => { setClassYearId(""); setClassDialogOpen(open); }}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Add class</DialogTitle><DialogDescription>Choose a class name, grade level, and academic period.</DialogDescription></DialogHeader>
-        <form onSubmit={(event) => void submitClass(event)} className="space-y-4">
-          <FormField label="Class name"><Input name="class_name" required minLength={2} maxLength={100} placeholder="Form 1A" /></FormField>
-          <FormField label="Grade level"><Input name="grade_level" maxLength={100} placeholder="Form 1" /></FormField>
-          <FormField label="Academic year"><select name="academic_year_id" value={classYearId} onChange={(event) => setClassYearId(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="">Current or create initial year automatically</option>{visibleYears.map((year) => <option key={year.id} value={year.id}>{year.name}{year.is_current ? " (Current)" : ""}</option>)}</select></FormField>
-          <FormField label="Academic term"><select name="term_id" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="">Current or create initial term automatically</option>{(selectedYear?.terms ?? []).map((term) => <option key={term.id} value={term.id}>{term.name}{term.is_current ? " (Current)" : ""}</option>)}</select></FormField>
-          <DialogFooter><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Create class"}</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+      <Dialog
+        open={classDialogOpen}
+        onOpenChange={(open) => {
+          setClassYearId("");
+          setClassDialogOpen(open);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add class</DialogTitle>
+            <DialogDescription>
+              Choose a class name, grade level, and academic period.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => void submitClass(event)} className="space-y-4">
+            <FormField label="Class name">
+              <Input
+                name="class_name"
+                required
+                minLength={2}
+                maxLength={100}
+                placeholder="Form 1A"
+              />
+            </FormField>
+            <FormField label="Grade level">
+              <Input name="grade_level" maxLength={100} placeholder="Form 1" />
+            </FormField>
+            <FormField label="Academic year">
+              <select
+                name="academic_year_id"
+                value={classYearId}
+                onChange={(event) => setClassYearId(event.target.value)}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Current or create initial year automatically</option>
+                {visibleYears.map((year) => (
+                  <option key={year.id} value={year.id}>
+                    {year.name}
+                    {year.is_current ? " (Current)" : ""}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Academic term">
+              <select
+                name="term_id"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Current or create initial term automatically</option>
+                {(selectedYear?.terms ?? []).map((term) => (
+                  <option key={term.id} value={term.id}>
+                    {term.name}
+                    {term.is_current ? " (Current)" : ""}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <DialogFooter>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Create class"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-    <Dialog open={studentDialogOpen} onOpenChange={setStudentDialogOpen}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Add student</DialogTitle><DialogDescription>Add a student record and optionally assign a class and guardian contact. The student ID is generated from your school&apos;s initials.</DialogDescription></DialogHeader>
-        <form onSubmit={(event) => void submitStudent(event)} className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2"><FormField label="First name"><Input name="first_name" required maxLength={100} autoComplete="given-name" /></FormField><FormField label="Last name"><Input name="last_name" required maxLength={100} autoComplete="family-name" /></FormField></div>
-          <FormField label="Class assignment"><select name="class_id" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="">Unassigned</option>{classes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></FormField>
-          <div className="border-t border-border/70 pt-3"><h3 className="text-sm font-medium">Guardian contact (optional)</h3><div className="mt-3 space-y-3"><FormField label="Guardian name"><Input name="guardian_name" maxLength={160} autoComplete="name" /></FormField><div className="grid gap-3 sm:grid-cols-2"><FormField label="Phone"><Input name="guardian_phone" maxLength={40} type="tel" autoComplete="tel" /></FormField><FormField label="Email"><Input name="guardian_email" maxLength={254} type="email" autoComplete="email" /></FormField></div></div></div>
-          <DialogFooter><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Add student"}</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+      <Dialog open={studentDialogOpen} onOpenChange={setStudentDialogOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add student</DialogTitle>
+            <DialogDescription>
+              Add a student record and optionally assign a class and guardian contact. The student
+              ID is generated from your school&apos;s initials.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => void submitStudent(event)} className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormField label="First name">
+                <Input name="first_name" required maxLength={100} autoComplete="given-name" />
+              </FormField>
+              <FormField label="Last name">
+                <Input name="last_name" required maxLength={100} autoComplete="family-name" />
+              </FormField>
+            </div>
+            <FormField label="Class assignment">
+              <select
+                name="class_id"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Unassigned</option>
+                {classes.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <div className="border-t border-border/70 pt-3">
+              <h3 className="text-sm font-medium">Guardian contact (optional)</h3>
+              <div className="mt-3 space-y-3">
+                <FormField label="Guardian name">
+                  <Input name="guardian_name" maxLength={160} autoComplete="name" />
+                </FormField>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField label="Phone">
+                    <Input name="guardian_phone" maxLength={40} type="tel" autoComplete="tel" />
+                  </FormField>
+                  <FormField label="Email">
+                    <Input
+                      name="guardian_email"
+                      maxLength={254}
+                      type="email"
+                      autoComplete="email"
+                    />
+                  </FormField>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Add student"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-    <Dialog open={classBeingEdited !== null} onOpenChange={(open) => { if (!open && !saving) setClassBeingEdited(null); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Edit class</DialogTitle><DialogDescription>Update the class name or assign an active teacher from this school.</DialogDescription></DialogHeader>
-        <form onSubmit={(event) => void saveClassChanges(event)} className="space-y-4">
-          <FormField label="Class name"><Input required minLength={2} maxLength={100} value={editedClassName} onChange={(event) => setEditedClassName(event.target.value)} /></FormField>
-          <FormField label="Class teacher"><select value={editedClassTeacher} onChange={(event) => setEditedClassTeacher(event.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="">Unassigned</option>{classBeingEdited?.class_teacher_id && !teachers.some((teacher) => teacher.staff_profile_id === classBeingEdited.class_teacher_id) && <option value={classBeingEdited.class_teacher_id}>{classBeingEdited.class_teacher_name ?? "Current teacher"} (inactive)</option>}{teachers.map((teacher) => <option key={teacher.staff_profile_id} value={teacher.staff_profile_id ?? ""}>{teacher.display_name}</option>)}</select></FormField>
-          <DialogFooter><Button type="submit" disabled={saving}>{saving ? "Saving..." : "Save class"}</Button></DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+      <Dialog
+        open={classBeingEdited !== null}
+        onOpenChange={(open) => {
+          if (!open && !saving) setClassBeingEdited(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit class</DialogTitle>
+            <DialogDescription>
+              Update the class name or assign an active teacher from this school.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => void saveClassChanges(event)} className="space-y-4">
+            <FormField label="Class name">
+              <Input
+                required
+                minLength={2}
+                maxLength={100}
+                value={editedClassName}
+                onChange={(event) => setEditedClassName(event.target.value)}
+              />
+            </FormField>
+            <FormField label="Class teacher">
+              <select
+                value={editedClassTeacher}
+                onChange={(event) => setEditedClassTeacher(event.target.value)}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Unassigned</option>
+                {classBeingEdited?.class_teacher_id &&
+                  !teachers.some(
+                    (teacher) => teacher.staff_profile_id === classBeingEdited.class_teacher_id,
+                  ) && (
+                    <option value={classBeingEdited.class_teacher_id}>
+                      {classBeingEdited.class_teacher_name ?? "Current teacher"} (inactive)
+                    </option>
+                  )}
+                {teachers.map((teacher) => (
+                  <option key={teacher.staff_profile_id} value={teacher.staff_profile_id ?? ""}>
+                    {teacher.display_name}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <DialogFooter>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Save class"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-    <Dialog open={rosterClass !== null} onOpenChange={(open) => { if (!open) setRosterClass(null); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{rosterClass ? `${rosterClass.name} roster` : "Class roster"}</DialogTitle><DialogDescription>Active students currently assigned to this class.</DialogDescription></DialogHeader>
-        {rosterLoading ? <p className="py-5 text-sm text-muted-foreground">Loading roster...</p> : roster.length ? <ul className="max-h-72 divide-y divide-border overflow-y-auto">{roster.map((student) => <li key={student.id} className="flex justify-between gap-3 py-3 text-sm"><span>{student.first_name} {student.last_name}</span><span className="text-muted-foreground">{student.student_id_number}</span></li>)}</ul> : <p className="py-5 text-sm text-muted-foreground">No active students are enrolled in this class yet.</p>}
-      </DialogContent>
-    </Dialog>
-  </section>;
+      <Dialog
+        open={rosterClass !== null}
+        onOpenChange={(open) => {
+          if (!open) setRosterClass(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{rosterClass ? `${rosterClass.name} roster` : "Class roster"}</DialogTitle>
+            <DialogDescription>Active students currently assigned to this class.</DialogDescription>
+          </DialogHeader>
+          {rosterLoading ? (
+            <p className="py-5 text-sm text-muted-foreground">Loading roster...</p>
+          ) : roster.length ? (
+            <ul className="max-h-72 divide-y divide-border overflow-y-auto">
+              {roster.map((student) => (
+                <li key={student.id} className="flex justify-between gap-3 py-3 text-sm">
+                  <span>
+                    {student.first_name} {student.last_name}
+                  </span>
+                  <span className="text-muted-foreground">{student.student_id_number}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="py-5 text-sm text-muted-foreground">
+              No active students are enrolled in this class yet.
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
 }
 
 function FormField({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="block space-y-1.5 text-sm"><span className="text-xs font-medium text-muted-foreground">{label}</span>{children}</label>;
+  return (
+    <label className="block space-y-1.5 text-sm">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
 }
 
-function Card({ label, value, note }: { label: string; value: string; note: string }) { return <article className="glass-panel rounded-lg p-5"><p className="text-xs font-medium text-muted-foreground">{label}</p><p className="mt-2 font-display text-3xl">{value}</p><p className="mt-1 text-xs text-secondary-foreground">{note}</p></article>; }
+function Card({ label, value, note }: { label: string; value: string; note: string }) {
+  return (
+    <article className="glass-panel rounded-lg p-5">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="mt-2 font-display text-3xl">{value}</p>
+      <p className="mt-1 text-xs text-secondary-foreground">{note}</p>
+    </article>
+  );
+}

@@ -3,23 +3,40 @@ import { resolveTenant } from "./tenant";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { createTransport } from "nodemailer";
 
-type SchoolRecord = { id: string; name: string; subdomain: string; status: "trial" | "active" | "suspended"; createdAt: string; primaryColor?: string; students?: number; admins?: number };
+type SchoolRecord = {
+  id: string;
+  name: string;
+  subdomain: string;
+  status: "trial" | "active" | "suspended";
+  createdAt: string;
+  primaryColor?: string;
+  students?: number;
+  admins?: number;
+};
 
-const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
+  Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
 const badRequest = (message: string) => json({ error: message }, 400);
 
 async function ensureTermFeeArrears(sql: ReturnType<typeof database>, schoolId: string) {
-  const endedTerms = await withDatabaseContext(sql, { schoolId }, (tx) => tx`
+  const endedTerms = await withDatabaseContext(
+    sql,
+    { schoolId },
+    (tx) => tx`
     select id
     from terms
     where school_id = ${schoolId}::uuid
       and ends_on < current_date
       and arrears_processed_at is null
     order by ends_on, starts_on
-  `);
+  `,
+  );
 
   for (const term of endedTerms) {
-    await withDatabaseContext(sql, { schoolId }, (tx) => tx`
+    await withDatabaseContext(
+      sql,
+      { schoolId },
+      (tx) => tx`
       with source_term as materialized (
         select id, starts_on, ends_on
         from terms
@@ -206,14 +223,19 @@ async function ensureTermFeeArrears(sql: ReturnType<typeof database>, schoolId: 
         returning t.id
       )
       select id from term_processed
-    `);
+    `,
+    );
   }
 }
 
 function platformTokenFromRequest(request: Request) {
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   if (bearer) return bearer;
-  const cookie = request.headers.get("cookie")?.split(";").map((part) => part.trim()).find((part) => part.startsWith("platform_admin_session="));
+  const cookie = request.headers
+    .get("cookie")
+    ?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("platform_admin_session="));
   if (!cookie) return null;
   try {
     return decodeURIComponent(cookie.slice("platform_admin_session=".length));
@@ -234,11 +256,20 @@ async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
     const { userId, email } = identity;
 
     const sql = database(env);
-    const users = await sql`select email, "emailVerified" as email_verified from neon_auth.user where id = ${userId} limit 1`;
+    const users =
+      await sql`select email, "emailVerified" as email_verified from neon_auth.user where id = ${userId} limit 1`;
     const authUser = users[0];
-    if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== email) return false;
-    const memberships = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
-      tx`
+    if (
+      !authUser ||
+      authUser["email_verified"] !== true ||
+      String(authUser["email"]).trim().toLowerCase() !== email
+    )
+      return false;
+    const memberships = await withDatabaseContext(
+      sql,
+      { userEmail: email },
+      (tx) =>
+        tx`
         select 1 from users u join memberships m on m.user_id = u.id
         where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null and m.active
         limit 1
@@ -256,7 +287,9 @@ function platformSessionCookie(token: string, request: Request, maxAge: number) 
   return `platform_admin_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api/platform; Max-Age=${maxAge}${secure}`;
 }
 
-function validSubdomain(value: string) { return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value); }
+function validSubdomain(value: string) {
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
+}
 
 const validPrimaryColor = (value: string) => /^#[0-9a-f]{6}$/i.test(value);
 const maxCrestUrlLength = 700_000;
@@ -279,7 +312,10 @@ function bearerToken(request: Request) {
   const headerToken = match?.[1];
   if (headerToken && /^[\x21-\x7e]{1,4096}$/.test(headerToken)) return headerToken;
 
-  const cookie = request.headers.get("cookie")?.split(";").map((part) => part.trim())
+  const cookie = request.headers
+    .get("cookie")
+    ?.split(";")
+    .map((part) => part.trim())
     .find((part) => part.startsWith("klasora_auth_session="));
   if (!cookie) return null;
   try {
@@ -371,13 +407,17 @@ function validCrestUrl(value: unknown): value is string | null {
 }
 
 function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[character] ?? character);
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character] ?? character,
+  );
 }
 
 async function sendSchoolAdminInvitation(
@@ -417,11 +457,14 @@ async function sendActivationInvitation(
     env.SMTP_FROM_EMAIL,
   ];
   const hasSmtpConfiguration = smtpValues.some((value) => value !== undefined && value !== "");
-  const smtpConfigured = smtpValues.every((value) => typeof value === "string" && value.trim().length > 0);
+  const smtpConfigured = smtpValues.every(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
   const smtpFromEmail = env.SMTP_FROM_EMAIL?.trim();
-  const accent = invitation.primaryColor && /^#[0-9a-f]{6}$/i.test(invitation.primaryColor)
-    ? invitation.primaryColor
-    : "#1f5c3b";
+  const accent =
+    invitation.primaryColor && /^#[0-9a-f]{6}$/i.test(invitation.primaryColor)
+      ? invitation.primaryColor
+      : "#1f5c3b";
   const safeName = escapeHtml(invitation.contactName);
   const safeSchool = escapeHtml(invitation.schoolName);
   const safeRole = escapeHtml(invitation.roleName);
@@ -432,7 +475,11 @@ async function sendActivationInvitation(
   if (hasSmtpConfiguration) {
     const port = Number(env.SMTP_PORT);
     if (!smtpConfigured || !smtpFromEmail || !Number.isInteger(port) || port < 1 || port > 65535) {
-      return { sent: false, error: "SMTP invitation settings are incomplete or invalid. Check SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM_EMAIL." };
+      return {
+        sent: false,
+        error:
+          "SMTP invitation settings are incomplete or invalid. Check SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM_EMAIL.",
+      };
     }
     try {
       const transporter = createTransport({
@@ -453,13 +500,24 @@ async function sendActivationInvitation(
       });
       return { sent: true as const };
     } catch (error) {
-      console.error("SMTP invitation delivery failed", error instanceof Error ? error.name : "UnknownError");
-      return { sent: false, error: "SMTP could not deliver the invitation. Check the SMTP host, credentials, and sender settings." };
+      console.error(
+        "SMTP invitation delivery failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      return {
+        sent: false,
+        error:
+          "SMTP could not deliver the invitation. Check the SMTP host, credentials, and sender settings.",
+      };
     }
   }
 
   if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
-    return { sent: false, error: "Invitation email is not configured. Set SMTP settings in Vercel or configure RESEND_API_KEY and RESEND_FROM_EMAIL." };
+    return {
+      sent: false,
+      error:
+        "Invitation email is not configured. Set SMTP settings in Vercel or configure RESEND_API_KEY and RESEND_FROM_EMAIL.",
+    };
   }
   try {
     const response = await fetch("https://api.resend.com/emails", {
@@ -478,11 +536,18 @@ async function sendActivationInvitation(
     });
     if (!response.ok) {
       console.error("Resend rejected an account invitation", response.status);
-      return { sent: false, error: "The email provider could not deliver the invitation. Check the sender configuration." };
+      return {
+        sent: false,
+        error:
+          "The email provider could not deliver the invitation. Check the sender configuration.",
+      };
     }
     return { sent: true as const };
   } catch (error) {
-    console.error("Could not reach Resend for an account invitation", error instanceof Error ? error.name : "UnknownError");
+    console.error(
+      "Could not reach Resend for an account invitation",
+      error instanceof Error ? error.name : "UnknownError",
+    );
     return { sent: false, error: "Could not reach the email provider to deliver the invitation." };
   }
 }
@@ -490,9 +555,16 @@ async function sendActivationInvitation(
 async function sendPlatformSignupNotification(
   env: RuntimeEnv,
   recipients: string[],
-  application: { schoolName: string; subdomain: string; contactName: string; email: string; phone: string },
+  application: {
+    schoolName: string;
+    subdomain: string;
+    contactName: string;
+    email: string;
+    phone: string;
+  },
 ) {
-  if (!recipients.length) return { sent: false as const, error: "No active Super Admin email addresses are configured." };
+  if (!recipients.length)
+    return { sent: false as const, error: "No active Super Admin email addresses are configured." };
   const subject = `New school signup: ${application.schoolName}`;
   const safeSchool = escapeHtml(application.schoolName);
   const safeSubdomain = escapeHtml(application.subdomain);
@@ -501,15 +573,26 @@ async function sendPlatformSignupNotification(
   const safePhone = escapeHtml(application.phone || "Not provided");
   const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#183237"><h1>New school signup</h1><p><strong>School:</strong> ${safeSchool}</p><p><strong>Requested workspace:</strong> ${safeSubdomain}</p><p><strong>Contact:</strong> ${safeName}</p><p><strong>Email:</strong> ${safeEmail}</p><p><strong>Phone:</strong> ${safePhone}</p><p>Review this application in the Klasora Super Admin dashboard.</p></div>`;
   const text = `New school signup\n\nSchool: ${application.schoolName}\nRequested workspace: ${application.subdomain}\nContact: ${application.contactName}\nEmail: ${application.email}\nPhone: ${application.phone || "Not provided"}\n\nReview this application in the Klasora Super Admin dashboard.`;
-  const smtpValues = [env.SMTP_HOST, env.SMTP_PORT, env.SMTP_USERNAME, env.SMTP_PASSWORD, env.SMTP_FROM_EMAIL];
+  const smtpValues = [
+    env.SMTP_HOST,
+    env.SMTP_PORT,
+    env.SMTP_USERNAME,
+    env.SMTP_PASSWORD,
+    env.SMTP_FROM_EMAIL,
+  ];
   const hasSmtpConfiguration = smtpValues.some((value) => value !== undefined && value !== "");
-  const smtpConfigured = smtpValues.every((value) => typeof value === "string" && value.trim().length > 0);
+  const smtpConfigured = smtpValues.every(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
   const smtpFromEmail = env.SMTP_FROM_EMAIL?.trim();
 
   if (hasSmtpConfiguration) {
     const port = Number(env.SMTP_PORT);
     if (!smtpConfigured || !smtpFromEmail || !Number.isInteger(port) || port < 1 || port > 65535) {
-      return { sent: false as const, error: "SMTP notification settings are incomplete or invalid." };
+      return {
+        sent: false as const,
+        error: "SMTP notification settings are incomplete or invalid.",
+      };
     }
     try {
       const transporter = createTransport({
@@ -530,13 +613,23 @@ async function sendPlatformSignupNotification(
       });
       return { sent: true as const };
     } catch (error) {
-      console.error("SMTP platform signup notification failed", error instanceof Error ? error.name : "UnknownError");
-      return { sent: false as const, error: "SMTP could not deliver the Super Admin notification." };
+      console.error(
+        "SMTP platform signup notification failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      return {
+        sent: false as const,
+        error: "SMTP could not deliver the Super Admin notification.",
+      };
     }
   }
 
   if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
-    return { sent: false as const, error: "Email is not configured. Set SMTP settings or configure RESEND_API_KEY and RESEND_FROM_EMAIL." };
+    return {
+      sent: false as const,
+      error:
+        "Email is not configured. Set SMTP settings or configure RESEND_API_KEY and RESEND_FROM_EMAIL.",
+    };
   }
   try {
     const response = await fetch("https://api.resend.com/emails", {
@@ -549,12 +642,21 @@ async function sendPlatformSignupNotification(
     });
     if (!response.ok) {
       console.error("Resend rejected a platform signup notification", response.status);
-      return { sent: false as const, error: "The email provider could not deliver the Super Admin notification." };
+      return {
+        sent: false as const,
+        error: "The email provider could not deliver the Super Admin notification.",
+      };
     }
     return { sent: true as const };
   } catch (error) {
-    console.error("Could not reach Resend for a platform signup notification", error instanceof Error ? error.name : "UnknownError");
-    return { sent: false as const, error: "Could not reach the email provider to deliver the Super Admin notification." };
+    console.error(
+      "Could not reach Resend for a platform signup notification",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+    return {
+      sent: false as const,
+      error: "Could not reach the email provider to deliver the Super Admin notification.",
+    };
   }
 }
 
@@ -573,15 +675,21 @@ async function requireSchoolContext(
   env: RuntimeEnv,
   allowedRoles: readonly string[],
 ): Promise<SchoolAdminContext | Response> {
-  if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
+  if (!env.DATABASE_URL || !hasAuthConfig(env))
+    return json({ error: "Neon Auth is not configured" }, 503);
   const bearer = bearerToken(request);
-  if (!bearer) return json({ error: "A valid sign-in token is required. Please sign in again." }, 401);
+  if (!bearer)
+    return json({ error: "A valid sign-in token is required. Please sign in again." }, 401);
 
   let userId: string;
   let email: string;
   try {
     const identity = await authenticateNeonToken(bearer, env);
-    if (!identity) return json({ error: "Your sign-in session is invalid or expired. Please sign in again." }, 401);
+    if (!identity)
+      return json(
+        { error: "Your sign-in session is invalid or expired. Please sign in again." },
+        401,
+      );
     ({ userId, email } = identity);
   } catch (error) {
     logTokenVerificationFailure(error, bearer);
@@ -596,12 +704,19 @@ async function requireSchoolContext(
     limit 1
   `;
   const authUser = authUsers[0];
-  if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== email) {
+  if (
+    !authUser ||
+    authUser["email_verified"] !== true ||
+    String(authUser["email"]).trim().toLowerCase() !== email
+  ) {
     return json({ error: "Verify your email address before using a school portal" }, 403);
   }
 
-  const memberships = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
-    tx`
+  const memberships = await withDatabaseContext(
+    sql,
+    { userEmail: email },
+    (tx) =>
+      tx`
       select u.id as user_id, m.school_id, m.role, s.subdomain, s.name as school_name,
              s.primary_color, s.status as school_status
       from users u
@@ -610,16 +725,23 @@ async function requireSchoolContext(
       where lower(u.email) = ${email} and m.active
     `,
   );
-  const querySubdomain = new URL(request.url).searchParams.get("tenant")?.trim().toLowerCase() ?? null;
-  if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
+  const querySubdomain =
+    new URL(request.url).searchParams.get("tenant")?.trim().toLowerCase() ?? null;
+  if (querySubdomain && !validSubdomain(querySubdomain))
+    return badRequest("Invalid tenant subdomain");
   const requestedSubdomain = resolveTenant(request, env.ROOT_DOMAIN).subdomain ?? querySubdomain;
   const schoolMemberships = memberships.filter((row) => row["school_id"] != null);
-  const authorizedMemberships = schoolMemberships.filter((row) => allowedRoles.includes(String(row["role"])));
+  const authorizedMemberships = schoolMemberships.filter((row) =>
+    allowedRoles.includes(String(row["role"])),
+  );
   const membership = requestedSubdomain
     ? authorizedMemberships.find((row) => row["subdomain"] === requestedSubdomain)
-    : authorizedMemberships.length === 1 ? authorizedMemberships[0] : undefined;
+    : authorizedMemberships.length === 1
+      ? authorizedMemberships[0]
+      : undefined;
   if (!membership) return json({ error: "This account does not have access to this school" }, 403);
-  if (membership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
+  if (membership["school_status"] === "suspended")
+    return json({ error: "This school tenant is suspended" }, 403);
 
   return {
     schoolId: String(membership["school_id"]),
@@ -632,12 +754,20 @@ async function requireSchoolContext(
   };
 }
 
-async function requireSchoolAdminContext(request: Request, env: RuntimeEnv): Promise<SchoolAdminContext | Response> {
+async function requireSchoolAdminContext(
+  request: Request,
+  env: RuntimeEnv,
+): Promise<SchoolAdminContext | Response> {
   return requireSchoolContext(request, env, ["school_admin"]);
 }
 
 function uuidOrNull(value: unknown): value is string | null {
-  return value === null || value === undefined || (typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+  return (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))
+  );
 }
 
 function validIsoDate(value: string) {
@@ -649,40 +779,57 @@ function validIsoDate(value: string) {
 export async function handleApiRequest(request: Request, env: RuntimeEnv): Promise<Response> {
   env = resolveRuntimeEnv(env);
   const url = new URL(request.url);
-  if (url.pathname === "/api/health") return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
+  if (url.pathname === "/api/health")
+    return json({ ok: true, tenant: resolveTenant(request, env.ROOT_DOMAIN).subdomain });
   if (url.pathname === "/api/auth/config" && request.method === "GET") {
     return json({ authUrl: env.NEON_AUTH_URL ?? null, rootDomain: env.ROOT_DOMAIN ?? null });
   }
   if (url.pathname === "/api/platform/session") {
     if (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env)) {
       // Not configured yet: treat as signed out so the page shows its sign-in form instead of crashing.
-      if (request.method === "GET" || request.method === "DELETE") return json({ authenticated: false, error: "Platform sign-in is not set up yet" }, 401);
-      return json({ error: "Platform sign-in is not set up yet. Add the PLATFORM_ADMIN_TOKEN secret." }, 503);
+      if (request.method === "GET" || request.method === "DELETE")
+        return json({ authenticated: false, error: "Platform sign-in is not set up yet" }, 401);
+      return json(
+        { error: "Platform sign-in is not set up yet. Add the PLATFORM_ADMIN_TOKEN secret." },
+        503,
+      );
     }
     if (request.method === "GET") {
-      return await isPlatformAdmin(request, env) ? json({ authenticated: true }) : json({ error: "Unauthorized" }, 401);
+      return (await isPlatformAdmin(request, env))
+        ? json({ authenticated: true })
+        : json({ error: "Unauthorized" }, 401);
     }
     if (request.method === "DELETE") {
-      return json({ authenticated: false }, 200, { "set-cookie": platformSessionCookie("", request, 0) });
+      return json({ authenticated: false }, 200, {
+        "set-cookie": platformSessionCookie("", request, 0),
+      });
     }
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
     const payload: unknown = await request.json().catch(() => null);
-    const token = payload && typeof payload === "object" && "token" in payload && typeof payload.token === "string"
-      ? payload.token
-      : "";
+    const token =
+      payload &&
+      typeof payload === "object" &&
+      "token" in payload &&
+      typeof payload.token === "string"
+        ? payload.token
+        : "";
     if (!token || token !== env.PLATFORM_ADMIN_TOKEN) return json({ error: "Unauthorized" }, 401);
-    return json({ authenticated: true }, 200, { "set-cookie": platformSessionCookie(token, request, 8 * 60 * 60) });
+    return json({ authenticated: true }, 200, {
+      "set-cookie": platformSessionCookie(token, request, 8 * 60 * 60),
+    });
   }
   if (url.pathname === "/api/school") {
     const tenant = resolveTenant(request, env.ROOT_DOMAIN);
     const querySubdomain = url.searchParams.get("tenant")?.trim().toLowerCase() ?? null;
-    if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
+    if (querySubdomain && !validSubdomain(querySubdomain))
+      return badRequest("Invalid tenant subdomain");
     const requestedSubdomain = tenant.subdomain ?? querySubdomain;
     if (!requestedSubdomain) return json({ school: null });
 
     const sql = database(env);
-    const rows = await sql`select id, name, subdomain, status, coalesce(primary_color, '#1f5c3b') as primary_color, crest_url from schools where subdomain = ${requestedSubdomain} limit 1`;
+    const rows =
+      await sql`select id, name, subdomain, status, coalesce(primary_color, '#1f5c3b') as primary_color, crest_url from schools where subdomain = ${requestedSubdomain} limit 1`;
     const school = rows[0];
     return json({
       school: school
@@ -703,8 +850,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
   const guardianLifecycleMatch = url.pathname.match(/^\/api\/school\/guardians\/([0-9a-f-]+)$/i);
-  const teacherLifecycleMatch = url.pathname.match(/^\/api\/school\/team\/teachers\/([0-9a-f-]+)$/i);
-  const studentHistoryMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)\/history\/(attendance|grades)$/i);
+  const teacherLifecycleMatch = url.pathname.match(
+    /^\/api\/school\/team\/teachers\/([0-9a-f-]+)$/i,
+  );
+  const studentHistoryMatch = url.pathname.match(
+    /^\/api\/school\/students\/([0-9a-f-]+)\/history\/(attendance|grades)$/i,
+  );
   const paymentReviewMatch = url.pathname.match(/^\/api\/school\/payments\/([0-9a-f-]+)\/review$/i);
   const workflowRoles: Record<string, Record<string, readonly string[]>> = {
     "/api/school/dashboard": { GET: ["school_admin"] },
@@ -717,51 +868,78 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/attendance": { GET: ["school_admin", "teacher"], POST: ["teacher"] },
     "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
     "/api/school/payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
-    "/api/school/other-payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
+    "/api/school/other-payments": {
+      GET: ["school_admin", "finance"],
+      POST: ["school_admin", "finance"],
+    },
     "/api/school/student-financial-records": { GET: ["school_admin"] },
-    "/api/school/daily-payments": { GET: ["school_admin", "finance", "teacher"], POST: ["school_admin", "finance", "teacher"] },
-    "/api/school/holidays": { GET: ["school_admin", "finance", "teacher"], POST: ["school_admin"], DELETE: ["school_admin"] },
+    "/api/school/daily-payments": {
+      GET: ["school_admin", "finance", "teacher"],
+      POST: ["school_admin", "finance", "teacher"],
+    },
+    "/api/school/holidays": {
+      GET: ["school_admin", "finance", "teacher"],
+      POST: ["school_admin"],
+      DELETE: ["school_admin"],
+    },
     "/api/school/workflow-settings": { GET: ["school_admin", "teacher"], PUT: ["school_admin"] },
     "/api/school/student-attendance": { GET: ["school_admin"] },
     "/api/school/reconciliation": { GET: ["school_admin", "finance"] },
     "/api/school/coupons": { GET: ["school_admin", "teacher", "finance"] },
     "/api/school/marks": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
-    "/api/school/terminal-reports": { GET: ["school_admin", "teacher"], POST: ["school_admin", "teacher"] },
-    "/api/school/promotions": { GET: ["school_admin", "teacher"], POST: ["teacher"], PATCH: ["school_admin"] },
+    "/api/school/terminal-reports": {
+      GET: ["school_admin", "teacher"],
+      POST: ["school_admin", "teacher"],
+    },
+    "/api/school/promotions": {
+      GET: ["school_admin", "teacher"],
+      POST: ["teacher"],
+      PATCH: ["school_admin"],
+    },
     "/api/school/academic-periods": { GET: ["school_admin", "teacher"], POST: ["school_admin"] },
     "/api/school/terms": { POST: ["school_admin"] },
     "/api/school/team": { GET: ["school_admin"], POST: ["school_admin"] },
     "/api/school/teaching-setup": { GET: ["school_admin"], POST: ["school_admin"] },
   };
-  const workflowMethodRoles = workflowRoles[url.pathname]?.[request.method]
-    ?? (guardianLifecycleMatch && ["PATCH", "DELETE"].includes(request.method) ? ["school_admin"] : undefined)
-    ?? (teacherLifecycleMatch && ["PATCH", "DELETE"].includes(request.method) ? ["school_admin"] : undefined)
-    ?? (studentProfileMatch && ["GET", "PATCH"].includes(request.method) ? ["school_admin"] : undefined)
-    ?? (studentProfileMatch && request.method === "DELETE" ? ["school_admin"] : undefined)
-    ?? (studentHistoryMatch && request.method === "GET" ? ["school_admin"] : undefined)
-    ?? (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined)
-    ?? (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined)
-    ?? (classLifecycleMatch && request.method === "PATCH" ? ["school_admin"] : undefined)
-    ?? (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
-  const schoolDataRoute = url.pathname === "/api/school/classes"
-    || url.pathname === "/api/school/students"
-    || url.pathname === "/api/school/academic-periods"
-    || url.pathname === "/api/school/terms"
-    || url.pathname === "/api/school/student-financial-records"
-    || url.pathname === "/api/school/team"
-    || url.pathname === "/api/school/teaching-setup"
-    || guardianLifecycleMatch !== null
-    || teacherLifecycleMatch !== null
-    || studentProfileMatch !== null
-    || studentHistoryMatch !== null
-    || paymentReviewMatch !== null
-    || classRosterMatch !== null
-    || classLifecycleMatch !== null
-    || termCloseMatch !== null
-    || workflowMethodRoles !== undefined;
+  const workflowMethodRoles =
+    workflowRoles[url.pathname]?.[request.method] ??
+    (guardianLifecycleMatch && ["PATCH", "DELETE"].includes(request.method)
+      ? ["school_admin"]
+      : undefined) ??
+    (teacherLifecycleMatch && ["PATCH", "DELETE"].includes(request.method)
+      ? ["school_admin"]
+      : undefined) ??
+    (studentProfileMatch && ["GET", "PATCH"].includes(request.method)
+      ? ["school_admin"]
+      : undefined) ??
+    (studentProfileMatch && request.method === "DELETE" ? ["school_admin"] : undefined) ??
+    (studentHistoryMatch && request.method === "GET" ? ["school_admin"] : undefined) ??
+    (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
+    (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined) ??
+    (classLifecycleMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
+    (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
+  const schoolDataRoute =
+    url.pathname === "/api/school/classes" ||
+    url.pathname === "/api/school/students" ||
+    url.pathname === "/api/school/academic-periods" ||
+    url.pathname === "/api/school/terms" ||
+    url.pathname === "/api/school/student-financial-records" ||
+    url.pathname === "/api/school/team" ||
+    url.pathname === "/api/school/teaching-setup" ||
+    guardianLifecycleMatch !== null ||
+    teacherLifecycleMatch !== null ||
+    studentProfileMatch !== null ||
+    studentHistoryMatch !== null ||
+    paymentReviewMatch !== null ||
+    classRosterMatch !== null ||
+    classLifecycleMatch !== null ||
+    termCloseMatch !== null ||
+    workflowMethodRoles !== undefined;
   if (schoolDataRoute) {
     const isGet = request.method === "GET";
-    const isCreate = request.method === "POST" && (url.pathname === "/api/school/classes" || url.pathname === "/api/school/students");
+    const isCreate =
+      request.method === "POST" &&
+      (url.pathname === "/api/school/classes" || url.pathname === "/api/school/students");
     const isWorkflowMethod = workflowMethodRoles !== undefined;
     if (!isGet && !isCreate && !isWorkflowMethod) return json({ error: "Method not allowed" }, 405);
 
@@ -773,8 +951,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/holidays") {
       if (request.method === "GET") {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select holiday_date::text as date, name
             from school_holidays
             where school_id = ${school.schoolId}::uuid
@@ -786,9 +967,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
       const holidayDate = url.searchParams.get("date")?.trim();
       if (request.method === "DELETE") {
-        if (!holidayDate || !validIsoDate(holidayDate)) return badRequest("Choose a valid holiday date");
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        if (!holidayDate || !validIsoDate(holidayDate))
+          return badRequest("Choose a valid holiday date");
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             delete from school_holidays
             where school_id = ${school.schoolId}::uuid and holiday_date = ${holidayDate}::date
             returning holiday_date::text as date, name
@@ -799,14 +984,20 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const date = body["date"];
       const name = typeof body["name"] === "string" ? body["name"].trim() : "";
-      if (typeof date !== "string" || !validIsoDate(date)) return badRequest("Enter a valid holiday date");
-      if (name.length < 2 || name.length > 120) return badRequest("Holiday name must be between 2 and 120 characters");
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      if (typeof date !== "string" || !validIsoDate(date))
+        return badRequest("Enter a valid holiday date");
+      if (name.length < 2 || name.length > 120)
+        return badRequest("Holiday name must be between 2 and 120 characters");
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           insert into school_holidays (school_id, holiday_date, name, created_by_user_id)
           values (${school.schoolId}::uuid, ${date}::date, ${name}, ${school.userId}::uuid)
           on conflict (school_id, holiday_date) do update
@@ -820,9 +1011,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/workflow-settings") {
       if (request.method === "GET") {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
-            select class_teachers_can_record_daily_fees, attendance_print_format
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
+            select class_teachers_can_record_daily_fees, attendance_print_format,
+                   daily_fee_split_enabled
             from school_workflow_settings
             where school_id = ${school.schoolId}::uuid
           `,
@@ -830,69 +1025,92 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         return json({
           class_teachers_can_record_daily_fees:
             rows[0]?.["class_teachers_can_record_daily_fees"] === true,
-          attendance_print_format: String(rows[0]?.["attendance_print_format"] ?? "ges_term_to_date"),
+          attendance_print_format: String(
+            rows[0]?.["attendance_print_format"] ?? "ges_term_to_date",
+          ),
+          daily_fee_split_enabled: rows[0]?.["daily_fee_split_enabled"] === true,
         });
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const allowClassTeacherFees = body["class_teachers_can_record_daily_fees"];
       const printFormat = body["attendance_print_format"];
+      const dailyFeeSplitEnabled = body["daily_fee_split_enabled"];
       if (typeof allowClassTeacherFees !== "boolean") {
         return badRequest("Choose whether class teachers may record daily fees");
       }
       if (printFormat !== "daily_register" && printFormat !== "ges_term_to_date") {
         return badRequest("Choose a supported attendance print format");
       }
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      if (typeof dailyFeeSplitEnabled !== "boolean") {
+        return badRequest("Choose whether daily fees should be split");
+      }
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           insert into school_workflow_settings
             (school_id, class_teachers_can_record_daily_fees, attendance_print_format,
-             updated_by_user_id, updated_at)
+             daily_fee_split_enabled, updated_by_user_id, updated_at)
           values (
             ${school.schoolId}::uuid, ${allowClassTeacherFees}, ${printFormat},
-            ${school.userId}::uuid, now()
+            ${dailyFeeSplitEnabled}, ${school.userId}::uuid, now()
           )
           on conflict (school_id) do update set
             class_teachers_can_record_daily_fees = excluded.class_teachers_can_record_daily_fees,
             attendance_print_format = excluded.attendance_print_format,
+            daily_fee_split_enabled = excluded.daily_fee_split_enabled,
             updated_by_user_id = excluded.updated_by_user_id,
             updated_at = now()
-          returning class_teachers_can_record_daily_fees, attendance_print_format
+          returning class_teachers_can_record_daily_fees, attendance_print_format,
+                    daily_fee_split_enabled
         `,
       );
       if (!rows[0]) throw new Error("School workflow settings were not saved");
       return json({
-        class_teachers_can_record_daily_fees: rows[0]["class_teachers_can_record_daily_fees"] === true,
+        class_teachers_can_record_daily_fees:
+          rows[0]["class_teachers_can_record_daily_fees"] === true,
         attendance_print_format: String(rows[0]["attendance_print_format"]),
+        daily_fee_split_enabled: rows[0]["daily_fee_split_enabled"] === true,
       });
     }
 
     if (
-      studentHistoryMatch
-      || url.pathname === "/api/school/dashboard"
-      || url.pathname === "/api/school/admin-summary"
-      || url.pathname === "/api/school/portal-accounts"
-      || url.pathname === "/api/school/guardians"
-      || url.pathname === "/api/school/portal-data"
+      studentHistoryMatch ||
+      url.pathname === "/api/school/dashboard" ||
+      url.pathname === "/api/school/admin-summary" ||
+      url.pathname === "/api/school/portal-accounts" ||
+      url.pathname === "/api/school/guardians" ||
+      url.pathname === "/api/school/portal-data"
     ) {
       if (studentHistoryMatch) {
-      const [, studentId, historyType] = studentHistoryMatch;
-      if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
-      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
-      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
-      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
-      const offset = (page - 1) * pageSize;
-      const studentRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`select id from students where id = ${studentId}::uuid and school_id = ${school.schoolId}::uuid`,
-      );
-      if (!studentRows[0]) return json({ error: "Student not found" }, 404);
+        const [, studentId, historyType] = studentHistoryMatch;
+        if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
+        const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+        const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
+        if (!Number.isInteger(page) || page < 1 || page > 100_000)
+          return badRequest("Page must be a positive integer");
+        if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
+          return badRequest("Page size must be between 1 and 100");
+        const offset = (page - 1) * pageSize;
+        const studentRows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`select id from students where id = ${studentId}::uuid and school_id = ${school.schoolId}::uuid`,
+        );
+        if (!studentRows[0]) return json({ error: "Student not found" }, 404);
 
-      if (historyType === "attendance") {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        if (historyType === "attendance") {
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
             with filtered_records as materialized (
               select ar.id, ase.attendance_date, ar.status, ar.note, c.name as class_name
               from attendance_records ar
@@ -929,26 +1147,30 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 ) counts
               ), '{}'::jsonb) as summary
           `,
-        );
-        const report = rows[0];
-        if (!report) throw new Error("Student attendance query returned an invalid result");
-        const totalCount = Number(report["total_count"] ?? 0);
-        return json({
-          records: report["records"],
-          summary: report["summary"],
-          total_count: totalCount,
-          page,
-          page_size: pageSize,
-          page_count: Math.ceil(totalCount / pageSize),
-        });
-      }
+          );
+          const report = rows[0];
+          if (!report) throw new Error("Student attendance query returned an invalid result");
+          const totalCount = Number(report["total_count"] ?? 0);
+          return json({
+            records: report["records"],
+            summary: report["summary"],
+            total_count: totalCount,
+            page,
+            page_size: pageSize,
+            page_count: Math.ceil(totalCount / pageSize),
+          });
+        }
       }
 
       if (url.pathname === "/api/school/dashboard") {
-        const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+        const attendanceDate =
+          url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
         if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid dashboard date");
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             with class_totals as (
               select count(*)::int as class_count
               from classes c
@@ -1022,7 +1244,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           date: attendanceDate,
           class_count: Number(summary["class_count"] ?? 0),
           student_count: Number(summary["student_count"] ?? 0),
-          attendance: summary["attendance"] ?? { present_count: 0, late_count: 0, absent_count: 0, marked_count: 0 },
+          attendance: summary["attendance"] ?? {
+            present_count: 0,
+            late_count: 0,
+            absent_count: 0,
+            marked_count: 0,
+          },
           payments: summary["payments"],
           current_term: summary["current_term"],
           recent_payments: summary["recent_payments"],
@@ -1031,8 +1258,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
       if (url.pathname === "/api/school/admin-summary") {
         const [rows, activationRows] = await Promise.all([
-          withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
             select
               (select count(distinct m.user_id)::int from memberships m
                where m.school_id = ${school.schoolId}::uuid and m.role <> 'super_admin' and m.active) as active_users,
@@ -1070,8 +1300,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
       if (url.pathname === "/api/school/portal-accounts") {
         if (request.method === "GET") {
-          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               select coalesce((
                 select jsonb_agg(jsonb_build_object(
                   'id', st.id, 'name', st.first_name || ' ' || st.last_name,
@@ -1106,21 +1339,29 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               ), '[]'::jsonb) as guardians
             `,
           );
-          return json({ students: rows[0]?.["students"] ?? [], guardians: rows[0]?.["guardians"] ?? [] });
+          return json({
+            students: rows[0]?.["students"] ?? [],
+            guardians: rows[0]?.["guardians"] ?? [],
+          });
         }
 
         const payload: unknown = await request.json().catch(() => null);
-        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        if (!payload || typeof payload !== "object")
+          return badRequest("A JSON request body is required");
         const body = payload as Record<string, unknown>;
         const accountType = body["account_type"];
         const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
-        if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid account email");
+        if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+          return badRequest("Enter a valid account email");
 
         if (accountType === "student") {
           const studentId = body["student_id"];
           if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
-          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               with selected_student as materialized (
                 select id, school_id, first_name, last_name, user_id
                 from students
@@ -1156,7 +1397,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               select * from linked_student
             `,
           );
-          if (!rows[0]) return json({ error: "Student account could not be linked. The student may already be linked to another account." }, 409);
+          if (!rows[0])
+            return json(
+              {
+                error:
+                  "Student account could not be linked. The student may already be linked to another account.",
+              },
+              409,
+            );
           const activationUrl = new URL("/login", request.url);
           activationUrl.searchParams.set("tenant", school.subdomain);
           activationUrl.searchParams.set("mode", "activate");
@@ -1168,14 +1416,20 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             activationUrl: activationUrl.toString(),
             primaryColor: school.primaryColor,
           });
-          return json({ account: rows[0], activation_url: activationUrl.toString(), invitation }, 201);
+          return json(
+            { account: rows[0], activation_url: activationUrl.toString(), invitation },
+            201,
+          );
         }
 
         if (accountType === "parent") {
           const guardianId = body["guardian_id"];
           if (!uuidOrNull(guardianId) || !guardianId) return badRequest("Choose a valid guardian");
-          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               with selected_guardian as materialized (
                 select id, school_id, full_name, email, user_id
                 from guardians
@@ -1214,7 +1468,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               select * from linked_guardian
             `,
           );
-          if (!rows[0]) return json({ error: "Parent account could not be linked. Confirm the email matches the guardian record, or that the guardian is not linked to another account." }, 409);
+          if (!rows[0])
+            return json(
+              {
+                error:
+                  "Parent account could not be linked. Confirm the email matches the guardian record, or that the guardian is not linked to another account.",
+              },
+              409,
+            );
           const activationUrl = new URL("/login", request.url);
           activationUrl.searchParams.set("tenant", school.subdomain);
           activationUrl.searchParams.set("mode", "activate");
@@ -1226,7 +1487,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             activationUrl: activationUrl.toString(),
             primaryColor: school.primaryColor,
           });
-          return json({ account: rows[0], activation_url: activationUrl.toString(), invitation }, 201);
+          return json(
+            { account: rows[0], activation_url: activationUrl.toString(), invitation },
+            201,
+          );
         }
 
         return badRequest("Choose a student or parent account");
@@ -1234,19 +1498,26 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
       if (url.pathname === "/api/school/guardians" && request.method === "POST") {
         const payload: unknown = await request.json().catch(() => null);
-        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        if (!payload || typeof payload !== "object")
+          return badRequest("A JSON request body is required");
         const body = payload as Record<string, unknown>;
         const studentId = body["student_id"];
         const name = typeof body["name"] === "string" ? body["name"].trim() : "";
         const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
         const phone = typeof body["phone"] === "string" ? body["phone"].trim() : "";
         if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
-        if (name.length < 2 || name.length > 160) return badRequest("Guardian name must be 2–160 characters");
-        if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid guardian email");
-        if (!phone || phone.length > 40) return badRequest("Enter a phone number of 1–40 characters");
+        if (name.length < 2 || name.length > 160)
+          return badRequest("Guardian name must be 2–160 characters");
+        if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+          return badRequest("Enter a valid guardian email");
+        if (!phone || phone.length > 40)
+          return badRequest("Enter a phone number of 1–40 characters");
 
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             with selected_student as materialized (
               select id, school_id
               from students
@@ -1302,15 +1573,24 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           `,
         );
         if (!rows[0]) {
-          return json({ error: "Could not add guardian. Check that the student is active and the email is not linked to a different parent account." }, 409);
+          return json(
+            {
+              error:
+                "Could not add guardian. Check that the student is active and the email is not linked to a different parent account.",
+            },
+            409,
+          );
         }
         return json({ guardian: rows[0] }, 201);
       }
 
       if (url.pathname === "/api/school/portal-data") {
         if (school.role === "parent") {
-          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               with linked_children as materialized (
                 select st.id, st.first_name, st.last_name, st.admission_number,
                        c.name as class_name, t.id as term_id, t.name as term_name,
@@ -1394,11 +1674,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               from child_data
             `,
           );
-          return json({ portal: "parent", children: rows[0]?.["children"] ?? [], recent_payments: rows[0]?.["recent_payments"] ?? [] });
+          return json({
+            portal: "parent",
+            children: rows[0]?.["children"] ?? [],
+            recent_payments: rows[0]?.["recent_payments"] ?? [],
+          });
         }
 
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             with selected_student as materialized (
               select st.id, st.first_name, st.last_name, st.admission_number
               from students st
@@ -1475,20 +1762,32 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             ) payments on true
           `,
         );
-        if (!rows[0]) return json({ error: "No student portal account is linked to this sign-in. Contact your school administrator." }, 404);
+        if (!rows[0])
+          return json(
+            {
+              error:
+                "No student portal account is linked to this sign-in. Contact your school administrator.",
+            },
+            404,
+          );
         return json({ portal: "student", student: rows[0] });
       }
 
       if (studentHistoryMatch) {
-      const [, studentId] = studentHistoryMatch;
-      const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
-      const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
-      if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
-      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
-      const offset = (page - 1) * pageSize;
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+        const [, studentId] = studentHistoryMatch;
+        const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
+        const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
+        if (!uuidOrNull(studentId)) return badRequest("Invalid student ID");
+        if (!Number.isInteger(page) || page < 1 || page > 100_000)
+          return badRequest("Page must be a positive integer");
+        if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
+          return badRequest("Page size must be between 1 and 100");
+        const offset = (page - 1) * pageSize;
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
           with filtered_records as materialized (
             select m.id, m.class_test_score, m.project_score, m.homework_score,
                    m.group_work_score, m.exam_score, m.total_score, m.performance_level,
@@ -1524,26 +1823,25 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             ), '[]'::jsonb) as records,
             (select count(*)::int from filtered_records) as total_count
         `,
-      );
-      const report = rows[0];
-      if (!report) throw new Error("Student grades query returned an invalid result");
-      const totalCount = Number(report["total_count"] ?? 0);
-      return json({
-        records: report["records"],
-        total_count: totalCount,
-        page,
-        page_size: pageSize,
-        page_count: Math.ceil(totalCount / pageSize),
-      });
+        );
+        const report = rows[0];
+        if (!report) throw new Error("Student grades query returned an invalid result");
+        const totalCount = Number(report["total_count"] ?? 0);
+        return json({
+          records: report["records"],
+          total_count: totalCount,
+          page,
+          page_size: pageSize,
+          page_count: Math.ceil(totalCount / pageSize),
+        });
       }
     }
 
     if (studentProfileMatch) {
       if (!uuidOrNull(studentProfileMatch[1])) return badRequest("Invalid student ID");
       if (request.method === "DELETE") {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          [
-            tx`
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+          tx`
               with locked_student as materialized (
                 select id, school_id, user_id
                 from students
@@ -1594,22 +1892,28 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               )
               select id from deleted_student
             `,
-          ],
-        );
+        ]);
         if (!rows[0]) {
-          return json({
-            error: "Student not found, or permanent deletion is blocked because this student has attendance, grades, reports, invoices, or payment history. Deactivate the record to preserve history.",
-          }, 409);
+          return json(
+            {
+              error:
+                "Student not found, or permanent deletion is blocked because this student has attendance, grades, reports, invoices, or payment history. Deactivate the record to preserve history.",
+            },
+            409,
+          );
         }
         return json({ deleted: true, student_id: rows[0]["id"] });
       }
       if (request.method === "PATCH") {
-        const payload = ( await request.json().catch(() => null)) as Record<string, unknown> | null;
+        const payload = (await request.json().catch(() => null)) as Record<string, unknown> | null;
         if (!payload || typeof payload !== "object" || typeof payload["active"] !== "boolean") {
           return badRequest("Choose whether the student should be active");
         }
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             update students
             set active = ${payload["active"]}
             where id = ${studentProfileMatch[1]}::uuid
@@ -1621,8 +1925,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         if (!rows[0]) return json({ error: "Student not found" }, 404);
         return json({ student: rows[0] });
       }
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select st.id, st.first_name, st.last_name,
                  st.admission_number as student_id_number,
                  case when st.active then 'active' else 'inactive' end as status,
@@ -1655,19 +1962,22 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (!uuidOrNull(guardianLifecycleMatch[1])) return badRequest("Invalid guardian ID");
       if (request.method === "PATCH") {
         const payload: unknown = await request.json().catch(() => null);
-        if (!payload || typeof payload !== "object" || typeof (payload as Record<string, unknown>)["active"] !== "boolean") {
+        if (
+          !payload ||
+          typeof payload !== "object" ||
+          typeof (payload as Record<string, unknown>)["active"] !== "boolean"
+        ) {
           return badRequest("Choose whether the parent record should be active");
         }
         const active = (payload as Record<string, unknown>)["active"] as boolean;
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          [
-            tx`
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+          tx`
               select id from guardians
               where id = ${guardianLifecycleMatch[1]}::uuid
                 and school_id = ${school.schoolId}::uuid
               for update
             `,
-            tx`
+          tx`
               select id from memberships
               where school_id = ${school.schoolId}::uuid
                 and role = 'parent'
@@ -1678,7 +1988,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 )
               for update
             `,
-            tx`
+          tx`
               with updated_guardian as (
                 update guardians
                 set active = ${active}
@@ -1703,21 +2013,19 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               )
               select id, active from updated_guardian
             `,
-          ],
-        );
+        ]);
         if (!rows[0]) return json({ error: "Parent record not found" }, 404);
         return json({ guardian: rows[0] });
       }
 
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        [
-          tx`
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`
             select id from guardians
             where id = ${guardianLifecycleMatch[1]}::uuid
               and school_id = ${school.schoolId}::uuid
             for update
           `,
-          tx`
+        tx`
             select id from memberships
             where school_id = ${school.schoolId}::uuid
               and role = 'parent'
@@ -1728,7 +2036,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               )
             for update
           `,
-          tx`
+        tx`
             with removed_guardian as (
               delete from guardians
               where id = ${guardianLifecycleMatch[1]}::uuid
@@ -1752,8 +2060,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             )
             select id from removed_guardian
           `,
-        ],
-      );
+      ]);
       if (!rows[0]) return json({ error: "Parent record not found" }, 404);
       return json({ deleted: true, guardian_id: rows[0]["id"] });
     }
@@ -1762,11 +2069,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (!uuidOrNull(teacherLifecycleMatch[1])) return badRequest("Invalid teacher ID");
       if (request.method === "PATCH") {
         const payload: unknown = await request.json().catch(() => null);
-        if (!payload || typeof payload !== "object" || typeof (payload as Record<string, unknown>)["active"] !== "boolean") {
+        if (
+          !payload ||
+          typeof payload !== "object" ||
+          typeof (payload as Record<string, unknown>)["active"] !== "boolean"
+        ) {
           return badRequest("Choose whether the teacher should be active");
         }
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             update memberships
             set active = ${(payload as Record<string, unknown>)["active"] as boolean}
             where user_id = ${teacherLifecycleMatch[1]}::uuid
@@ -1779,8 +2093,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         return json({ teacher: rows[0] });
       }
 
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with removed_profile as (
             delete from staff_profiles sp
             where sp.user_id = ${teacherLifecycleMatch[1]}::uuid
@@ -1810,8 +2127,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (termCloseMatch) {
       if (!uuidOrNull(termCloseMatch[1])) return badRequest("Invalid term ID");
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           update terms
           set is_closed = true, closed_at = now(), closed_by_user_id = ${school.userId}::uuid
           where id = ${termCloseMatch[1]}::uuid and school_id = ${school.schoolId}::uuid
@@ -1819,24 +2139,31 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           returning id, name, is_closed, closed_at
         `,
       );
-      if (!rows[0]) return json({ error: "Term not found, already closed, or it is not Term 3" }, 409);
+      if (!rows[0])
+        return json({ error: "Term not found, already closed, or it is not Term 3" }, 409);
       return json({ term: rows[0] });
     }
 
     if (url.pathname === "/api/school/student-attendance" && request.method === "GET") {
-      const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      const attendanceDate =
+        url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
       const classId = url.searchParams.get("class_id")?.trim() || null;
       const search = url.searchParams.get("search")?.trim() || null;
       const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
       const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "50", 10);
       if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid attendance date");
       if (classId && !uuidOrNull(classId)) return badRequest("Invalid class ID");
-      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      if (!Number.isInteger(page) || page < 1 || page > 100_000)
+        return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
+        return badRequest("Page size must be between 1 and 100");
       if (search && search.length > 120) return badRequest("Search text is too long");
       const offset = (page - 1) * pageSize;
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with enrolled_students as materialized (
             select distinct on (st.id)
                    st.id as student_id, st.first_name, st.last_name, st.admission_number,
@@ -1902,13 +2229,22 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
       if (request.method === "GET") {
         if (url.searchParams.get("school_report") === "true") {
-          if (school.role !== "school_admin") return json({ error: "Only a School Admin can print the whole-school attendance report." }, 403);
-          const asOfDate = url.searchParams.get("as_of")?.trim() || new Date().toISOString().slice(0, 10);
+          if (school.role !== "school_admin")
+            return json(
+              { error: "Only a School Admin can print the whole-school attendance report." },
+              403,
+            );
+          const asOfDate =
+            url.searchParams.get("as_of")?.trim() || new Date().toISOString().slice(0, 10);
           if (!validIsoDate(asOfDate)) return badRequest("Enter a valid report date");
-          if (asOfDate > new Date().toISOString().slice(0, 10)) return badRequest("Attendance reports cannot include future dates");
+          if (asOfDate > new Date().toISOString().slice(0, 10))
+            return badRequest("Attendance reports cannot include future dates");
 
-          const periodRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          const periodRows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               select c.id as class_id, c.name as class_name, ay.name as academic_year_name,
                      t.id as term_id, t.name as term_name,
                      t.starts_on::text as term_starts_on,
@@ -1946,13 +2282,19 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             .filter((row) => !row["term_id"] || asOfDate < String(row["term_starts_on"]))
             .map((row) => String(row["class_name"]));
           if (missingTermClasses.length) {
-            return json({
-              error: `Configure a term starting on or before the report date for every class before exporting. Missing: ${missingTermClasses.join(", ")}`,
-            }, 409);
+            return json(
+              {
+                error: `Configure a term starting on or before the report date for every class before exporting. Missing: ${missingTermClasses.join(", ")}`,
+              },
+              409,
+            );
           }
 
-          const attendanceRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          const attendanceRows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               with class_periods as (
                 select c.id as class_id, t.starts_on, least(t.ends_on, ${asOfDate}::date) as report_ends_on
                 from classes c
@@ -2002,15 +2344,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               order by cp.class_id, s.attendance_date, st.last_name, st.first_name, st.admission_number
             `,
           );
-          const classReports = new Map<string, {
-            id: string;
-            className: string;
-            academicYearName: string;
-            termName: string;
-            startDate: string;
-            endDate: string;
-            days: Map<string, { date: string; students: Record<string, unknown>[] }>;
-          }>();
+          const classReports = new Map<
+            string,
+            {
+              id: string;
+              className: string;
+              academicYearName: string;
+              termName: string;
+              startDate: string;
+              endDate: string;
+              days: Map<string, { date: string; students: Record<string, unknown>[] }>;
+            }
+          >();
           for (const row of periodRows) {
             const id = String(row["class_id"]);
             classReports.set(id, {
@@ -2027,7 +2372,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             const schoolClass = classReports.get(String(row["class_id"]));
             if (!schoolClass) continue;
             const attendanceDate = String(row["attendance_date"]);
-            const day = schoolClass.days.get(attendanceDate) ?? { date: attendanceDate, students: [] };
+            const day = schoolClass.days.get(attendanceDate) ?? {
+              date: attendanceDate,
+              students: [],
+            };
             day.students.push({
               id: String(row["student_id"]),
               first_name: String(row["first_name"]),
@@ -2048,10 +2396,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         }
 
         if (!classId) {
-          const attendanceDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+          const attendanceDate =
+            url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
           if (!validIsoDate(attendanceDate)) return badRequest("Enter a valid attendance date");
-          const classes = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          const classes = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               select c.id, c.name, ay.name as academic_year_name,
                      exists (
                        select 1 from school_holidays h
@@ -2105,8 +2457,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           return json({ classes });
         }
 
-        const authorized = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const authorized = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select 1 from classes c
             where c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
               and (
@@ -2118,14 +2473,20 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               )
           `,
         );
-        if (!authorized.length) return json({ error: "You are not assigned as class teacher for this class" }, 403);
+        if (!authorized.length)
+          return json({ error: "You are not assigned as class teacher for this class" }, 403);
 
         if (url.searchParams.get("term_report") === "true") {
-          const asOfDate = url.searchParams.get("as_of")?.trim() || new Date().toISOString().slice(0, 10);
+          const asOfDate =
+            url.searchParams.get("as_of")?.trim() || new Date().toISOString().slice(0, 10);
           if (!validIsoDate(asOfDate)) return badRequest("Enter a valid report date");
-          if (asOfDate > new Date().toISOString().slice(0, 10)) return badRequest("Attendance reports cannot include future dates");
-          const periodRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          if (asOfDate > new Date().toISOString().slice(0, 10))
+            return badRequest("Attendance reports cannot include future dates");
+          const periodRows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               select c.name as class_name, t.name as term_name,
                      t.starts_on::text as term_starts_on,
                      least(t.ends_on, ${asOfDate}::date)::text as report_ends_on
@@ -2153,10 +2514,19 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           );
           const period = periodRows[0];
           if (!period) {
-            return json({ error: "No active academic term is configured for this class and report date. Set the class term in School Admin first." }, 409);
+            return json(
+              {
+                error:
+                  "No active academic term is configured for this class and report date. Set the class term in School Admin first.",
+              },
+              409,
+            );
           }
-          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               select s.attendance_date::text as attendance_date,
                      st.id as student_id, st.first_name, st.last_name,
                      st.admission_number, st.gender, r.status
@@ -2205,9 +2575,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
         const month = url.searchParams.get("month")?.trim() || null;
         if (month) {
-          if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return badRequest("Month must use YYYY-MM format");
-          const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-            tx`
+          if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+            return badRequest("Month must use YYYY-MM format");
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
               with authorized_class as materialized (
                 select c.id, c.school_id
                 from classes c
@@ -2246,16 +2620,22 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         if (!validIsoDate(attendanceDate)) {
           return badRequest("Enter a valid attendance date");
         }
-        const holidays = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const holidays = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select holiday_date::text as date, name
             from school_holidays
             where school_id = ${school.schoolId}::uuid and holiday_date = ${attendanceDate}::date
           `,
         );
         if (holidays[0]) return json({ session_id: null, students: [], holiday: holidays[0] });
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             with authorized_class as materialized (
               select c.id, c.school_id
               from classes c
@@ -2302,37 +2682,56 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const requestedClassId = body["class_id"];
       const attendanceDate = typeof body["date"] === "string" ? body["date"] : "";
       const records = body["records"];
-      if (!uuidOrNull(requestedClassId) || !requestedClassId) return badRequest("Choose a valid class");
+      if (!uuidOrNull(requestedClassId) || !requestedClassId)
+        return badRequest("Choose a valid class");
       if (!validIsoDate(attendanceDate)) {
         return badRequest("Enter a valid attendance date");
       }
-      if (!Array.isArray(records) || records.length < 1 || records.length > 500) return badRequest("Submit between 1 and 500 attendance records");
+      if (!Array.isArray(records) || records.length < 1 || records.length > 500)
+        return badRequest("Submit between 1 and 500 attendance records");
       const studentIds = new Set<string>();
       for (const entry of records) {
-        if (!entry || typeof entry !== "object") return badRequest("Every attendance record must be an object");
+        if (!entry || typeof entry !== "object")
+          return badRequest("Every attendance record must be an object");
         const record = entry as Record<string, unknown>;
         const studentId = record["student_id"];
         const note = record["note"];
-        if (!uuidOrNull(studentId) || !studentId || studentIds.has(studentId)) return badRequest("Every student must have a valid, unique ID");
+        if (!uuidOrNull(studentId) || !studentId || studentIds.has(studentId))
+          return badRequest("Every student must have a valid, unique ID");
         studentIds.add(studentId);
-        if (!["present", "late", "absent", "excused"].includes(String(record["status"]))) return badRequest("Choose present, late, absent, or excused for each learner");
-        if (note !== undefined && note !== null && (typeof note !== "string" || note.length > 500)) return badRequest("Attendance notes must be at most 500 characters");
+        if (!["present", "late", "absent", "excused"].includes(String(record["status"])))
+          return badRequest("Choose present, late, absent, or excused for each learner");
+        if (note !== undefined && note !== null && (typeof note !== "string" || note.length > 500))
+          return badRequest("Attendance notes must be at most 500 characters");
       }
-      const holidayRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const holidayRows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select name from school_holidays
           where school_id = ${school.schoolId}::uuid and holiday_date = ${attendanceDate}::date
         `,
       );
-      if (holidayRows[0]) return json({ error: `${String(holidayRows[0]["name"])} is a school holiday; attendance cannot be recorded.` }, 409);
+      if (holidayRows[0])
+        return json(
+          {
+            error: `${String(holidayRows[0]["name"])} is a school holiday; attendance cannot be recorded.`,
+          },
+          409,
+        );
 
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with authorized_class as materialized (
             select c.id, c.school_id, c.class_teacher_id
             from classes c
@@ -2391,21 +2790,41 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                  (select id from created_session limit 1) as session_id
         `,
       );
-      if (!Number(rows[0]?.["authorized_count"] ?? 0)) return json({ error: "You are not assigned as class teacher for this class" }, 403);
-      if (Number(rows[0]?.["roster_count"] ?? 0) !== records.length
-        || Number(rows[0]?.["saved_count"] ?? 0) !== records.length) {
-        const concurrentHoliday = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+      if (!Number(rows[0]?.["authorized_count"] ?? 0))
+        return json({ error: "You are not assigned as class teacher for this class" }, 403);
+      if (
+        Number(rows[0]?.["roster_count"] ?? 0) !== records.length ||
+        Number(rows[0]?.["saved_count"] ?? 0) !== records.length
+      ) {
+        const concurrentHoliday = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select name from school_holidays
             where school_id = ${school.schoolId}::uuid and holiday_date = ${attendanceDate}::date
           `,
         );
         if (concurrentHoliday[0]) {
-          return json({ error: `${String(concurrentHoliday[0]["name"])} is a school holiday; attendance cannot be recorded.` }, 409);
+          return json(
+            {
+              error: `${String(concurrentHoliday[0]["name"])} is a school holiday; attendance cannot be recorded.`,
+            },
+            409,
+          );
         }
-        return json({ error: "Attendance was not saved. Refresh the class roster and mark every currently enrolled student." }, 409);
+        return json(
+          {
+            error:
+              "Attendance was not saved. Refresh the class roster and mark every currently enrolled student.",
+          },
+          409,
+        );
       }
-      return json({ session_id: rows[0]?.["session_id"], saved_count: Number(rows[0]?.["saved_count"] ?? 0) });
+      return json({
+        session_id: rows[0]?.["session_id"],
+        saved_count: Number(rows[0]?.["saved_count"] ?? 0),
+      });
     }
 
     if (url.pathname === "/api/school/fees") {
@@ -2413,9 +2832,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         await ensureTermFeeArrears(sql, school.schoolId);
         const classId = url.searchParams.get("class_id")?.trim() || null;
         const yearId = url.searchParams.get("academic_year_id")?.trim() || null;
-        if ((classId && !uuidOrNull(classId)) || (yearId && !uuidOrNull(yearId))) return badRequest("Invalid class or academic year ID");
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        if ((classId && !uuidOrNull(classId)) || (yearId && !uuidOrNull(yearId)))
+          return badRequest("Invalid class or academic year ID");
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select f.id, f.class_id, c.name as class_name, f.academic_year_id,
                    ay.name as academic_year_name, f.term_id, t.name as term_name,
                    f.fee_type, f.description, f.amount, f.currency, f.is_active
@@ -2433,7 +2856,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const classId = body["class_id"];
       const yearId = body["academic_year_id"];
@@ -2441,16 +2865,27 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const feeType = body["fee_type"];
       const description = typeof body["description"] === "string" ? body["description"].trim() : "";
       const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
-      const currency = typeof body["currency"] === "string" ? body["currency"].trim().toUpperCase() : "GHS";
-      if (!uuidOrNull(classId) || !classId || !uuidOrNull(yearId) || !yearId || !uuidOrNull(termId)) return badRequest("Choose a valid class, academic year, and term");
-      if (!["daily", "tuition", "pta", "exam", "other"].includes(String(feeType))) return badRequest("Choose a valid fee type");
-      if (feeType === "daily" && termId) return badRequest("Daily fees apply to the whole academic year and cannot be term-specific");
-      if (description.length < 2 || description.length > 160) return badRequest("Fee description must be 2–160 characters");
-      if (!Number.isFinite(amount) || amount < 0 || amount > 99_999_999.99) return badRequest("Enter a valid non-negative fee amount");
+      const currency =
+        typeof body["currency"] === "string" ? body["currency"].trim().toUpperCase() : "GHS";
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(yearId) || !yearId || !uuidOrNull(termId))
+        return badRequest("Choose a valid class, academic year, and term");
+      if (!["daily", "daily_feeding", "tuition", "pta", "exam", "other"].includes(String(feeType)))
+        return badRequest("Choose a valid fee type");
+      if ((feeType === "daily" || feeType === "daily_feeding") && termId)
+        return badRequest(
+          "Daily fees apply to the whole academic year and cannot be term-specific",
+        );
+      if (description.length < 2 || description.length > 160)
+        return badRequest("Fee description must be 2–160 characters");
+      if (!Number.isFinite(amount) || amount < 0 || amount > 99_999_999.99)
+        return badRequest("Enter a valid non-negative fee amount");
       if (!/^[A-Z]{3}$/.test(currency)) return badRequest("Currency must be a three-letter code");
 
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           insert into class_fees
             (school_id, class_id, academic_year_id, term_id, fee_type, description, amount, currency)
           values
@@ -2468,16 +2903,21 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (paymentReviewMatch) {
       if (!uuidOrNull(paymentReviewMatch[1])) return badRequest("Invalid payment ID");
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const action = body["action"];
       const reason = typeof body["reason"] === "string" ? body["reason"].trim() : "";
-      if (action !== "approve" && action !== "reject") return badRequest("Choose approve or reject");
+      if (action !== "approve" && action !== "reject")
+        return badRequest("Choose approve or reject");
       if (action === "reject" && (reason.length < 3 || reason.length > 500)) {
         return badRequest("Enter a rejection reason between 3 and 500 characters");
       }
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with reviewed as (
             update payments
             set status = ${action === "approve" ? "verified" : "voided"}::gateway_payment_status,
@@ -2527,14 +2967,23 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         `,
       );
       if (!rows[0]) {
-        return json({ error: "This payment is no longer pending, belongs to another school, or was recorded by this admin." }, 409);
+        return json(
+          {
+            error:
+              "This payment is no longer pending, belongs to another school, or was recorded by this admin.",
+          },
+          409,
+        );
       }
       return json({ payment: rows[0] });
     }
 
     if (url.pathname === "/api/school/other-payments" && request.method === "GET") {
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
                  p.status, p.paid_at, p.receipt_issued_at, p.rejection_reason,
                  st.id as student_id, st.first_name, st.last_name, st.admission_number,
@@ -2575,7 +3024,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/other-payments" && request.method === "POST") {
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const studentId = body["student_id"];
       const feeId = body["fee_id"];
@@ -2666,9 +3116,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       ]);
       const result = rows[2]?.[0];
       if (!result) {
-        return json({
-          error: "No eligible configured fee was found, the learner is not enrolled, or the amount exceeds the uncollected balance.",
-        }, 409);
+        return json(
+          {
+            error:
+              "No eligible configured fee was found, the learner is not enrolled, or the amount exceeds the uncollected balance.",
+          },
+          409,
+        );
       }
       return json({ payment: result, balance_due: Number(result["balance_due"]) }, 201);
     }
@@ -2678,8 +3132,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const feeId = url.searchParams.get("fee_id")?.trim() || null;
       if (feeId && !uuidOrNull(feeId)) return badRequest("Invalid class fee ID");
       if (feeId) {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select st.id as student_id, st.first_name, st.last_name,
                    st.admission_number, c.name as class_name,
                    coalesce(i.amount_due, f.amount) as original_amount,
@@ -2733,8 +3190,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         );
         return json({ balances: rows });
       }
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select p.id, p.student_id, p.receipt_number, p.amount, p.currency, p.category, p.method,
                  p.status, p.paid_at, st.first_name, st.last_name, st.admission_number,
                  f.description as fee_description, c.name as class_name
@@ -2754,15 +3214,19 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (url.pathname === "/api/school/payments" && request.method === "POST") {
       await ensureTermFeeArrears(sql, school.schoolId);
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const studentId = body["student_id"];
       const feeId = body["fee_id"];
       const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
       const method = body["method"];
-      if (!uuidOrNull(studentId) || !studentId || !uuidOrNull(feeId) || !feeId) return badRequest("Choose a valid student and school fee");
-      if (!Number.isFinite(amount) || amount <= 0 || amount > 99_999_999.99) return badRequest("Enter a valid payment amount");
-      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
+      if (!uuidOrNull(studentId) || !studentId || !uuidOrNull(feeId) || !feeId)
+        return badRequest("Choose a valid student and school fee");
+      if (!Number.isFinite(amount) || amount <= 0 || amount > 99_999_999.99)
+        return badRequest("Enter a valid payment amount");
+      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method)))
+        return badRequest("Choose a valid payment method");
 
       const invoiceNumber = `SF-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
       const receiptNumber = `SF-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
@@ -2865,58 +3329,83 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const result = rows[0];
       if (!result) return json({ error: "No matching student fee balance was found" }, 404);
       if (!result["id"]) {
-        return json({
-          error: "Payment exceeds the remaining balance or this fee has already been paid.",
-          balance_due: Number(result["balance_due"] ?? 0),
-        }, 409);
+        return json(
+          {
+            error: "Payment exceeds the remaining balance or this fee has already been paid.",
+            balance_due: Number(result["balance_due"] ?? 0),
+          },
+          409,
+        );
       }
-      return json({
-        payment: result,
-        balance_due: Number(result["balance_due"] ?? 0),
-      }, 201);
+      return json(
+        {
+          payment: result,
+          balance_due: Number(result["balance_due"] ?? 0),
+        },
+        201,
+      );
     }
 
     if (url.pathname === "/api/school/daily-payments" && request.method === "GET") {
-      const paymentDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      const paymentDate =
+        url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
       if (!validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
-      if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee register dates cannot be in the future");
-      const holidayRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      if (paymentDate > new Date().toISOString().slice(0, 10))
+        return badRequest("Daily-fee register dates cannot be in the future");
+      const holidayRows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select holiday_date::text as date, name
           from school_holidays
           where school_id = ${school.schoolId}::uuid and holiday_date = ${paymentDate}::date
         `,
       );
       if (holidayRows[0]) return json({ students: [], date: paymentDate, holiday: holidayRows[0] });
-      if (school.role === "teacher") {
-        const settings = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+      const settings = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
           tx`
-            select class_teachers_can_record_daily_fees
-            from school_workflow_settings where school_id = ${school.schoolId}::uuid
-          `,
-        );
-        if (settings[0]?.["class_teachers_can_record_daily_fees"] !== true) {
-          return json({ error: "Your School Admin has not enabled daily-fee recording for class teachers." }, 403);
-        }
-      }
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+          select daily_fee_split_enabled
+          from school_workflow_settings where school_id = ${school.schoolId}::uuid
+        `,
+      );
+      const dailyFeeSplitEnabled = settings[0]?.["daily_fee_split_enabled"] === true;
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select distinct on (st.id)
                  st.id as student_id, st.first_name, st.last_name, st.admission_number,
                  c.id as class_id, c.name as class_name,
                  ay.name as academic_year_name,
-                 f.amount as fee_amount, f.currency,
+                 ${dailyFeeSplitEnabled} as daily_fee_split_enabled,
+                 f.amount as studies_fee_amount,
+                 case when ${dailyFeeSplitEnabled} then coalesce(feeding.amount, 0) else 0 end as feeding_fee_amount,
+                 (${dailyFeeSplitEnabled} and feeding.id is not null) as feeding_fee_configured,
+                 f.id is not null as daily_fee_configured,
+                 f.amount + case when ${dailyFeeSplitEnabled} then coalesce(feeding.amount, 0) else 0 end as fee_amount,
+                 coalesce(f.currency, p.currency) as currency,
                  attendance.status as attendance_status,
-                 p.id as payment_id, p.method, p.paid_at,
+                 p.id as payment_id, p.amount as payment_amount,
+                 p.daily_fee_studies_amount, p.daily_fee_feeding_amount,
+                 p.method, p.paid_at,
                  coupon.code as coupon_code
           from class_enrollments e
           join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
           join classes c on c.id = e.class_id and c.school_id = e.school_id
           join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
             and ${paymentDate}::date between ay.starts_on and ay.ends_on
-          join class_fees f on f.school_id = c.school_id and f.class_id = c.id
+          left join class_fees f on f.school_id = c.school_id and f.class_id = c.id
             and f.academic_year_id = ay.id and f.fee_type = 'daily'
             and f.term_id is null and f.is_active
+          left join class_fees feeding on feeding.school_id = c.school_id and feeding.class_id = c.id
+            and feeding.academic_year_id = ay.id and feeding.fee_type = 'daily_feeding'
+            and feeding.term_id is null and feeding.is_active
+            and ${dailyFeeSplitEnabled}
           left join lateral (
             select ar.status
             from attendance_records ar
@@ -2947,25 +3436,54 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/daily-payments" && request.method === "POST") {
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const studentId = body["student_id"];
       const paymentDate = body["date"];
       const method = body["method"];
+      const includeFeeding = body["include_feeding"] === true;
+      const schoolDays: unknown = body["school_days"] ?? 1;
       if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
-      if (typeof paymentDate !== "string" || !validIsoDate(paymentDate)) return badRequest("Enter a valid payment date");
-      if (paymentDate > new Date().toISOString().slice(0, 10)) return badRequest("Daily-fee payments cannot be recorded for a future date");
-      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method))) return badRequest("Choose a valid payment method");
-      const holidayRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      if (typeof paymentDate !== "string" || !validIsoDate(paymentDate))
+        return badRequest("Enter a valid payment date");
+      if (paymentDate > new Date().toISOString().slice(0, 10))
+        return badRequest("Daily-fee payments cannot be recorded for a future date");
+      if (!["cash", "card", "mobile_money", "bank_transfer", "other"].includes(String(method)))
+        return badRequest("Choose a valid payment method");
+      if (body["include_feeding"] !== undefined && typeof body["include_feeding"] !== "boolean") {
+        return badRequest("Choose whether the feeding fee is included");
+      }
+      if (
+        typeof schoolDays !== "number" ||
+        !Number.isInteger(schoolDays) ||
+        schoolDays < 1 ||
+        schoolDays > 30
+      ) {
+        return badRequest("Choose between 1 and 30 school days to cover");
+      }
+      const holidayRows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select name from school_holidays
           where school_id = ${school.schoolId}::uuid and holiday_date = ${paymentDate}::date
         `,
       );
-      if (holidayRows[0]) return json({ error: `${String(holidayRows[0]["name"])} is a school holiday; daily fees cannot be collected.` }, 409);
+      if (holidayRows[0])
+        return json(
+          {
+            error: `${String(holidayRows[0]["name"])} is a school holiday; daily fees cannot be collected.`,
+          },
+          409,
+        );
       if (school.role === "teacher") {
-        const authorization = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const authorization = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select
               coalesce((
                 select class_teachers_can_record_daily_fees
@@ -2985,84 +3503,191 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           `,
         );
         if (authorization[0]?.["enabled"] !== true) {
-          return json({ error: "Your School Admin has not enabled daily-fee recording for class teachers." }, 403);
+          return json(
+            { error: "Your School Admin has not enabled daily-fee recording for class teachers." },
+            403,
+          );
         }
         if (authorization[0]?.["is_assigned_class_teacher"] !== true) {
-          return json({ error: "You can record daily fees only for students in your assigned class." }, 403);
+          return json(
+            { error: "You can record daily fees only for students in your assigned class." },
+            403,
+          );
         }
       }
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+      if (holidayRows[0]) {
+        return json(
+          {
+            error: `${String(holidayRows[0]["name"])} is a school holiday; daily fees cannot be collected.`,
+          },
+          409,
+        );
+      }
+      const resultRows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`select pg_advisory_xact_lock(hashtextextended(${`${school.schoolId}:${studentId}`}, 0))`,
         tx`
-          with eligible as (
-            select f.school_id, f.amount, f.currency, st.id as student_id, c.id as class_id,
-                   (select id from staff_profiles where school_id = f.school_id
+          with student as materialized (
+            select st.id as student_id, st.school_id,
+                   coalesce(workflow.daily_fee_split_enabled, false) as daily_fee_split_enabled,
+                   (select id from staff_profiles where school_id = st.school_id
                     and user_id = ${school.userId}::uuid limit 1) as staff_id
             from students st
-            join class_enrollments e on e.student_id = st.id and e.school_id = st.school_id
-              and e.starts_on <= ${paymentDate}::date and (e.ends_on is null or e.ends_on >= ${paymentDate}::date)
-            join classes c on c.id = e.class_id and c.school_id = e.school_id
-            join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
-              and ${paymentDate}::date between ay.starts_on and ay.ends_on
-            join class_fees f on f.class_id = c.id and f.school_id = c.school_id
-              and f.academic_year_id = ay.id and f.fee_type = 'daily' and f.term_id is null and f.is_active
+            left join school_workflow_settings workflow on workflow.school_id = st.school_id
             where st.id = ${studentId}::uuid and st.school_id = ${school.schoolId}::uuid and st.active
-              and not exists (
-                select 1 from school_holidays h
-                where h.school_id = st.school_id and h.holiday_date = ${paymentDate}::date
-              )
               and (
                 ${school.role !== "teacher"}
-                or c.class_teacher_id in (
-                  select id from staff_profiles
-                  where school_id = c.school_id and user_id = ${school.userId}::uuid
+                or exists (
+                  select 1
+                  from class_enrollments e
+                  join classes c on c.id = e.class_id and c.school_id = e.school_id
+                  join staff_profiles sp on sp.id = c.class_teacher_id and sp.school_id = c.school_id
+                  where e.school_id = st.school_id and e.student_id = st.id
+                    and e.starts_on <= ${paymentDate}::date
+                    and (e.ends_on is null or e.ends_on >= ${paymentDate}::date)
+                    and sp.user_id = ${school.userId}::uuid
                 )
               )
-            order by e.starts_on desc
-            limit 1
+          ),
+          calendar_days as materialized (
+            select generated.date::date as payment_date
+            from generate_series(
+              ${paymentDate}::date,
+              ${paymentDate}::date - interval '1825 days',
+              interval '-1 day'
+            ) as generated(date)
+            where extract(isodow from generated.date) between 1 and 5
+              and (${schoolDays} > 1 or generated.date::date = ${paymentDate}::date)
+          ),
+          eligible_days as materialized (
+            select d.payment_date, s.school_id, s.student_id, s.staff_id,
+                   daily_rule.amount as studies_fee_amount, daily_rule.currency,
+                   s.daily_fee_split_enabled, feeding.amount as feeding_fee_amount,
+                   feeding.currency as feeding_fee_currency
+            from student s
+            cross join calendar_days d
+            join lateral (
+              select f.amount, f.currency, c.id as class_id, ay.id as academic_year_id
+              from class_enrollments e
+              join classes c on c.id = e.class_id and c.school_id = e.school_id
+              join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+                and d.payment_date between ay.starts_on and ay.ends_on
+              join class_fees f on f.class_id = c.id and f.school_id = c.school_id
+                and f.academic_year_id = ay.id and f.fee_type = 'daily'
+                and f.term_id is null and f.is_active
+              where e.school_id = s.school_id and e.student_id = s.student_id
+                and e.starts_on <= d.payment_date and (e.ends_on is null or e.ends_on >= d.payment_date)
+              order by e.starts_on desc
+              limit 1
+            ) daily_rule on true
+            left join lateral (
+              select f.amount, f.currency
+              from class_fees f
+              where f.school_id = s.school_id and f.class_id = daily_rule.class_id
+                and f.academic_year_id = daily_rule.academic_year_id
+                and f.fee_type = 'daily_feeding' and f.term_id is null and f.is_active
+                and s.daily_fee_split_enabled
+              limit 1
+            ) feeding on true
+            where not exists (
+              select 1 from school_holidays holiday
+              where holiday.school_id = s.school_id and holiday.holiday_date = d.payment_date
+            )
+              and not exists (
+                select 1 from payments existing
+                where existing.school_id = s.school_id and existing.student_id = s.student_id
+                  and existing.daily_fee_date = d.payment_date and existing.category = 'daily_fee'
+              )
+              and daily_rule.amount > 0
+              and (
+                not ${includeFeeding}
+                or (s.daily_fee_split_enabled and feeding.amount is not null
+                  and feeding.currency = daily_rule.currency)
+              )
+            order by d.payment_date desc
+            limit ${Number(schoolDays)}
+          ),
+          payment_days as materialized (
+            select * from eligible_days order by payment_date desc limit ${Number(schoolDays)}
           ),
           recorded as (
             insert into payments
               (school_id, student_id, amount, currency, method, recorded_by_staff_id,
-               category, daily_fee_date, status, verified_at)
-            select school_id, student_id, amount, currency, ${String(method)}, staff_id,
-                   'daily_fee', ${paymentDate}::date, 'verified', now()
-            from eligible
-            on conflict (school_id, student_id, daily_fee_date) where category = 'daily_fee' do nothing
-            returning id, school_id, student_id, amount, currency, daily_fee_date, method
+               category, daily_fee_date, daily_fee_studies_amount, daily_fee_feeding_amount,
+               status, verified_at)
+            select e.school_id, e.student_id,
+                   e.studies_fee_amount + case when ${includeFeeding} then e.feeding_fee_amount else 0 end,
+                   e.currency, ${String(method)}, e.staff_id, 'daily_fee', e.payment_date,
+                   case when e.daily_fee_split_enabled then e.studies_fee_amount else null end,
+                   case when e.daily_fee_split_enabled then
+                     case when ${includeFeeding} then e.feeding_fee_amount else 0 end
+                     else null end,
+                   'verified', now()
+            from payment_days e
+            where (select count(*) from payment_days) = ${Number(schoolDays)}
+              and (select count(distinct currency) from payment_days) = 1
+            returning id, school_id, student_id, amount, currency, daily_fee_date, method,
+                      daily_fee_studies_amount, daily_fee_feeding_amount
           ),
-          issued_coupon as (
+          issued_coupons as (
             insert into coupons (school_id, student_id, code, issued_by_staff_id, payment_id, valid_on)
             select r.school_id, r.student_id, 'DF-' || upper(encode(gen_random_bytes(5), 'hex')),
-                   (select id from staff_profiles where school_id = r.school_id
-                    and user_id = ${school.userId}::uuid limit 1),
-                   r.id, r.daily_fee_date
-            from recorded r
+                   s.staff_id, r.id, r.daily_fee_date
+            from recorded r join student s on s.school_id = r.school_id and s.student_id = r.student_id
             returning payment_id, code
           )
-          select r.*, c.code as coupon_code
-          from recorded r join issued_coupon c on c.payment_id = r.id
+          select (select count(*)::int from payment_days) as available_days,
+                 (select count(distinct currency)::int from payment_days) as currency_count,
+                 coalesce((
+                   select json_agg(json_build_object(
+                     'id', r.id, 'amount', r.amount, 'currency', r.currency,
+                     'date', r.daily_fee_date, 'method', r.method, 'coupon_code', coupon.code,
+                     'daily_fee_studies_amount', r.daily_fee_studies_amount,
+                     'daily_fee_feeding_amount', r.daily_fee_feeding_amount
+                   ) order by r.daily_fee_date desc)
+                   from recorded r join issued_coupons coupon on coupon.payment_id = r.id
+                 ), '[]'::json) as payments
         `,
-      );
-      if (!rows[0]) {
-        const concurrentHoliday = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
-            select name from school_holidays
-            where school_id = ${school.schoolId}::uuid and holiday_date = ${paymentDate}::date
-          `,
+      ]);
+      const result = resultRows[0];
+      if (!result)
+        return json({ error: "Daily payment could not be recorded. Refresh and try again." }, 409);
+      if (Number(result["available_days"] ?? 0) !== Number(schoolDays)) {
+        return json(
+          {
+            error: `Only ${Number(result["available_days"] ?? 0)} unpaid eligible school day(s) were found in the last five years.`,
+            available_days: Number(result["available_days"] ?? 0),
+          },
+          409,
         );
-        if (concurrentHoliday[0]) {
-          return json({ error: `${String(concurrentHoliday[0]["name"])} is a school holiday; daily fees cannot be collected.` }, 409);
-        }
-        return json({ error: "Student is not eligible for this date, no daily fee is configured, or payment is already recorded." }, 409);
       }
-      return json({ payment: rows[0] }, 201);
+      if (Number(result["currency_count"] ?? 0) !== 1) {
+        return json(
+          {
+            error:
+              "The selected school days use different currencies. Record them in separate collections.",
+          },
+          409,
+        );
+      }
+      const payments = result["payments"];
+      if (!Array.isArray(payments) || payments.length !== Number(schoolDays)) {
+        return json(
+          { error: "Daily payments could not be fully recorded. Refresh and try again." },
+          409,
+        );
+      }
+      return json({ payments, payment: payments[0], days_paid: payments.length }, 201);
     }
 
     if (url.pathname === "/api/school/reconciliation" && request.method === "GET") {
-      const reconciliationDate = url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
+      const reconciliationDate =
+        url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
       if (!validIsoDate(reconciliationDate)) return badRequest("Enter a valid reconciliation date");
       const [summaryRows, channels, categoryTotals, payments] = await Promise.all([
-        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+        withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
           with expected_students as (
             select st.id as student_id, f.amount, f.currency
             from attendance_records ar
@@ -3123,8 +3748,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           left join expected_by_currency using (currency)
           left join received_by_currency using (currency)
           order by currency
-        `),
-        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+        `,
+        ),
+        withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
           select method, category, currency, sum(amount) as amount, count(*)::int as payment_count
           from payments
           where school_id = ${school.schoolId}::uuid and status = 'verified'
@@ -3134,8 +3763,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             )
           group by method, category, currency
           order by category, method
-        `),
-        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+        `,
+        ),
+        withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
           select category, currency, sum(amount) as amount, count(*)::int as payment_count
           from payments
           where school_id = ${school.schoolId}::uuid and status = 'verified'
@@ -3145,8 +3778,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             )
           group by category, currency
           order by currency, category
-        `),
-        withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => tx`
+        `,
+        ),
+        withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
           select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
                  p.paid_at, p.daily_fee_date, st.first_name, st.last_name, st.admission_number
           from payments p
@@ -3157,7 +3794,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               or (p.category <> 'daily_fee' and p.paid_at::date = ${reconciliationDate}::date)
             )
           order by p.paid_at desc
-        `),
+        `,
+        ),
       ]);
       return json({
         date: reconciliationDate,
@@ -3181,8 +3819,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     }
 
     if (url.pathname === "/api/school/coupons" && request.method === "GET") {
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select c.id, c.code, c.status, c.valid_on, c.expires_at, c.created_at,
                  st.first_name, st.last_name, st.admission_number,
                  p.amount, p.currency, p.daily_fee_date
@@ -3202,10 +3843,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         const classId = url.searchParams.get("class_id")?.trim() || null;
         const termId = url.searchParams.get("term_id")?.trim() || null;
         const classSubjectId = url.searchParams.get("class_subject_id")?.trim() || null;
-        if ([classId, termId, classSubjectId].some((id) => id && !uuidOrNull(id))) return badRequest("Invalid class, term, or subject assignment ID");
+        if ([classId, termId, classSubjectId].some((id) => id && !uuidOrNull(id)))
+          return badRequest("Invalid class, term, or subject assignment ID");
 
-        const assignments = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const assignments = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select cs.id as class_subject_id, c.id as class_id, c.name as class_name,
                    cs.subject_id, s.name as subject_name, c.academic_year_id,
                    ay.name as academic_year_name, t.id as term_id, t.name as term_name
@@ -3231,10 +3876,17 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         );
         if (!classSubjectId || !termId) return json({ assignments });
 
-        const selected = assignments.find((row) => String(row["class_subject_id"]) === classSubjectId && String(row["term_id"]) === termId);
-        if (!selected) return json({ error: "That subject is not assigned to this class and term" }, 404);
-        const students = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const selected = assignments.find(
+          (row) =>
+            String(row["class_subject_id"]) === classSubjectId && String(row["term_id"]) === termId,
+        );
+        if (!selected)
+          return json({ error: "That subject is not assigned to this class and term" }, 404);
+        const students = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select st.id as student_id, st.first_name, st.last_name, st.admission_number,
                    m.class_test_score, m.project_score, m.homework_score, m.group_work_score,
                    m.exam_score, m.total_score, m.performance_level
@@ -3252,29 +3904,52 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const classSubjectId = body["class_subject_id"];
       const termId = body["term_id"];
       const marks = body["marks"];
-      if (!uuidOrNull(classSubjectId) || !classSubjectId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid subject assignment and term");
-      if (!Array.isArray(marks) || marks.length < 1 || marks.length > 200) return badRequest("Submit between 1 and 200 student mark rows");
+      if (!uuidOrNull(classSubjectId) || !classSubjectId || !uuidOrNull(termId) || !termId)
+        return badRequest("Choose a valid subject assignment and term");
+      if (!Array.isArray(marks) || marks.length < 1 || marks.length > 200)
+        return badRequest("Submit between 1 and 200 student mark rows");
       const seenStudents = new Set<string>();
       for (const row of marks) {
         if (!row || typeof row !== "object") return badRequest("Every mark row must be an object");
         const mark = row as Record<string, unknown>;
-        if (!uuidOrNull(mark["student_id"]) || !mark["student_id"] || seenStudents.has(mark["student_id"])) return badRequest("Each student must have a valid, unique ID");
+        if (
+          !uuidOrNull(mark["student_id"]) ||
+          !mark["student_id"] ||
+          seenStudents.has(mark["student_id"])
+        )
+          return badRequest("Each student must have a valid, unique ID");
         seenStudents.add(mark["student_id"]);
-        for (const [field, limit] of [["class_test_score", 10], ["project_score", 20], ["homework_score", 10], ["group_work_score", 10], ["exam_score", 100]] as const) {
+        for (const [field, limit] of [
+          ["class_test_score", 10],
+          ["project_score", 20],
+          ["homework_score", 10],
+          ["group_work_score", 10],
+          ["exam_score", 100],
+        ] as const) {
           const value = mark[field];
-          if (value !== null && value !== undefined && (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > limit)) {
-            return badRequest(`Invalid ${field.replaceAll("_", " ")}; it must be between 0 and ${limit}`);
+          if (
+            value !== null &&
+            value !== undefined &&
+            (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > limit)
+          ) {
+            return badRequest(
+              `Invalid ${field.replaceAll("_", " ")}; it must be between 0 and ${limit}`,
+            );
           }
         }
       }
 
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with input_marks as (
             select * from jsonb_to_recordset(${JSON.stringify(marks)}::jsonb) as x(
               student_id uuid, class_test_score numeric, project_score numeric,
@@ -3317,7 +3992,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           select student_id from saved
         `,
       );
-      if (rows.length !== marks.length) return json({ error: "Some students are not currently enrolled in that class, or the subject is not assigned to your account" }, 400);
+      if (rows.length !== marks.length)
+        return json(
+          {
+            error:
+              "Some students are not currently enrolled in that class, or the subject is not assigned to your account",
+          },
+          400,
+        );
       return json({ saved: rows.length });
     }
 
@@ -3325,9 +4007,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (request.method === "GET") {
         const classId = url.searchParams.get("class_id")?.trim() || null;
         const termId = url.searchParams.get("term_id")?.trim() || null;
-        if (!uuidOrNull(classId) || !uuidOrNull(termId) || !classId || !termId) return badRequest("Choose a valid class and term");
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        if (!uuidOrNull(classId) || !uuidOrNull(termId) || !classId || !termId)
+          return badRequest("Choose a valid class and term");
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select st.id as student_id, st.first_name, st.last_name, st.admission_number,
                    (select name from schools where id = st.school_id) as school_name,
                    r.id as report_id, r.conduct, r.attitude, r.interest,
@@ -3370,29 +4056,54 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const classId = body["class_id"];
       const termId = body["term_id"];
       const profiles = body["profiles"] ?? [];
       const publish = body["publish"] === true;
-      if (!uuidOrNull(classId) || !classId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid class and term");
-      if (publish && school.role !== "school_admin") return json({ error: "Only a School Admin can publish terminal reports" }, 403);
-      if (!Array.isArray(profiles) || profiles.length > 200) return badRequest("Invalid report profile list");
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(termId) || !termId)
+        return badRequest("Choose a valid class and term");
+      if (publish && school.role !== "school_admin")
+        return json({ error: "Only a School Admin can publish terminal reports" }, 403);
+      if (!Array.isArray(profiles) || profiles.length > 200)
+        return badRequest("Invalid report profile list");
       const seenStudents = new Set<string>();
       for (const row of profiles) {
-        if (!row || typeof row !== "object") return badRequest("Every learner report must be an object");
+        if (!row || typeof row !== "object")
+          return badRequest("Every learner report must be an object");
         const profile = row as Record<string, unknown>;
-        if (!uuidOrNull(profile["student_id"]) || !profile["student_id"] || seenStudents.has(profile["student_id"])) return badRequest("Each report must have a valid, unique student ID");
+        if (
+          !uuidOrNull(profile["student_id"]) ||
+          !profile["student_id"] ||
+          seenStudents.has(profile["student_id"])
+        )
+          return badRequest("Each report must have a valid, unique student ID");
         seenStudents.add(profile["student_id"]);
-        for (const field of ["conduct", "attitude", "interest", "teacher_remark", "headteacher_remark"] as const) {
+        for (const field of [
+          "conduct",
+          "attitude",
+          "interest",
+          "teacher_remark",
+          "headteacher_remark",
+        ] as const) {
           const value = profile[field];
-          if (value !== undefined && value !== null && (typeof value !== "string" || value.length > (field.endsWith("remark") ? 2000 : 80))) {
+          if (
+            value !== undefined &&
+            value !== null &&
+            (typeof value !== "string" || value.length > (field.endsWith("remark") ? 2000 : 80))
+          ) {
             return badRequest(`${field.replaceAll("_", " ")} is too long`);
           }
         }
         const promotion = profile["promotion_status"];
-        if (promotion !== undefined && promotion !== null && promotion !== "" && !["promote", "repeat", "transfer", "graduate"].includes(String(promotion))) {
+        if (
+          promotion !== undefined &&
+          promotion !== null &&
+          promotion !== "" &&
+          !["promote", "repeat", "transfer", "graduate"].includes(String(promotion))
+        ) {
           return badRequest("Invalid promotion decision");
         }
       }
@@ -3541,7 +4252,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             )
         `,
       ]);
-      if (!Number(rows[0]?.["saved_count"] ?? 0)) return json({ error: "No authorized active students were found for that class and term" }, 400);
+      if (!Number(rows[0]?.["saved_count"] ?? 0))
+        return json(
+          { error: "No authorized active students were found for that class and term" },
+          400,
+        );
       return json({ saved_count: Number(rows[0]?.["saved_count"] ?? 0), published: publish });
     }
 
@@ -3549,9 +4264,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (request.method === "GET") {
         const classId = url.searchParams.get("class_id")?.trim() || null;
         const termId = url.searchParams.get("term_id")?.trim() || null;
-        if ([classId, termId].some((id) => id && !uuidOrNull(id))) return badRequest("Invalid class or term ID");
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        if ([classId, termId].some((id) => id && !uuidOrNull(id)))
+          return badRequest("Invalid class or term ID");
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select d.id, d.student_id, st.first_name, st.last_name, st.admission_number,
                    d.from_class_id, c.name as from_class_name, d.term_id, t.name as term_name,
                    d.decision, d.target_class_id, target.name as target_class_name,
@@ -3583,16 +4302,23 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
       if (request.method === "PATCH") {
         const payload: unknown = await request.json().catch(() => null);
-        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        if (!payload || typeof payload !== "object")
+          return badRequest("A JSON request body is required");
         const body = payload as Record<string, unknown>;
         const id = body["id"];
         const action = body["action"];
-        const reviewRemark = typeof body["review_remark"] === "string" ? body["review_remark"].trim() : "";
+        const reviewRemark =
+          typeof body["review_remark"] === "string" ? body["review_remark"].trim() : "";
         if (!uuidOrNull(id) || !id) return badRequest("Invalid promotion decision ID");
-        if (action !== "approve" && action !== "reject") return badRequest("Action must be approve or reject");
-        if (reviewRemark.length > 2000) return badRequest("Review remark must be at most 2000 characters");
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        if (action !== "approve" && action !== "reject")
+          return badRequest("Action must be approve or reject");
+        if (reviewRemark.length > 2000)
+          return badRequest("Review remark must be at most 2000 characters");
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             with selected as materialized (
               select d.id, d.school_id, d.student_id, d.from_class_id, d.target_class_id,
                      d.decision, d.term_id, t.ends_on as term_ends_on
@@ -3645,31 +4371,59 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             select id, status from reviewed
           `,
         );
-        if (!rows[0]) return json({ error: "Decision not found, already reviewed, or its active enrollment/target class is invalid" }, 409);
+        if (!rows[0])
+          return json(
+            {
+              error:
+                "Decision not found, already reviewed, or its active enrollment/target class is invalid",
+            },
+            409,
+          );
         return json({ decision: rows[0] });
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const classId = body["class_id"];
       const termId = body["term_id"];
       const decisions = body["decisions"];
-      if (!uuidOrNull(classId) || !classId || !uuidOrNull(termId) || !termId) return badRequest("Choose a valid class and term");
-      if (!Array.isArray(decisions) || decisions.length < 1 || decisions.length > 200) return badRequest("Submit between 1 and 200 promotion decisions");
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(termId) || !termId)
+        return badRequest("Choose a valid class and term");
+      if (!Array.isArray(decisions) || decisions.length < 1 || decisions.length > 200)
+        return badRequest("Submit between 1 and 200 promotion decisions");
       const students = new Set<string>();
       for (const value of decisions) {
-        if (!value || typeof value !== "object") return badRequest("Each decision must be an object");
+        if (!value || typeof value !== "object")
+          return badRequest("Each decision must be an object");
         const decision = value as Record<string, unknown>;
-        if (!uuidOrNull(decision["student_id"]) || !decision["student_id"] || students.has(decision["student_id"])) return badRequest("Each student must have a valid, unique ID");
+        if (
+          !uuidOrNull(decision["student_id"]) ||
+          !decision["student_id"] ||
+          students.has(decision["student_id"])
+        )
+          return badRequest("Each student must have a valid, unique ID");
         students.add(decision["student_id"]);
-        if (!["promote", "repeat", "transfer", "graduate"].includes(String(decision["decision"]))) return badRequest("Invalid promotion decision");
+        if (!["promote", "repeat", "transfer", "graduate"].includes(String(decision["decision"])))
+          return badRequest("Invalid promotion decision");
         if (!uuidOrNull(decision["target_class_id"])) return badRequest("Invalid target class ID");
-        if (["promote", "repeat"].includes(String(decision["decision"])) !== Boolean(decision["target_class_id"])) return badRequest("Promote and repeat decisions need a next-year target class");
-        if (typeof decision["teacher_remark"] === "string" && decision["teacher_remark"].length > 2000) return badRequest("Teacher remark must be at most 2000 characters");
+        if (
+          ["promote", "repeat"].includes(String(decision["decision"])) !==
+          Boolean(decision["target_class_id"])
+        )
+          return badRequest("Promote and repeat decisions need a next-year target class");
+        if (
+          typeof decision["teacher_remark"] === "string" &&
+          decision["teacher_remark"].length > 2000
+        )
+          return badRequest("Teacher remark must be at most 2000 characters");
       }
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with input_decisions as (
             select * from jsonb_to_recordset(${JSON.stringify(decisions)}::jsonb) as x(
               student_id uuid, decision text, target_class_id uuid, teacher_remark text
@@ -3709,25 +4463,41 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           select (select count(*)::int from inserted) as saved_count
         `,
       );
-      if (Number(rows[0]?.["saved_count"] ?? 0) !== decisions.length) return json({ error: "Could not submit all decisions. Confirm each learner is enrolled, the target class belongs to an academic year after Term 3, and you are assigned to this class." }, 400);
+      if (Number(rows[0]?.["saved_count"] ?? 0) !== decisions.length)
+        return json(
+          {
+            error:
+              "Could not submit all decisions. Confirm each learner is enrolled, the target class belongs to an academic year after Term 3, and you are assigned to this class.",
+          },
+          400,
+        );
       return json({ saved_count: Number(rows[0]?.["saved_count"] ?? 0), status: "pending" }, 201);
     }
 
     if (url.pathname === "/api/school/academic-periods") {
       if (request.method === "POST") {
         const payload: unknown = await request.json().catch(() => null);
-        if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+        if (!payload || typeof payload !== "object")
+          return badRequest("A JSON request body is required");
         const body = payload as Record<string, unknown>;
         const name = typeof body["name"] === "string" ? body["name"].trim() : "";
         const startsOn = typeof body["starts_on"] === "string" ? body["starts_on"] : "";
         const endsOn = typeof body["ends_on"] === "string" ? body["ends_on"] : "";
         const isCurrent = body["is_current"] === true;
-        if (name.length < 2 || name.length > 80) return badRequest("Academic year name must be 2–80 characters");
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn) || !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) || startsOn >= endsOn) {
+        if (name.length < 2 || name.length > 80)
+          return badRequest("Academic year name must be 2–80 characters");
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(startsOn) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) ||
+          startsOn >= endsOn
+        ) {
           return badRequest("Enter valid academic year start and end dates");
         }
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             with cleared_current as (
               update academic_years set is_current = false
               where school_id = ${school.schoolId}::uuid and is_current and ${isCurrent}
@@ -3742,13 +4512,17 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             select * from inserted
           `,
         );
-        if (!rows[0]) return json({ error: "Academic year already exists or could not be created" }, 409);
+        if (!rows[0])
+          return json({ error: "Academic year already exists or could not be created" }, 409);
         return json({ academic_year: rows[0] }, 201);
       }
 
       await ensureTermFeeArrears(sql, school.schoolId);
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select
             ay.id as academic_year_id,
             ay.name as academic_year_name,
@@ -3767,12 +4541,35 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           order by ay.is_current desc, ay.starts_on desc, t.starts_on asc
         `,
       );
-      const years = new Map<string, { id: string; name: string; starts_on: string; is_current: boolean; terms: { id: string; name: string; starts_on: string; ends_on: string; is_current: boolean; is_closed: boolean; arrears_processed_at: string | null }[] }>();
+      const years = new Map<
+        string,
+        {
+          id: string;
+          name: string;
+          starts_on: string;
+          is_current: boolean;
+          terms: {
+            id: string;
+            name: string;
+            starts_on: string;
+            ends_on: string;
+            is_current: boolean;
+            is_closed: boolean;
+            arrears_processed_at: string | null;
+          }[];
+        }
+      >();
       for (const row of rows) {
         const yearId = String(row["academic_year_id"]);
         let year = years.get(yearId);
         if (!year) {
-          year = { id: yearId, name: String(row["academic_year_name"]), starts_on: String(row["academic_year_starts_on"]), is_current: row["is_current"] === true, terms: [] };
+          year = {
+            id: yearId,
+            name: String(row["academic_year_name"]),
+            starts_on: String(row["academic_year_starts_on"]),
+            is_current: row["is_current"] === true,
+            terms: [],
+          };
           years.set(yearId, year);
         }
         if (row["term_id"] != null) {
@@ -3783,7 +4580,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             ends_on: String(row["term_ends_on"]),
             is_current: row["term_is_current"] === true,
             is_closed: row["term_is_closed"] === true,
-            arrears_processed_at: row["term_arrears_processed_at"] == null ? null : String(row["term_arrears_processed_at"]),
+            arrears_processed_at:
+              row["term_arrears_processed_at"] == null
+                ? null
+                : String(row["term_arrears_processed_at"]),
           });
         }
       }
@@ -3792,19 +4592,29 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/terms" && request.method === "POST") {
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const academicYearId = body["academic_year_id"];
       const name = typeof body["name"] === "string" ? body["name"].trim() : "";
       const startsOn = typeof body["starts_on"] === "string" ? body["starts_on"] : "";
       const endsOn = typeof body["ends_on"] === "string" ? body["ends_on"] : "";
-      if (!uuidOrNull(academicYearId) || !academicYearId) return badRequest("Choose a valid academic year");
-      if (name.length < 2 || name.length > 80) return badRequest("Term name must be 2–80 characters");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(startsOn) || !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) || startsOn >= endsOn) {
+      if (!uuidOrNull(academicYearId) || !academicYearId)
+        return badRequest("Choose a valid academic year");
+      if (name.length < 2 || name.length > 80)
+        return badRequest("Term name must be 2–80 characters");
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(startsOn) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) ||
+        startsOn >= endsOn
+      ) {
         return badRequest("Enter valid term start and end dates");
       }
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with selected_year as materialized (
             select id, school_id, starts_on, ends_on
             from academic_years
@@ -3832,14 +4642,24 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           returning id, academic_year_id, name, starts_on, ends_on
         `,
       );
-      if (!rows[0]) return json({ error: "Academic year must have no more than three terms. Add each term in date order, with a unique name and dates inside the academic year." }, 409);
+      if (!rows[0])
+        return json(
+          {
+            error:
+              "Academic year must have no more than three terms. Add each term in date order, with a unique name and dates inside the academic year.",
+          },
+          409,
+        );
       return json({ term: rows[0] }, 201);
     }
 
     if (url.pathname === "/api/school/team") {
       if (request.method === "GET") {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select u.id as user_id, u.email, u.display_name, m.role, m.active, sp.id as staff_profile_id
             from memberships m join users u on u.id = m.user_id
             left join staff_profiles sp on sp.user_id = u.id and sp.school_id = m.school_id
@@ -3851,16 +4671,21 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const name = typeof body["name"] === "string" ? body["name"].trim() : "";
       const email = typeof body["email"] === "string" ? body["email"].trim().toLowerCase() : "";
       const role = body["role"];
       if (name.length < 2 || name.length > 160) return badRequest("Name must be 2–160 characters");
-      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid email address");
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+        return badRequest("Enter a valid email address");
       if (role !== "teacher" && role !== "finance") return badRequest("Choose teacher or finance");
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with app_user as (
             insert into users (email, display_name) values (${email}, ${name})
             on conflict (email) do update set display_name = excluded.display_name
@@ -3899,8 +4724,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/teaching-setup") {
       if (request.method === "GET") {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select c.id as class_id, c.name as class_name, c.academic_year_id, ay.name as academic_year_name,
                    class_teacher_user.display_name as class_teacher_name,
                    cs.id as class_subject_id, s.id as subject_id, s.code as subject_code, s.name as subject_name,
@@ -3919,8 +4747,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             order by ay.starts_on desc, c.name, s.name
           `,
         );
-        const team = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const team = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select u.id as user_id, u.email, u.display_name, sp.id as staff_profile_id
             from memberships m join users u on u.id = m.user_id
             join staff_profiles sp on sp.user_id = u.id and sp.school_id = m.school_id
@@ -3928,8 +4759,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             order by u.display_name
           `,
         );
-        const subjects = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const subjects = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             select id, code, name
             from subjects
             where school_id = ${school.schoolId}::uuid
@@ -3940,36 +4774,51 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const classId = body["class_id"];
       const teacherId = body["teacher_user_id"] ?? null;
       const subjectId = body["subject_id"] ?? null;
-      const subjectCode = typeof body["subject_code"] === "string" ? body["subject_code"].trim().toUpperCase() : "";
-      const subjectName = typeof body["subject_name"] === "string" ? body["subject_name"].trim() : "";
-      const assignmentType = body["assignment_type"] === "class_teacher"
-        ? "class_teacher"
-        : body["assignment_type"] === "create_subject" ? "create_subject" : "subject";
+      const subjectCode =
+        typeof body["subject_code"] === "string" ? body["subject_code"].trim().toUpperCase() : "";
+      const subjectName =
+        typeof body["subject_name"] === "string" ? body["subject_name"].trim() : "";
+      const assignmentType =
+        body["assignment_type"] === "class_teacher"
+          ? "class_teacher"
+          : body["assignment_type"] === "create_subject"
+            ? "create_subject"
+            : "subject";
       if (assignmentType === "create_subject") {
-        if (subjectCode.length < 1 || subjectCode.length > 24 || !/^[A-Z0-9-]+$/.test(subjectCode)) return badRequest("Subject code must use letters, numbers, or hyphens");
-        if (subjectName.length < 2 || subjectName.length > 120) return badRequest("Subject name must be 2–120 characters");
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        if (subjectCode.length < 1 || subjectCode.length > 24 || !/^[A-Z0-9-]+$/.test(subjectCode))
+          return badRequest("Subject code must use letters, numbers, or hyphens");
+        if (subjectName.length < 2 || subjectName.length > 120)
+          return badRequest("Subject name must be 2–120 characters");
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             insert into subjects (school_id, code, name)
             values (${school.schoolId}::uuid, ${subjectCode}, ${subjectName})
             on conflict (school_id, code) do nothing
             returning id, code, name
           `,
         );
-        if (!rows[0]) return json({ error: "A subject with that code already exists in this school" }, 409);
+        if (!rows[0])
+          return json({ error: "A subject with that code already exists in this school" }, 409);
         return json({ subject: rows[0] }, 201);
       }
       if (!uuidOrNull(classId) || !classId) return badRequest("Choose a valid class");
       if (!uuidOrNull(teacherId)) return badRequest("Choose a valid teacher");
       if (assignmentType === "class_teacher") {
         if (!teacherId) return badRequest("Choose a valid teacher");
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             with selected_class as materialized (
               select id, school_id
               from classes
@@ -4008,11 +4857,19 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       }
 
       if (!uuidOrNull(subjectId)) return badRequest("Choose a valid subject");
-      if (!subjectId && (subjectCode.length < 1 || subjectCode.length > 24 || !/^[A-Z0-9-]+$/.test(subjectCode))) return badRequest("Subject code must use letters, numbers, or hyphens");
-      if (!subjectId && (subjectName.length < 2 || subjectName.length > 120)) return badRequest("Subject name must be 2–120 characters");
+      if (
+        !subjectId &&
+        (subjectCode.length < 1 || subjectCode.length > 24 || !/^[A-Z0-9-]+$/.test(subjectCode))
+      )
+        return badRequest("Subject code must use letters, numbers, or hyphens");
+      if (!subjectId && (subjectName.length < 2 || subjectName.length > 120))
+        return badRequest("Subject name must be 2–120 characters");
       if (teacherId && !uuidOrNull(teacherId)) return badRequest("Choose a valid teacher");
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with selected_class as materialized (
             select id, school_id, academic_year_id from classes
             where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
@@ -4065,14 +4922,31 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           from saved_class_subject cs left join saved_assignment assignment on true
         `,
       );
-      if (!rows[0]) return json({ error: "Could not assign this subject to the class. Confirm the class, subject, and teacher belong to this school." }, 400);
-      if (teacherId && !rows[0]["assignment_id"]) return json({ error: "Could not assign the teacher. Confirm they belong to this school." }, 400);
-      return json({ class_subject: rows[0]["id"], assignment: rows[0]["assignment_id"] ?? null }, 201);
+      if (!rows[0])
+        return json(
+          {
+            error:
+              "Could not assign this subject to the class. Confirm the class, subject, and teacher belong to this school.",
+          },
+          400,
+        );
+      if (teacherId && !rows[0]["assignment_id"])
+        return json(
+          { error: "Could not assign the teacher. Confirm they belong to this school." },
+          400,
+        );
+      return json(
+        { class_subject: rows[0]["id"], assignment: rows[0]["assignment_id"] ?? null },
+        201,
+      );
     }
 
     if (url.pathname === "/api/school/classes" && request.method === "GET") {
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select c.id, c.name, c.form_level as grade_level,
                  c.class_teacher_id,
                  teacher.display_name as class_teacher_name,
@@ -4110,15 +4984,20 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (classLifecycleMatch && request.method === "PATCH") {
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const name = typeof body["name"] === "string" ? body["name"].trim() : "";
       const teacherId = body["class_teacher_id"];
-      if (name.length < 2 || name.length > 100) return badRequest("Class name must be 2–100 characters");
+      if (name.length < 2 || name.length > 100)
+        return badRequest("Class name must be 2–100 characters");
       if (!uuidOrNull(teacherId)) return badRequest("Choose a valid class teacher");
       try {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             update classes c
             set name = ${name},
                 class_teacher_id = ${typeof teacherId === "string" ? teacherId : null}::uuid
@@ -4139,11 +5018,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             returning c.id, c.name, c.class_teacher_id
           `,
         );
-        if (!rows[0]) return json({ error: "Class not found or the selected teacher is not active in this school." }, 404);
+        if (!rows[0])
+          return json(
+            { error: "Class not found or the selected teacher is not active in this school." },
+            404,
+          );
         return json({ class: rows[0] });
       } catch (error) {
         if (error instanceof Error && /unique/i.test(error.message)) {
-          return json({ error: "A class with this name already exists for the academic year." }, 409);
+          return json(
+            { error: "A class with this name already exists for the academic year." },
+            409,
+          );
         }
         throw error;
       }
@@ -4151,25 +5037,31 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/classes" && request.method === "POST") {
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const name = typeof body["name"] === "string" ? body["name"].trim() : "";
       const gradeLevel = typeof body["grade_level"] === "string" ? body["grade_level"].trim() : "";
-      if (name.length < 2 || name.length > 100) return badRequest("Class name must be 2–100 characters");
+      if (name.length < 2 || name.length > 100)
+        return badRequest("Class name must be 2–100 characters");
       if (gradeLevel.length > 100) return badRequest("Grade level must be at most 100 characters");
       if (!uuidOrNull(body["academic_year_id"]) || !uuidOrNull(body["term_id"])) {
         return badRequest("Academic year and term must be valid IDs");
       }
 
-      const academicYearId = typeof body["academic_year_id"] === "string" ? body["academic_year_id"] : null;
+      const academicYearId =
+        typeof body["academic_year_id"] === "string" ? body["academic_year_id"] : null;
       const termId = typeof body["term_id"] === "string" ? body["term_id"] : null;
       const now = new Date();
       const yearStart = now.getUTCMonth() >= 8 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
       const defaultYearName = `${yearStart}/${yearStart + 1}`;
       const defaultYearStart = `${yearStart}-09-01`;
       const defaultYearEnd = `${yearStart + 1}-08-31`;
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with requested_year as (
             select id, school_id, name, starts_on, ends_on from academic_years
             where school_id = ${school.schoolId}::uuid and id = ${academicYearId}::uuid
@@ -4258,7 +5150,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           join selected_term t on t.id = c.term_id and t.school_id = c.school_id
         `,
       );
-      if (!rows[0]) return json({ error: "Could not create class. Check the selected year and term, and ensure its name is unique for that year." }, 409);
+      if (!rows[0])
+        return json(
+          {
+            error:
+              "Could not create class. Check the selected year and term, and ensure its name is unique for that year.",
+          },
+          409,
+        );
       return json({ class: rows[0] }, 201);
     }
 
@@ -4266,22 +5165,34 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       await ensureTermFeeArrears(sql, school.schoolId);
       const studentId = url.searchParams.get("student_id")?.trim() ?? "";
       const termId = url.searchParams.get("term_id")?.trim() || null;
-      const selectedTypes = new Set((url.searchParams.get("types") ?? "daily,school,other").split(",").map((value) => value.trim()));
+      const selectedTypes = new Set(
+        (url.searchParams.get("types") ?? "daily,school,other")
+          .split(",")
+          .map((value) => value.trim()),
+      );
       const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
       const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "50", 10);
       if (!uuidOrNull(studentId) || !studentId) return badRequest("Choose a valid student");
       if (termId && !uuidOrNull(termId)) return badRequest("Choose a valid academic term");
-      if (!selectedTypes.size || [...selectedTypes].some((type) => !["daily", "school", "other"].includes(type))) {
+      if (
+        !selectedTypes.size ||
+        [...selectedTypes].some((type) => !["daily", "school", "other"].includes(type))
+      ) {
         return badRequest("Choose daily payments, school fees, or other fees");
       }
-      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      if (!Number.isInteger(page) || page < 1 || page > 100_000)
+        return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
+        return badRequest("Page size must be between 1 and 100");
       const includeDaily = selectedTypes.has("daily");
       const includeSchool = selectedTypes.has("school");
       const includeOther = selectedTypes.has("other");
       const offset = (page - 1) * pageSize;
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with filtered_records as materialized (
             select p.id, p.receipt_number, p.amount, p.currency, p.category, p.method,
                    p.status, p.paid_at, p.daily_fee_date,
@@ -4402,8 +5313,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         `,
       );
       const report = rows[0];
-      if (!report || !Array.isArray(report["records"]) || !Array.isArray(report["totals"])
-        || !Array.isArray(report["fee_balances"])) {
+      if (
+        !report ||
+        !Array.isArray(report["records"]) ||
+        !Array.isArray(report["totals"]) ||
+        !Array.isArray(report["fee_balances"])
+      ) {
         throw new Error("Student financial-record query returned an invalid result");
       }
       const totalCount = Number(report["total_count"] ?? 0);
@@ -4424,11 +5339,16 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (classId && !uuidOrNull(classId)) return badRequest("Invalid class ID");
       const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10);
       const pageSize = Number.parseInt(url.searchParams.get("page_size") ?? "20", 10);
-      if (!Number.isInteger(page) || page < 1 || page > 100_000) return badRequest("Page must be a positive integer");
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return badRequest("Page size must be between 1 and 100");
+      if (!Number.isInteger(page) || page < 1 || page > 100_000)
+        return badRequest("Page must be a positive integer");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100)
+        return badRequest("Page size must be between 1 and 100");
       const offset = (page - 1) * pageSize;
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           with current_enrollment as (
             select distinct on (e.student_id) e.student_id, e.class_id
             from class_enrollments e
@@ -4481,48 +5401,79 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       );
       const studentRows = rows[0]?.["students"];
       if (!Array.isArray(studentRows)) throw new Error("Student query returned an invalid page");
-      return json({ students: studentRows, total: Number(rows[0]?.["total"] ?? 0), page, page_size: pageSize });
+      return json({
+        students: studentRows,
+        total: Number(rows[0]?.["total"] ?? 0),
+        page,
+        page_size: pageSize,
+      });
     }
 
     if (url.pathname === "/api/school/students" && request.method === "POST") {
       const payload: unknown = await request.json().catch(() => null);
-      if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
       const body = payload as Record<string, unknown>;
       const fullName = typeof body["full_name"] === "string" ? body["full_name"].trim() : "";
       const nameParts = fullName.split(/\s+/).filter(Boolean);
-      const firstName = typeof body["first_name"] === "string" ? body["first_name"].trim() : nameParts[0] ?? "";
-      const lastName = typeof body["last_name"] === "string" ? body["last_name"].trim() : nameParts.slice(1).join(" ");
+      const firstName =
+        typeof body["first_name"] === "string" ? body["first_name"].trim() : (nameParts[0] ?? "");
+      const lastName =
+        typeof body["last_name"] === "string"
+          ? body["last_name"].trim()
+          : nameParts.slice(1).join(" ");
       const classId = body["class_id"] == null ? null : body["class_id"];
-      if (firstName.length < 1 || firstName.length > 100) return badRequest("First name must be 1–100 characters");
-      if (lastName.length < 1 || lastName.length > 100) return badRequest("Enter both a first and last name");
+      if (firstName.length < 1 || firstName.length > 100)
+        return badRequest("First name must be 1–100 characters");
+      if (lastName.length < 1 || lastName.length > 100)
+        return badRequest("Enter both a first and last name");
       if (!uuidOrNull(classId)) return badRequest("Invalid class ID");
 
-      const dateOfBirth = typeof body["date_of_birth"] === "string" ? body["date_of_birth"].trim() : "";
+      const dateOfBirth =
+        typeof body["date_of_birth"] === "string" ? body["date_of_birth"].trim() : "";
       const gender = typeof body["gender"] === "string" ? body["gender"].trim() : "";
       const address = typeof body["address"] === "string" ? body["address"].trim() : "";
-      const emergencyContact = typeof body["emergency_contact"] === "string" ? body["emergency_contact"].trim() : "";
-      const medicalNotes = typeof body["medical_notes"] === "string" ? body["medical_notes"].trim() : "";
-      if (dateOfBirth && !validIsoDate(dateOfBirth)) return badRequest("Enter a valid date of birth");
+      const emergencyContact =
+        typeof body["emergency_contact"] === "string" ? body["emergency_contact"].trim() : "";
+      const medicalNotes =
+        typeof body["medical_notes"] === "string" ? body["medical_notes"].trim() : "";
+      if (dateOfBirth && !validIsoDate(dateOfBirth))
+        return badRequest("Enter a valid date of birth");
       if (gender.length > 40) return badRequest("Gender must be at most 40 characters");
       if (address.length > 1000) return badRequest("Address must be at most 1000 characters");
-      if (emergencyContact.length > 40) return badRequest("Emergency contact must be at most 40 characters");
-      if (medicalNotes.length > 2000) return badRequest("Medical notes must be at most 2000 characters");
+      if (emergencyContact.length > 40)
+        return badRequest("Emergency contact must be at most 40 characters");
+      if (medicalNotes.length > 2000)
+        return badRequest("Medical notes must be at most 2000 characters");
 
-      const guardian = body["guardian"] && typeof body["guardian"] === "object"
-        ? body["guardian"] as Record<string, unknown>
-        : {};
-      const guardianName = typeof guardian["full_name"] === "string" ? guardian["full_name"].trim() : "";
+      const guardian =
+        body["guardian"] && typeof body["guardian"] === "object"
+          ? (body["guardian"] as Record<string, unknown>)
+          : {};
+      const guardianName =
+        typeof guardian["full_name"] === "string" ? guardian["full_name"].trim() : "";
       const guardianPhone = typeof guardian["phone"] === "string" ? guardian["phone"].trim() : "";
-      const guardianEmail = typeof guardian["email"] === "string" ? guardian["email"].trim().toLowerCase() : "";
-      const guardianRelationship = typeof guardian["relationship"] === "string" ? guardian["relationship"].trim() : "parent";
-      if (guardianName.length > 160 || guardianPhone.length > 40 || guardianEmail.length > 254 || guardianRelationship.length > 60) {
+      const guardianEmail =
+        typeof guardian["email"] === "string" ? guardian["email"].trim().toLowerCase() : "";
+      const guardianRelationship =
+        typeof guardian["relationship"] === "string" ? guardian["relationship"].trim() : "parent";
+      if (
+        guardianName.length > 160 ||
+        guardianPhone.length > 40 ||
+        guardianEmail.length > 254 ||
+        guardianRelationship.length > 60
+      ) {
         return badRequest("Guardian contact information is too long");
       }
-      if (guardianEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardianEmail)) return badRequest("Enter a valid guardian email address");
+      if (guardianEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardianEmail))
+        return badRequest("Enter a valid guardian email address");
 
       try {
-        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-          tx`
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
             with requested_class as (
               select id, school_id from classes
               where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
@@ -4575,10 +5526,21 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             left join classes c on c.id = e.class_id and c.school_id = st.school_id
           `,
         );
-        if (!rows[0]) return json({ error: classId ? "The selected class does not exist in this school" : "Student could not be created" }, 400);
+        if (!rows[0])
+          return json(
+            {
+              error: classId
+                ? "The selected class does not exist in this school"
+                : "Student could not be created",
+            },
+            400,
+          );
         return json({ student: rows[0] }, 201);
       } catch (error) {
-        if (error instanceof Error && /students_school_id_admission_number_key|duplicate key/i.test(error.message)) {
+        if (
+          error instanceof Error &&
+          /students_school_id_admission_number_key|duplicate key/i.test(error.message)
+        ) {
           return json({ error: "That student ID is already in use at this school" }, 409);
         }
         throw error;
@@ -4587,8 +5549,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (classRosterMatch) {
       if (!uuidOrNull(classRosterMatch[1])) return badRequest("Invalid class ID");
-      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
           select c.id as class_id,
                  coalesce(jsonb_agg(jsonb_build_object(
                    'id', st.id, 'first_name', st.first_name, 'last_name', st.last_name,
@@ -4629,14 +5594,22 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
     if (!env.DATABASE_URL) return json({ error: "Database is not configured" }, 503);
     const payload: unknown = await request.json().catch(() => null);
-    const email = payload && typeof payload === "object" && "email" in payload && typeof payload["email"] === "string"
-      ? payload["email"].trim().toLowerCase()
-      : "";
-    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return badRequest("Enter a valid email address");
+    const email =
+      payload &&
+      typeof payload === "object" &&
+      "email" in payload &&
+      typeof payload["email"] === "string"
+        ? payload["email"].trim().toLowerCase()
+        : "";
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      return badRequest("Enter a valid email address");
 
     const sql = database(env);
-    const rows = await withDatabaseContext(sql, { userEmail: email }, (tx) =>
-      tx`
+    const rows = await withDatabaseContext(
+      sql,
+      { userEmail: email },
+      (tx) =>
+        tx`
         select m.role, s.status as school_status
         from users u
         join memberships m on m.user_id = u.id
@@ -4644,7 +5617,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         where lower(u.email) = ${email} and m.active
       `,
     );
-    const eligible = rows.some((row) => row["role"] === "super_admin" || row["school_status"] === "trial" || row["school_status"] === "active");
+    const eligible = rows.some(
+      (row) =>
+        row["role"] === "super_admin" ||
+        row["school_status"] === "trial" ||
+        row["school_status"] === "active",
+    );
     return json({ eligible });
   }
 
@@ -4654,15 +5632,21 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
 
   if (url.pathname === "/api/auth/context") {
-    if (!env.DATABASE_URL || !hasAuthConfig(env)) return json({ error: "Neon Auth is not configured" }, 503);
+    if (!env.DATABASE_URL || !hasAuthConfig(env))
+      return json({ error: "Neon Auth is not configured" }, 503);
     const bearer = bearerToken(request);
-    if (!bearer) return json({ error: "A valid sign-in token is required. Please sign in again." }, 401);
+    if (!bearer)
+      return json({ error: "A valid sign-in token is required. Please sign in again." }, 401);
 
     let authUserId: string;
     let tokenEmail: string;
     try {
       const identity = await authenticateNeonToken(bearer, env);
-      if (!identity) return json({ error: "Your sign-in session is invalid or expired. Please sign in again." }, 401);
+      if (!identity)
+        return json(
+          { error: "Your sign-in session is invalid or expired. Please sign in again." },
+          401,
+        );
       ({ userId: authUserId, email: tokenEmail } = identity);
     } catch (error) {
       logTokenVerificationFailure(error, bearer);
@@ -4677,12 +5661,19 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       limit 1
     `;
     const authUser = authUsers[0];
-    if (!authUser || authUser["email_verified"] !== true || String(authUser["email"]).trim().toLowerCase() !== tokenEmail) {
+    if (
+      !authUser ||
+      authUser["email_verified"] !== true ||
+      String(authUser["email"]).trim().toLowerCase() !== tokenEmail
+    ) {
       return json({ error: "Verify your email address before using a school portal" }, 403);
     }
 
-    const memberships = await withDatabaseContext(sql, { userEmail: tokenEmail }, (tx) =>
-      tx`
+    const memberships = await withDatabaseContext(
+      sql,
+      { userEmail: tokenEmail },
+      (tx) =>
+        tx`
         select u.display_name, m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
                coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
         from users u
@@ -4691,10 +5682,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         where lower(u.email) = ${tokenEmail} and m.active
       `,
     );
-    const platformAdmin = memberships.find((row) => row["role"] === "super_admin" && row["school_id"] == null);
+    const platformAdmin = memberships.find(
+      (row) => row["role"] === "super_admin" && row["school_id"] == null,
+    );
     if (platformAdmin) {
       return json(
-        { user: { email: tokenEmail, displayName: String(platformAdmin["display_name"] ?? tokenEmail) }, membership: { role: "super_admin", schoolId: null } },
+        {
+          user: {
+            email: tokenEmail,
+            displayName: String(platformAdmin["display_name"] ?? tokenEmail),
+          },
+          membership: { role: "super_admin", schoolId: null },
+        },
         200,
         { "set-cookie": authSessionCookie("", request, 0) },
       );
@@ -4702,17 +5701,25 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     const tenant = resolveTenant(request, env.ROOT_DOMAIN);
     const querySubdomain = url.searchParams.get("tenant")?.trim().toLowerCase() ?? null;
-    if (querySubdomain && !validSubdomain(querySubdomain)) return badRequest("Invalid tenant subdomain");
+    if (querySubdomain && !validSubdomain(querySubdomain))
+      return badRequest("Invalid tenant subdomain");
     const requestedSubdomain = tenant.subdomain ?? querySubdomain;
     const schoolMemberships = memberships.filter((row) => row["school_id"] != null);
     const selectedMembership = requestedSubdomain
       ? schoolMemberships.find((row) => row["subdomain"] === requestedSubdomain)
-      : schoolMemberships.length === 1 ? schoolMemberships[0] : undefined;
-    if (!selectedMembership) return json({ error: "This account does not have access to this school" }, 403);
-    if (selectedMembership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
+      : schoolMemberships.length === 1
+        ? schoolMemberships[0]
+        : undefined;
+    if (!selectedMembership)
+      return json({ error: "This account does not have access to this school" }, 403);
+    if (selectedMembership["school_status"] === "suspended")
+      return json({ error: "This school tenant is suspended" }, 403);
     const schoolId = String(selectedMembership["school_id"]);
-    const scopedMemberships = await withDatabaseContext(sql, { schoolId, userEmail: tokenEmail }, (tx) =>
-      tx`
+    const scopedMemberships = await withDatabaseContext(
+      sql,
+      { schoolId, userEmail: tokenEmail },
+      (tx) =>
+        tx`
         select u.display_name, m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
                coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
         from users u
@@ -4723,21 +5730,30 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       `,
     );
     const tenantMembership = scopedMemberships[0];
-    if (!tenantMembership) return json({ error: "This account does not have access to this school" }, 403);
-    if (tenantMembership["school_status"] === "suspended") return json({ error: "This school tenant is suspended" }, 403);
+    if (!tenantMembership)
+      return json({ error: "This account does not have access to this school" }, 403);
+    if (tenantMembership["school_status"] === "suspended")
+      return json({ error: "This school tenant is suspended" }, 403);
 
-    return json({
-      user: { email: tokenEmail, displayName: String(tenantMembership["display_name"] ?? tokenEmail) },
-      membership: {
-        role: String(tenantMembership["role"]),
-        schoolId: String(tenantMembership["school_id"]),
-        schoolName: String(tenantMembership["school_name"]),
-        subdomain: String(tenantMembership["subdomain"]),
-        status: tenantMembership["school_status"],
-        primaryColor: String(tenantMembership["primary_color"]),
-        crestUrl: tenantMembership["crest_url"] ? String(tenantMembership["crest_url"]) : null,
+    return json(
+      {
+        user: {
+          email: tokenEmail,
+          displayName: String(tenantMembership["display_name"] ?? tokenEmail),
+        },
+        membership: {
+          role: String(tenantMembership["role"]),
+          schoolId: String(tenantMembership["school_id"]),
+          schoolName: String(tenantMembership["school_name"]),
+          subdomain: String(tenantMembership["subdomain"]),
+          status: tenantMembership["school_status"],
+          primaryColor: String(tenantMembership["primary_color"]),
+          crestUrl: tenantMembership["crest_url"] ? String(tenantMembership["crest_url"]) : null,
+        },
       },
-    }, 200, { "set-cookie": authSessionCookie(bearer, request, 900) });
+      200,
+      { "set-cookie": authSessionCookie(bearer, request, 900) },
+    );
   }
 
   if (url.pathname === "/api/onboarding/applications") {
@@ -4745,23 +5761,38 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (!env.DATABASE_URL) return json({ error: "Database is not configured" }, 503);
 
     const payload: unknown = await request.json().catch(() => null);
-    if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
+    if (!payload || typeof payload !== "object")
+      return badRequest("A JSON request body is required");
     const application = payload as Record<string, unknown>;
-    const schoolName = typeof application["schoolName"] === "string" ? application["schoolName"].trim() : "";
-    const requestedSubdomain = typeof application["subdomain"] === "string" ? application["subdomain"].trim().toLowerCase() : "";
-    const contactName = typeof application["contactName"] === "string" ? application["contactName"].trim() : "";
-    const contactEmail = typeof application["email"] === "string" ? application["email"].trim().toLowerCase() : "";
-    const contactPhone = typeof application["phone"] === "string" ? application["phone"].trim() : "";
-    const primaryColor = typeof application["primaryColor"] === "string" ? application["primaryColor"] : "";
+    const schoolName =
+      typeof application["schoolName"] === "string" ? application["schoolName"].trim() : "";
+    const requestedSubdomain =
+      typeof application["subdomain"] === "string"
+        ? application["subdomain"].trim().toLowerCase()
+        : "";
+    const contactName =
+      typeof application["contactName"] === "string" ? application["contactName"].trim() : "";
+    const contactEmail =
+      typeof application["email"] === "string" ? application["email"].trim().toLowerCase() : "";
+    const contactPhone =
+      typeof application["phone"] === "string" ? application["phone"].trim() : "";
+    const primaryColor =
+      typeof application["primaryColor"] === "string" ? application["primaryColor"] : "";
     const crestUrl = application["crestUrl"] ?? null;
 
-    if (schoolName.length < 2 || schoolName.length > 160) return badRequest("School name must be 2–160 characters");
-    if (!validSubdomain(requestedSubdomain)) return badRequest("Subdomain must use lowercase letters, numbers, and hyphens");
-    if (contactName.length < 2 || contactName.length > 160) return badRequest("Contact name must be 2–160 characters");
-    if (contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) return badRequest("Enter a valid contact email");
+    if (schoolName.length < 2 || schoolName.length > 160)
+      return badRequest("School name must be 2–160 characters");
+    if (!validSubdomain(requestedSubdomain))
+      return badRequest("Subdomain must use lowercase letters, numbers, and hyphens");
+    if (contactName.length < 2 || contactName.length > 160)
+      return badRequest("Contact name must be 2–160 characters");
+    if (contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))
+      return badRequest("Enter a valid contact email");
     if (contactPhone.length > 40) return badRequest("Phone number must be 40 characters or fewer");
-    if (!validPrimaryColor(primaryColor)) return badRequest("Primary colour must be a six-digit hex value");
-    if (!validCrestUrl(crestUrl)) return badRequest("Crest must be an HTTPS URL or a supported image under 512 KB");
+    if (!validPrimaryColor(primaryColor))
+      return badRequest("Primary colour must be a six-digit hex value");
+    if (!validCrestUrl(crestUrl))
+      return badRequest("Crest must be an HTTPS URL or a supported image under 512 KB");
 
     const sql = database(env);
     try {
@@ -4776,8 +5807,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (!saved) throw new Error("Application insert returned no result");
       let notification: { sent: boolean; error?: string };
       try {
-        const adminRows = await withDatabaseContext(sql, { platformAdmin: true }, (tx) =>
-          tx`
+        const adminRows = await withDatabaseContext(
+          sql,
+          { platformAdmin: true },
+          (tx) =>
+            tx`
             select distinct lower(u.email) as email
             from memberships m
             join users u on u.id = m.user_id
@@ -4785,7 +5819,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           `,
         );
         const recipients = adminRows
-          .map((row) => String(row["email"] ?? "").trim().toLowerCase())
+          .map((row) =>
+            String(row["email"] ?? "")
+              .trim()
+              .toLowerCase(),
+          )
           .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
         notification = await sendPlatformSignupNotification(env, recipients, {
           schoolName,
@@ -4794,24 +5832,43 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           email: contactEmail,
           phone: contactPhone,
         });
-        if (!notification.sent) console.error("Super Admin was not notified about a school signup", notification.error);
+        if (!notification.sent)
+          console.error("Super Admin was not notified about a school signup", notification.error);
       } catch (error) {
-        console.error("Could not prepare a Super Admin school signup notification", error instanceof Error ? error.name : "UnknownError");
-        notification = { sent: false, error: "The application was saved, but the Super Admin notification could not be prepared." };
+        console.error(
+          "Could not prepare a Super Admin school signup notification",
+          error instanceof Error ? error.name : "UnknownError",
+        );
+        notification = {
+          sent: false,
+          error:
+            "The application was saved, but the Super Admin notification could not be prepared.",
+        };
       }
-      return json({
-        application: { id: String(saved["id"]), submittedAt: new Date(String(saved["created_at"])).toISOString() },
-        notification,
-      }, 201);
+      return json(
+        {
+          application: {
+            id: String(saved["id"]),
+            submittedAt: new Date(String(saved["created_at"])).toISOString(),
+          },
+          notification,
+        },
+        201,
+      );
     } catch (error) {
-      if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That subdomain already has an application or school" }, 409);
+      if (error instanceof Error && /unique/i.test(error.message))
+        return json({ error: "That subdomain already has an application or school" }, 409);
       throw error;
     }
   }
 
-  if (url.pathname === "/api/platform/applications" || url.pathname.startsWith("/api/platform/applications/")) {
-    if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env))) return json({ error: "Platform API is not configured" }, 503);
-    if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
+  if (
+    url.pathname === "/api/platform/applications" ||
+    url.pathname.startsWith("/api/platform/applications/")
+  ) {
+    if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env)))
+      return json({ error: "Platform API is not configured" }, 503);
+    if (!(await isPlatformAdmin(request, env))) return json({ error: "Unauthorized" }, 401);
 
     const sql = database(env);
     if (url.pathname === "/api/platform/applications" && request.method === "GET") {
@@ -4821,30 +5878,39 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         from school_onboarding_applications
         order by created_at desc
       `;
-      return json({ applications: rows.map((row) => ({
-        id: String(row["id"]),
-        schoolName: String(row["school_name"]),
-        subdomain: String(row["requested_subdomain"]),
-        applicant: String(row["contact_name"]),
-        email: String(row["contact_email"]),
-        phone: row["contact_phone"] ? String(row["contact_phone"]) : null,
-        color: String(row["primary_color"]),
-        crestUrl: row["crest_url"] ? String(row["crest_url"]) : null,
-        status: String(row["status"]),
-        submitted: new Date(String(row["created_at"])).toISOString(),
-        reviewedAt: row["reviewed_at"] ? new Date(String(row["reviewed_at"])).toISOString() : null,
-      })) });
+      return json({
+        applications: rows.map((row) => ({
+          id: String(row["id"]),
+          schoolName: String(row["school_name"]),
+          subdomain: String(row["requested_subdomain"]),
+          applicant: String(row["contact_name"]),
+          email: String(row["contact_email"]),
+          phone: row["contact_phone"] ? String(row["contact_phone"]) : null,
+          color: String(row["primary_color"]),
+          crestUrl: row["crest_url"] ? String(row["crest_url"]) : null,
+          status: String(row["status"]),
+          submitted: new Date(String(row["created_at"])).toISOString(),
+          reviewedAt: row["reviewed_at"]
+            ? new Date(String(row["reviewed_at"])).toISOString()
+            : null,
+        })),
+      });
     }
 
-    const approveMatch = url.pathname.match(/^\/api\/platform\/applications\/([0-9a-f-]+)\/approve$/i);
+    const approveMatch = url.pathname.match(
+      /^\/api\/platform\/applications\/([0-9a-f-]+)\/approve$/i,
+    );
     if (!approveMatch) return json({ error: "Not found" }, 404);
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
     try {
       const applicationId = approveMatch[1];
       const schoolId = crypto.randomUUID();
-      const rows = await withDatabaseContext(sql, { schoolId, platformAdmin: true }, (tx) =>
-        tx`
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId, platformAdmin: true },
+        (tx) =>
+          tx`
           with pending_application as materialized (
             select id, school_name, requested_subdomain, contact_name, contact_email, contact_phone, primary_color, crest_url
             from school_onboarding_applications
@@ -4890,42 +5956,56 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const school = rows[0];
       if (!school) return json({ error: "Application was not found or is no longer pending" }, 404);
       const subdomain = String(school["subdomain"]);
-      const activationUrl = env.ROOT_DOMAIN && env.ROOT_DOMAIN !== "localhost"
-        ? new URL(`https://${subdomain}.${env.ROOT_DOMAIN}/login`)
-        : new URL("/login", request.url);
+      const activationUrl =
+        env.ROOT_DOMAIN && env.ROOT_DOMAIN !== "localhost"
+          ? new URL(`https://${subdomain}.${env.ROOT_DOMAIN}/login`)
+          : new URL("/login", request.url);
       activationUrl.searchParams.set("tenant", subdomain);
       activationUrl.searchParams.set("mode", "activate");
       const tenantLoginUrl = activationUrl.toString();
-      const invitation = typeof rows[0]?.["admin_email"] === "string"
-        ? await sendSchoolAdminInvitation(
-          env,
-          String(rows[0]["admin_email"]),
-          String(rows[0]["contact_name"]),
-          String(school["name"]),
+      const invitation =
+        typeof rows[0]?.["admin_email"] === "string"
+          ? await sendSchoolAdminInvitation(
+              env,
+              String(rows[0]["admin_email"]),
+              String(rows[0]["contact_name"]),
+              String(school["name"]),
+              tenantLoginUrl,
+              String(school["primary_color"] ?? "#1f5c3b"),
+            )
+          : {
+              sent: false,
+              error:
+                "The approved application has no contact email, so the invitation cannot be sent.",
+            };
+      return json({
+        school: {
+          id: String(school["id"]),
+          name: String(school["name"]),
+          subdomain,
+          status: school["status"],
+          primaryColor: String(school["primary_color"]),
+          adminUserId: String(school["admin_user_id"]),
           tenantLoginUrl,
-          String(school["primary_color"] ?? "#1f5c3b"),
-        )
-        : { sent: false, error: "The approved application has no contact email, so the invitation cannot be sent." };
-      return json({ school: {
-        id: String(school["id"]),
-        name: String(school["name"]),
-        subdomain,
-        status: school["status"],
-        primaryColor: String(school["primary_color"]),
-        adminUserId: String(school["admin_user_id"]),
-        tenantLoginUrl,
-      }, invitation });
+        },
+        invitation,
+      });
     } catch (error) {
-      if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That school subdomain is already in use" }, 409);
+      if (error instanceof Error && /unique/i.test(error.message))
+        return json({ error: "That school subdomain is already in use" }, 409);
       throw error;
     }
   }
 
   const schoolStatusMatch = url.pathname.match(/^\/api\/platform\/schools\/([0-9a-f-]+)\/status$/i);
-  const schoolDeleteMatch = url.pathname.match(/^\/api\/platform\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
-  if (url.pathname !== "/api/platform/schools" && !schoolStatusMatch && !schoolDeleteMatch) return json({ error: "Not found" }, 404);
-  if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env))) return json({ error: "Platform API is not configured" }, 503);
-  if (!await isPlatformAdmin(request, env)) return json({ error: "Unauthorized" }, 401);
+  const schoolDeleteMatch = url.pathname.match(
+    /^\/api\/platform\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+  );
+  if (url.pathname !== "/api/platform/schools" && !schoolStatusMatch && !schoolDeleteMatch)
+    return json({ error: "Not found" }, 404);
+  if (!env.DATABASE_URL || (!env.PLATFORM_ADMIN_TOKEN && !hasAuthConfig(env)))
+    return json({ error: "Platform API is not configured" }, 503);
+  if (!(await isPlatformAdmin(request, env))) return json({ error: "Unauthorized" }, 401);
 
   const sql = database(env);
   if (schoolDeleteMatch) {
@@ -4946,13 +6026,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     `;
     const deletedSchool = rows[0];
     if (!deletedSchool) return json({ error: "School not found" }, 404);
-    return json({ deleted: true, school: { id: String(deletedSchool["id"]), subdomain: String(deletedSchool["subdomain"]) } });
+    return json({
+      deleted: true,
+      school: { id: String(deletedSchool["id"]), subdomain: String(deletedSchool["subdomain"]) },
+    });
   }
   if (schoolStatusMatch) {
     if (request.method !== "PATCH") return json({ error: "Method not allowed" }, 405);
     const payload: unknown = await request.json().catch(() => null);
-    const status = payload && typeof payload === "object" && "status" in payload ? payload.status : null;
-    if (status !== "trial" && status !== "active" && status !== "suspended") return badRequest("Status must be trial, active, or suspended");
+    const status =
+      payload && typeof payload === "object" && "status" in payload ? payload.status : null;
+    if (status !== "trial" && status !== "active" && status !== "suspended")
+      return badRequest("Status must be trial, active, or suspended");
     const rows = await sql`
       update schools set status = ${status}
       where id = ${schoolStatusMatch[1]}::uuid
@@ -4960,18 +6045,23 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     `;
     const school = rows[0];
     if (!school) return json({ error: "School not found" }, 404);
-    return json({ school: {
-      id: String(school["id"]),
-      name: String(school["name"]),
-      subdomain: String(school["subdomain"]),
-      status: school["status"],
-      createdAt: new Date(String(school["created_at"])).toISOString(),
-      primaryColor: String(school["primary_color"]),
-    } });
+    return json({
+      school: {
+        id: String(school["id"]),
+        name: String(school["name"]),
+        subdomain: String(school["subdomain"]),
+        status: school["status"],
+        createdAt: new Date(String(school["created_at"])).toISOString(),
+        primaryColor: String(school["primary_color"]),
+      },
+    });
   }
   if (request.method === "GET") {
-    const rows = await withDatabaseContext(sql, { platformAdmin: true }, (tx) =>
-      tx`
+    const rows = await withDatabaseContext(
+      sql,
+      { platformAdmin: true },
+      (tx) =>
+        tx`
         select s.id, s.name, s.subdomain, s.status, s.created_at,
                coalesce(s.primary_color, '#1f5c3b') as primary_color,
                (select count(*)::int from students st where st.school_id = s.id) as student_count,
@@ -4981,36 +6071,59 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         limit 100
       `,
     );
-    return json({ schools: rows.map((row) => ({
-      id: String(row["id"]),
-      name: String(row["name"]),
-      subdomain: String(row["subdomain"]),
-      status: row["status"],
-      createdAt: new Date(String(row["created_at"])).toISOString(),
-      primaryColor: String(row["primary_color"]),
-      students: Number(row["student_count"]),
-      admins: Number(row["admin_count"]),
-    })) satisfies SchoolRecord[] });
+    return json({
+      schools: rows.map((row) => ({
+        id: String(row["id"]),
+        name: String(row["name"]),
+        subdomain: String(row["subdomain"]),
+        status: row["status"],
+        createdAt: new Date(String(row["created_at"])).toISOString(),
+        primaryColor: String(row["primary_color"]),
+        students: Number(row["student_count"]),
+        admins: Number(row["admin_count"]),
+      })) satisfies SchoolRecord[],
+    });
   }
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const payload: unknown = await request.json().catch(() => null);
   if (!payload || typeof payload !== "object") return badRequest("A JSON request body is required");
-  const { name, subdomain, primaryColor: requestedColor } = payload as { name?: unknown; subdomain?: unknown; primaryColor?: unknown };
+  const {
+    name,
+    subdomain,
+    primaryColor: requestedColor,
+  } = payload as { name?: unknown; subdomain?: unknown; primaryColor?: unknown };
   const cleanName = typeof name === "string" ? name.trim() : "";
   const cleanSubdomain = typeof subdomain === "string" ? subdomain.trim().toLowerCase() : "";
   const primaryColor = typeof requestedColor === "string" ? requestedColor : "#1f5c3b";
-  if (cleanName.length < 2 || cleanName.length > 160) return badRequest("School name must be 2–160 characters");
-  if (!validSubdomain(cleanSubdomain)) return badRequest("Subdomain must use lowercase letters, numbers, and hyphens");
-  if (!validPrimaryColor(primaryColor)) return badRequest("Primary colour must be a six-digit hex value");
+  if (cleanName.length < 2 || cleanName.length > 160)
+    return badRequest("School name must be 2–160 characters");
+  if (!validSubdomain(cleanSubdomain))
+    return badRequest("Subdomain must use lowercase letters, numbers, and hyphens");
+  if (!validPrimaryColor(primaryColor))
+    return badRequest("Primary colour must be a six-digit hex value");
 
   try {
-    const rows = await sql`insert into schools (name, subdomain, primary_color) values (${cleanName}, ${cleanSubdomain}, ${primaryColor}) returning id, name, subdomain, status, created_at, primary_color`;
+    const rows =
+      await sql`insert into schools (name, subdomain, primary_color) values (${cleanName}, ${cleanSubdomain}, ${primaryColor}) returning id, name, subdomain, status, created_at, primary_color`;
     const school = rows[0];
     if (!school) throw new Error("School insert returned no result");
-    return json({ school: { id: String(school["id"]), name: String(school["name"]), subdomain: String(school["subdomain"]), status: school["status"], createdAt: new Date(String(school["created_at"])).toISOString(), primaryColor: String(school["primary_color"]) } satisfies SchoolRecord }, 201);
+    return json(
+      {
+        school: {
+          id: String(school["id"]),
+          name: String(school["name"]),
+          subdomain: String(school["subdomain"]),
+          status: school["status"],
+          createdAt: new Date(String(school["created_at"])).toISOString(),
+          primaryColor: String(school["primary_color"]),
+        } satisfies SchoolRecord,
+      },
+      201,
+    );
   } catch (error) {
-    if (error instanceof Error && /unique/i.test(error.message)) return json({ error: "That subdomain is already in use" }, 409);
+    if (error instanceof Error && /unique/i.test(error.message))
+      return json({ error: "That subdomain is already in use" }, 409);
     throw error;
   }
 }

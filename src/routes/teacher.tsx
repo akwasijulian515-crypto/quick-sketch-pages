@@ -1,9 +1,20 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRight, Banknote, BookOpenCheck, CalendarDays, CheckCircle2, FileText, LogOut, TicketCheck, UserRoundCheck } from "lucide-react";
+import {
+  ArrowUpRight,
+  Banknote,
+  BookOpenCheck,
+  CalendarDays,
+  CheckCircle2,
+  FileText,
+  LogOut,
+  TicketCheck,
+  UserRoundCheck,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fetchWithNeonAuth, neonAuthClient } from "../auth/client";
 import { Button } from "@/components/ui/button";
+import { DailyPaymentControls } from "@/components/daily-payment-controls";
 import { LearnerProfileEntry } from "@/components/learner-profile-entry";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { calculateMarkResult } from "@/lib/grade-calculations";
@@ -29,47 +40,109 @@ function TeacherPortal() {
     let cancelled = false;
     async function verifyTeacher() {
       try {
-        const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
-        const endpoint = tenant ? `/api/auth/context?tenant=${encodeURIComponent(tenant)}` : "/api/auth/context";
+        const tenant =
+          new URLSearchParams(window.location.search).get("tenant") ??
+          sessionStorage.getItem("hg-school");
+        const endpoint = tenant
+          ? `/api/auth/context?tenant=${encodeURIComponent(tenant)}`
+          : "/api/auth/context";
         const response = await fetchWithNeonAuth(endpoint);
-        const payload = await response.json().catch(() => null) as { membership?: { role?: string } } | null;
-        if (!response.ok || payload?.membership?.role !== "teacher") throw new Error("Teacher membership is required");
+        const payload = (await response.json().catch(() => null)) as {
+          membership?: { role?: string };
+        } | null;
+        if (!response.ok || payload?.membership?.role !== "teacher")
+          throw new Error("Teacher membership is required");
         if (!cancelled) setAllowed(true);
       } catch {
         if (!cancelled) window.location.assign(`/login${window.location.search}`);
       }
     }
     void verifyTeacher();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (!allowed) return null;
-  return <div className="relative min-h-screen bg-background font-body text-foreground">
-    <div className="pointer-events-none fixed inset-0 ambient-wash" />
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
-      <div className="flex items-center gap-2.5"><div className="grid size-9 place-items-center rounded-md bg-primary font-display text-base font-bold text-primary-foreground">S</div><div className="leading-tight"><p className="font-display text-[15px] font-bold">Teacher Portal</p><p className="text-[11px] text-muted-foreground">School workspace</p></div></div>
-      <div className="flex items-center gap-2">
-        <ThemeToggle />
-        <Button variant="outline" size="sm" onClick={() => { void neonAuthClient?.signOut(); navigate({ to: "/login" }); }}><LogOut />Sign out</Button>
-      </div>
-    </header>
-    <main className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
-        <div><h1 className="font-display text-2xl font-bold sm:text-3xl">Teacher workspace</h1><p className="mt-1 text-sm text-muted-foreground">Use your assigned classes and subjects to manage school records.</p></div>
-        <div className="flex flex-wrap gap-2">
-          {([
-            ["register", "Register", UserRoundCheck],
-            ["grades", "Grades", BookOpenCheck],
-            ["coupons", "Daily fees", TicketCheck],
-          ] as const).map(([id, label, Icon]) => <Button key={id} variant={tab === id ? "default" : "outline"} size="sm" onClick={() => setTab(id)}><Icon />{label}</Button>)}
-          <Button asChild size="sm" variant="outline"><Link to="/terminal-reports"><FileText />Reports</Link></Button>
-          <Button asChild size="sm" variant="outline"><Link to="/teacher/promotion"><ArrowUpRight />Promotion</Link></Button>
+  return (
+    <div className="relative min-h-screen bg-background font-body text-foreground">
+      <div className="pointer-events-none fixed inset-0 ambient-wash" />
+      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
+        <div className="flex items-center gap-2.5">
+          <div className="grid size-9 place-items-center rounded-md bg-primary font-display text-base font-bold text-primary-foreground">
+            S
+          </div>
+          <div className="leading-tight">
+            <p className="font-display text-[15px] font-bold">Teacher Portal</p>
+            <p className="text-[11px] text-muted-foreground">School workspace</p>
+          </div>
         </div>
-      </div>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void neonAuthClient?.signOut();
+              navigate({ to: "/login" });
+            }}
+          >
+            <LogOut />
+            Sign out
+          </Button>
+        </div>
+      </header>
+      <main className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div>
+            <h1 className="font-display text-2xl font-bold sm:text-3xl">Teacher workspace</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Use your assigned classes and subjects to manage school records.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["register", "Register", UserRoundCheck],
+                ["grades", "Grades", BookOpenCheck],
+                ["coupons", "Daily fees", TicketCheck],
+              ] as const
+            ).map(([id, label, Icon]) => (
+              <Button
+                key={id}
+                variant={tab === id ? "default" : "outline"}
+                size="sm"
+                onClick={() => setTab(id)}
+              >
+                <Icon />
+                {label}
+              </Button>
+            ))}
+            <Button asChild size="sm" variant="outline">
+              <Link to="/terminal-reports">
+                <FileText />
+                Reports
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/teacher/promotion">
+                <ArrowUpRight />
+                Promotion
+              </Link>
+            </Button>
+          </div>
+        </div>
 
-      {tab === "grades" ? <TeacherMarkEntry /> : tab === "register" ? <AttendanceRegister /> : <TeacherDailyPayments />}
-    </main>
-  </div>;
+        {tab === "grades" ? (
+          <TeacherMarkEntry />
+        ) : tab === "register" ? (
+          <AttendanceRegister />
+        ) : (
+          <TeacherDailyPayments />
+        )}
+      </main>
+    </div>
+  );
 }
 
 type MarkAssignment = {
@@ -108,23 +181,34 @@ const markFields = [
 
 async function teacherApi<T>(path: string, init?: RequestInit): Promise<T> {
   const url = new URL(path, window.location.origin);
-  const tenant = new URLSearchParams(window.location.search).get("tenant") ?? sessionStorage.getItem("hg-school");
+  const tenant =
+    new URLSearchParams(window.location.search).get("tenant") ??
+    sessionStorage.getItem("hg-school");
   if (tenant && !url.searchParams.has("tenant")) url.searchParams.set("tenant", tenant);
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   const response = await fetchWithNeonAuth(`${url.pathname}${url.search}`, { ...init, headers });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
-      ? payload.error
-      : "The school request failed";
+    const message =
+      payload &&
+      typeof payload === "object" &&
+      "error" in payload &&
+      typeof payload.error === "string"
+        ? payload.error
+        : "The school request failed";
     throw new Error(message);
   }
   return payload as T;
 }
 
 type AttendanceStatus = "present" | "late" | "absent" | "excused";
-type AttendanceClass = { id: string; name: string; academic_year_name: string; student_count: number };
+type AttendanceClass = {
+  id: string;
+  name: string;
+  academic_year_name: string;
+  student_count: number;
+};
 type AttendanceStudent = {
   id: string;
   first_name: string;
@@ -155,8 +239,13 @@ type TeacherDailyPayment = {
   class_id: string;
   class_name: string;
   academic_year_name: string;
-  fee_amount: number | string;
-  currency: string;
+  fee_amount: number | string | null;
+  studies_fee_amount: number | string | null;
+  feeding_fee_amount: number | string | null;
+  daily_fee_configured: boolean;
+  feeding_fee_configured: boolean;
+  daily_fee_split_enabled: boolean;
+  currency: string | null;
   attendance_status: string | null;
   payment_id: string | null;
   method: string | null;
@@ -175,18 +264,25 @@ function TeacherDailyPayments() {
   const [method, setMethod] = useState("cash");
   const [savingStudentId, setSavingStudentId] = useState("");
   const [notice, setNotice] = useState("");
+  const [canRecordDailyFees, setCanRecordDailyFees] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError("");
-    void teacherApi<{ students: TeacherDailyPayment[]; holiday?: SchoolHoliday }>(
-      `/api/school/daily-payments?date=${encodeURIComponent(date)}`,
-    )
-      .then((result) => {
+    void Promise.all([
+      teacherApi<{ students: TeacherDailyPayment[]; holiday?: SchoolHoliday }>(
+        `/api/school/daily-payments?date=${encodeURIComponent(date)}`,
+      ),
+      teacherApi<{ class_teachers_can_record_daily_fees: boolean }>(
+        "/api/school/workflow-settings",
+      ),
+    ])
+      .then(([result, settings]) => {
         if (!cancelled) {
           setStudents(result.students);
           setHoliday(result.holiday ?? null);
+          setCanRecordDailyFees(settings.class_teachers_can_record_daily_fees);
         }
       })
       .catch((cause: unknown) => {
@@ -205,10 +301,15 @@ function TeacherDailyPayments() {
   }, [date, retry]);
 
   const classes = useMemo(
-    () => Array.from(new Map(students.map((student) => [
-      student.class_id,
-      { id: student.class_id, name: student.class_name, year: student.academic_year_name },
-    ])).values()).sort((a, b) => a.name.localeCompare(b.name) || a.year.localeCompare(b.year)),
+    () =>
+      Array.from(
+        new Map(
+          students.map((student) => [
+            student.class_id,
+            { id: student.class_id, name: student.class_name, year: student.academic_year_name },
+          ]),
+        ).values(),
+      ).sort((a, b) => a.name.localeCompare(b.name) || a.year.localeCompare(b.year)),
     [students],
   );
   const visible = students.filter(
@@ -216,27 +317,31 @@ function TeacherDailyPayments() {
   );
   const paidCount = visible.filter((student) => student.payment_id).length;
 
-  async function recordDailyFee(student: TeacherDailyPayment) {
+  async function recordDailyFee(
+    student: TeacherDailyPayment,
+    schoolDays: number,
+    includeFeeding: boolean,
+  ) {
     setSavingStudentId(student.student_id);
     setError("");
     setNotice("");
     try {
-      const result = await teacherApi<{ payment: { id: string; method: string; coupon_code: string } }>(
-        "/api/school/daily-payments",
-        {
-          method: "POST",
-          body: JSON.stringify({ student_id: student.student_id, date, method }),
-        },
+      const result = await teacherApi<{
+        payments: { id: string; method: string; coupon_code: string }[];
+      }>("/api/school/daily-payments", {
+        method: "POST",
+        body: JSON.stringify({
+          student_id: student.student_id,
+          date,
+          method,
+          school_days: schoolDays,
+          include_feeding: includeFeeding,
+        }),
+      });
+      setNotice(
+        `${result.payments.length} school day(s) recorded for ${student.first_name} ${student.last_name}.`,
       );
-      setStudents((current) => current.map((item) => item.student_id === student.student_id
-        ? {
-          ...item,
-          payment_id: result.payment.id,
-          method: result.payment.method,
-          coupon_code: result.payment.coupon_code,
-        }
-        : item));
-      setNotice(`Daily fee recorded for ${student.first_name} ${student.last_name}.`);
+      setRetry((current) => current + 1);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not record daily fee");
     } finally {
@@ -244,124 +349,262 @@ function TeacherDailyPayments() {
     }
   }
 
-  return <section className="glass-panel mt-5 overflow-hidden rounded-lg">
-    <div className="flex flex-col gap-4 border-b border-border p-4 sm:flex-row sm:items-end sm:justify-between sm:p-5">
-      <div>
-        <div className="mb-2 grid size-9 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><Banknote className="size-4" /></div>
-        <h2 className="font-display text-xl font-bold">Daily fees and coupons</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Record the configured daily fee for learners in your assigned class. Each collection is saved as a verified payment and appears in Finance.
-        </p>
+  return (
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg">
+      <div className="flex flex-col gap-4 border-b border-border p-4 sm:flex-row sm:items-end sm:justify-between sm:p-5">
+        <div>
+          <div className="mb-2 grid size-9 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">
+            <Banknote className="size-4" />
+          </div>
+          <h2 className="font-display text-xl font-bold">Daily fees and coupons</h2>
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            {canRecordDailyFees
+              ? "Record one or more unpaid school days for learners in your assigned classes."
+              : "Read-only daily payment status for your assigned classes. Ask your School Admin to enable teacher collections if needed."}
+          </p>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <label className="space-y-1 text-xs font-medium text-muted-foreground">
+            Date
+            <input
+              type="date"
+              max={localDateString(new Date())}
+              value={date}
+              onChange={(event) => event.target.value && setDate(event.target.value)}
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            />
+          </label>
+          <label className="space-y-1 text-xs font-medium text-muted-foreground">
+            Class
+            <select
+              value={classFilter}
+              onChange={(event) => setClassFilter(event.target.value)}
+              className="h-10 min-w-48 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            >
+              <option value="all">All assigned classes</option>
+              {classes.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} · {item.year}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <label className="space-y-1 text-xs font-medium text-muted-foreground">
-          Date
-          <input
-            type="date"
-            max={localDateString(new Date())}
-            value={date}
-            onChange={(event) => event.target.value && setDate(event.target.value)}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-          />
-        </label>
-        <label className="space-y-1 text-xs font-medium text-muted-foreground">
-          Class
+      <div className="flex flex-wrap gap-2 px-4 pt-4 sm:px-5">
+        <span className="rounded-md bg-secondary px-2.5 py-1 text-xs text-secondary-foreground ring-1 ring-border">
+          {loading ? "—" : `${paidCount} paid`}
+        </span>
+        <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+          {loading ? "—" : `${visible.length - paidCount} unpaid`}
+        </span>
+        <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+          {date}
+        </span>
+      </div>
+      <div className="flex flex-col gap-3 px-4 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <p className="text-xs text-muted-foreground">
+          Confirm only after receiving the configured amount. Each day is saved as a payment and
+          clearance coupon, not an official receipt.
+        </p>
+        <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          Payment method
           <select
-            value={classFilter}
-            onChange={(event) => setClassFilter(event.target.value)}
-            className="h-10 min-w-48 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            value={method}
+            onChange={(event) => setMethod(event.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
           >
-            <option value="all">All assigned classes</option>
-            {classes.map((item) => (
-              <option key={item.id} value={item.id}>{item.name} · {item.year}</option>
-            ))}
+            <option value="cash">Cash</option>
+            <option value="mobile_money">Mobile money</option>
+            <option value="bank_transfer">Bank transfer</option>
+            <option value="card">Card</option>
+            <option value="other">Other</option>
           </select>
         </label>
       </div>
-    </div>
-    <div className="flex flex-wrap gap-2 px-4 pt-4 sm:px-5">
-      <span className="rounded-md bg-secondary px-2.5 py-1 text-xs text-secondary-foreground ring-1 ring-border">{loading ? "—" : `${paidCount} paid`}</span>
-      <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">{loading ? "—" : `${visible.length - paidCount} unpaid`}</span>
-      <span className="rounded-md bg-muted px-2.5 py-1 text-xs text-muted-foreground">{date}</span>
-    </div>
-    <div className="flex flex-col gap-3 px-4 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-    <p className="text-xs text-muted-foreground">Confirm only after receiving the configured amount. This records a payment and daily clearance coupon, not an official receipt.</p>
-    <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-      Payment method
-      <select value={method} onChange={(event) => setMethod(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground">
-        <option value="cash">Cash</option>
-        <option value="mobile_money">Mobile money</option>
-        <option value="bank_transfer">Bank transfer</option>
-        <option value="card">Card</option>
-        <option value="other">Other</option>
-      </select>
-    </label>
-    </div>
-    {notice && <p role="status" className="mx-4 mt-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800 sm:mx-5">{notice}</p>}
-    {holiday && !loading && <p role="status" className="mx-4 mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-900 sm:mx-5">{holiday.name} is a school holiday. Daily fees are not collected on this date; existing recorded payments remain in Finance.</p>}
-    {error ? (
-      <div role="alert" className="p-8 text-center">
-        <p className="text-sm text-destructive">{error}</p>
-        <Button variant="outline" size="sm" className="mt-3" onClick={() => setRetry((count) => count + 1)}>Retry</Button>
-      </div>
-    ) : loading ? (
-      <p className="py-10 text-center text-sm text-muted-foreground">Loading daily-fee records…</p>
-    ) : holiday ? (
-      <p className="py-10 text-center text-sm text-muted-foreground">No daily-fee register is available on a school holiday.</p>
-    ) : visible.length === 0 ? (
-      <div className="p-10 text-center">
-        <TicketCheck className="mx-auto size-7 text-primary/55" />
-        <h3 className="mt-3 font-display text-lg font-bold">{classes.length ? "No daily-fee records" : "No assigned classes"}</h3>
-        <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
-          {classes.length ? "There are no students with a configured daily fee in this class for the selected date." : "Ask your School Admin to assign you to a class with daily-fee records."}
+      {notice && (
+        <p
+          role="status"
+          className="mx-4 mt-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800 sm:mx-5"
+        >
+          {notice}
         </p>
-      </div>
-    ) : (
-      <>
-        <div className="divide-y divide-border/70 md:hidden">
-          {visible.map((student) => (
-            <article key={student.student_id} className="space-y-2 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{student.first_name} {student.last_name}</p>
-                  <p className="font-mono text-[11px] text-muted-foreground">{student.admission_number} · {student.class_name}</p>
+      )}
+      {holiday && !loading && (
+        <p
+          role="status"
+          className="mx-4 mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-900 sm:mx-5"
+        >
+          {holiday.name} is a school holiday. Daily fees are not collected on this date; existing
+          recorded payments remain in Finance.
+        </p>
+      )}
+      {error ? (
+        <div role="alert" className="p-8 text-center">
+          <p className="text-sm text-destructive">{error}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={() => setRetry((count) => count + 1)}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : loading ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          Loading daily-fee records…
+        </p>
+      ) : holiday ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          No daily-fee register is available on a school holiday.
+        </p>
+      ) : visible.length === 0 ? (
+        <div className="p-10 text-center">
+          <TicketCheck className="mx-auto size-7 text-primary/55" />
+          <h3 className="mt-3 font-display text-lg font-bold">
+            {classes.length ? "No daily-fee records" : "No assigned classes"}
+          </h3>
+          <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
+            {classes.length
+              ? "There are no active enrolled students in this class for the selected date."
+              : "Ask your School Admin to assign you to a class."}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="divide-y divide-border/70 md:hidden">
+            {visible.map((student) => (
+              <article key={student.student_id} className="space-y-2 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium">
+                      {student.first_name} {student.last_name}
+                    </p>
+                    <p className="font-mono text-[11px] text-muted-foreground">
+                      {student.admission_number} · {student.class_name}
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${student.payment_id ? "bg-emerald-600/10 text-emerald-700" : "bg-muted text-muted-foreground"}`}
+                  >
+                    {student.payment_id ? "Paid" : "Unpaid"}
+                  </span>
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${student.payment_id ? "bg-emerald-600/10 text-emerald-700" : "bg-muted text-muted-foreground"}`}>
-                  {student.payment_id ? "Paid" : "Unpaid"}
-                </span>
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
-                <span>Attendance: <span className="capitalize">{student.attendance_status ?? "Not marked"}</span></span>
-                <span>{student.currency} {Number(student.fee_amount).toFixed(2)}</span>
-              </div>
-              {student.payment_id && <p className="font-mono text-xs text-primary">Coupon: {student.coupon_code ?? "—"}</p>}
-              {!student.payment_id && <Button size="sm" className="mt-1" disabled={savingStudentId !== ""} onClick={() => void recordDailyFee(student)}>{savingStudentId === student.student_id ? "Recording..." : "Confirm fee received"}</Button>}
-            </article>
-          ))}
-        </div>
-        <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="bg-muted/60 text-xs text-muted-foreground">
-              <tr>{["Student", "Class", "Attendance", "Daily fee", "Payment", "Coupon", "Action"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr>
-            </thead>
-            <tbody className="divide-y divide-border/70">
-              {visible.map((student) => (
-                <tr key={student.student_id}>
-                  <td className="px-5 py-3"><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></td>
-                  <td className="px-5 py-3">{student.class_name}</td>
-                  <td className="px-5 py-3 capitalize">{student.attendance_status ?? "Not marked"}</td>
-                  <td className="px-5 py-3">{student.currency} {Number(student.fee_amount).toFixed(2)}</td>
-                  <td className="px-5 py-3">{student.payment_id ? <span className="text-emerald-700">Paid</span> : <span className="text-muted-foreground">Unpaid</span>}</td>
-                  <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{student.coupon_code ?? "—"}</td>
-                  <td className="px-5 py-3">{student.payment_id ? "—" : <Button size="sm" disabled={savingStudentId !== ""} onClick={() => void recordDailyFee(student)}>{savingStudentId === student.student_id ? "Recording..." : "Confirm received"}</Button>}</td>
+                <div className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                  <span>
+                    Attendance:{" "}
+                    <span className="capitalize">{student.attendance_status ?? "Not marked"}</span>
+                  </span>
+                  <span>
+                    {student.daily_fee_configured
+                      ? student.daily_fee_split_enabled
+                        ? `Studies ${student.currency} ${Number(student.studies_fee_amount).toFixed(2)}${student.feeding_fee_configured ? ` · Feeding ${student.currency} ${Number(student.feeding_fee_amount).toFixed(2)} optional` : ""}`
+                        : `${student.currency} ${Number(student.fee_amount).toFixed(2)}`
+                      : "Daily fee not configured"}
+                  </span>
+                </div>
+                {student.payment_id && (
+                  <p className="font-mono text-xs text-primary">
+                    Coupon: {student.coupon_code ?? "—"}
+                  </p>
+                )}
+                <DailyPaymentControls
+                  paid={Boolean(student.payment_id)}
+                  dailyFeeConfigured={student.daily_fee_configured}
+                  splitEnabled={student.daily_fee_split_enabled}
+                  feedingConfigured={student.feeding_fee_configured}
+                  canRecord={canRecordDailyFees}
+                  busy={savingStudentId === student.student_id}
+                  onRecord={(days, feeding) => void recordDailyFee(student, days, feeding)}
+                />
+              </article>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="bg-muted/60 text-xs text-muted-foreground">
+                <tr>
+                  {[
+                    "Student",
+                    "Class",
+                    "Attendance",
+                    "Daily fee",
+                    "Payment",
+                    "Coupon",
+                    "Action",
+                  ].map((label) => (
+                    <th key={label} className="px-5 py-3 font-medium">
+                      {label}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </>
-    )}
-  </section>;
+              </thead>
+              <tbody className="divide-y divide-border/70">
+                {visible.map((student) => (
+                  <tr key={student.student_id}>
+                    <td className="px-5 py-3">
+                      <p className="font-medium">
+                        {student.first_name} {student.last_name}
+                      </p>
+                      <p className="font-mono text-[11px] text-muted-foreground">
+                        {student.admission_number}
+                      </p>
+                    </td>
+                    <td className="px-5 py-3">{student.class_name}</td>
+                    <td className="px-5 py-3 capitalize">
+                      {student.attendance_status ?? "Not marked"}
+                    </td>
+                    <td className="px-5 py-3">
+                      {student.daily_fee_configured ? (
+                        student.daily_fee_split_enabled ? (
+                          <>
+                            {student.currency} {Number(student.studies_fee_amount).toFixed(2)}{" "}
+                            studies
+                            {student.feeding_fee_configured && (
+                              <p className="text-xs text-muted-foreground">
+                                {student.currency} {Number(student.feeding_fee_amount).toFixed(2)}{" "}
+                                optional feeding
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          `${student.currency} ${Number(student.fee_amount).toFixed(2)}`
+                        )
+                      ) : (
+                        <span className="text-muted-foreground">Not configured</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3">
+                      {student.payment_id ? (
+                        <span className="text-emerald-700">Paid</span>
+                      ) : (
+                        <span className="text-muted-foreground">Unpaid</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 font-mono text-xs text-muted-foreground">
+                      {student.coupon_code ?? "—"}
+                    </td>
+                    <td className="px-5 py-3">
+                      <DailyPaymentControls
+                        paid={Boolean(student.payment_id)}
+                        dailyFeeConfigured={student.daily_fee_configured}
+                        splitEnabled={student.daily_fee_split_enabled}
+                        feedingConfigured={student.feeding_fee_configured}
+                        canRecord={canRecordDailyFees}
+                        busy={savingStudentId === student.student_id}
+                        onRecord={(days, feeding) => void recordDailyFee(student, days, feeding)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
 }
 
 function AttendanceRegister() {
@@ -381,16 +624,22 @@ function AttendanceRegister() {
   const monthStart = new Date(yearNumber!, monthNumber! - 1, 1);
   const calendarCells: (number | null)[] = [
     ...Array.from({ length: monthStart.getDay() }, () => null),
-    ...Array.from({ length: new Date(yearNumber!, monthNumber!, 0).getDate() }, (_, index) => index + 1),
+    ...Array.from(
+      { length: new Date(yearNumber!, monthNumber!, 0).getDate() },
+      (_, index) => index + 1,
+    ),
   ];
   const dayByDate = new Map(days.map((day) => [day.attendance_date, day]));
-  const totals = days.reduce((result, day) => ({
-    present: result.present + Number(day.present_count),
-    late: result.late + Number(day.late_count),
-    absent: result.absent + Number(day.absent_count),
-    excused: result.excused + Number(day.excused_count),
-    sessions: result.sessions + 1,
-  }), { present: 0, late: 0, absent: 0, excused: 0, sessions: 0 });
+  const totals = days.reduce(
+    (result, day) => ({
+      present: result.present + Number(day.present_count),
+      late: result.late + Number(day.late_count),
+      absent: result.absent + Number(day.absent_count),
+      excused: result.excused + Number(day.excused_count),
+      sessions: result.sessions + 1,
+    }),
+    { present: 0, late: 0, absent: 0, excused: 0, sessions: 0 },
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -401,10 +650,17 @@ function AttendanceRegister() {
         setClassId((current) => current || result.classes[0]?.id || "");
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load assigned classes");
+        if (!cancelled)
+          setError(
+            loadError instanceof Error ? loadError.message : "Could not load assigned classes",
+          );
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -419,7 +675,11 @@ function AttendanceRegister() {
     setError("");
     setHoliday(null);
     void Promise.all([
-      teacherApi<{ session_id: string | null; students: AttendanceStudent[]; holiday?: SchoolHoliday }>(
+      teacherApi<{
+        session_id: string | null;
+        students: AttendanceStudent[];
+        holiday?: SchoolHoliday;
+      }>(
         `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
       ),
       teacherApi<{ days: AttendanceDay[] }>(
@@ -438,17 +698,25 @@ function AttendanceRegister() {
           setError(loadError instanceof Error ? loadError.message : "Could not load attendance");
         }
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [classId, date, month]);
 
   function setStudentStatus(studentId: string, status: AttendanceStatus) {
-    setStudents((current) => current.map((student) => student.id === studentId ? { ...student, status } : student));
+    setStudents((current) =>
+      current.map((student) => (student.id === studentId ? { ...student, status } : student)),
+    );
     setNotice("");
   }
 
   function setStudentNote(studentId: string, note: string) {
-    setStudents((current) => current.map((student) => student.id === studentId ? { ...student, note } : student));
+    setStudents((current) =>
+      current.map((student) => (student.id === studentId ? { ...student, note } : student)),
+    );
   }
 
   async function saveRegister() {
@@ -472,7 +740,9 @@ function AttendanceRegister() {
           })),
         }),
       });
-      setNotice(`Attendance saved for ${result.saved_count} learner${result.saved_count === 1 ? "" : "s"}.`);
+      setNotice(
+        `Attendance saved for ${result.saved_count} learner${result.saved_count === 1 ? "" : "s"}.`,
+      );
       const [register, monthly] = await Promise.all([
         teacherApi<{ students: AttendanceStudent[] }>(
           `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
@@ -498,98 +768,292 @@ function AttendanceRegister() {
     { value: "excused", label: "Excused", selected: "bg-sky-600 text-white" },
   ];
 
-  return <div className="mt-5 space-y-4">
-    <section className="glass-panel rounded-lg p-4 sm:p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <label className="space-y-1 text-xs font-medium text-muted-foreground">Class
-          <select value={classId} onChange={(event) => setClassId(event.target.value)} className="h-10 w-full min-w-64 rounded-md border border-input bg-background px-3 text-sm text-foreground">
-            <option value="">Select assigned class</option>
-            {classes.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.academic_year_name}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1 text-xs font-medium text-muted-foreground">Register date
-          <input type="date" value={date} onChange={(event) => { if (event.target.value) setDate(event.target.value); }} className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" />
-        </label>
-      </div>
-      {error && <p role="alert" className="mt-3 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
-      {notice && <p role="status" className="mt-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
-    </section>
+  return (
+    <div className="mt-5 space-y-4">
+      <section className="glass-panel rounded-lg p-4 sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <label className="space-y-1 text-xs font-medium text-muted-foreground">
+            Class
+            <select
+              value={classId}
+              onChange={(event) => setClassId(event.target.value)}
+              className="h-10 w-full min-w-64 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            >
+              <option value="">Select assigned class</option>
+              {classes.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} · {item.academic_year_name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-xs font-medium text-muted-foreground">
+            Register date
+            <input
+              type="date"
+              value={date}
+              onChange={(event) => {
+                if (event.target.value) setDate(event.target.value);
+              }}
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            />
+          </label>
+        </div>
+        {error && (
+          <p
+            role="alert"
+            className="mt-3 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive"
+          >
+            {error}
+          </p>
+        )}
+        {notice && (
+          <p
+            role="status"
+            className="mt-3 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800"
+          >
+            {notice}
+          </p>
+        )}
+      </section>
 
-    {!loading && classes.length === 0 ? (
-      <section className="glass-panel rounded-lg border border-dashed border-border p-10 text-center">
-        <UserRoundCheck className="mx-auto size-7 text-primary/55" />
-        <h2 className="mt-3 font-display text-lg font-bold">No class teacher assignments yet</h2>
-        <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">Ask your School Admin to assign you as class teacher before you take attendance.</p>
-      </section>
-    ) : !loading && classId && holiday ? (
-      <section className="glass-panel rounded-lg border border-amber-500/30 p-10 text-center">
-        <CalendarDays className="mx-auto size-7 text-amber-700" />
-        <h2 className="mt-3 font-display text-lg font-bold">{holiday.name}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">This date is marked as a school holiday. Attendance cannot be recorded and it is excluded from open-day totals.</p>
-      </section>
-    ) : !loading && classId && students.length === 0 ? (
-      <section className="glass-panel rounded-lg border border-dashed border-border p-10 text-center">
-        <h2 className="font-display text-lg font-bold">No active learners for this date</h2>
-        <p className="mt-1 text-sm text-muted-foreground">This class has no active enrollment records for the selected date.</p>
-      </section>
-    ) : (
-      <section className="glass-panel overflow-hidden rounded-lg">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
-          <div><h2 className="font-display text-lg font-bold">{selectedClass?.name ?? "Daily register"}</h2><p className="text-xs text-muted-foreground">{date} · {students.length} active learners</p></div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" disabled={loading || students.length === 0} onClick={() => setStudents((current) => current.map((student) => ({ ...student, status: "present" })))}><CheckCircle2 />Mark all present</Button>
-            <Button type="button" size="sm" disabled={saving || loading || students.length === 0 || students.some((student) => student.status === null)} onClick={() => void saveRegister()}>{saving ? "Saving..." : "Save register"}</Button>
+      {!loading && classes.length === 0 ? (
+        <section className="glass-panel rounded-lg border border-dashed border-border p-10 text-center">
+          <UserRoundCheck className="mx-auto size-7 text-primary/55" />
+          <h2 className="mt-3 font-display text-lg font-bold">No class teacher assignments yet</h2>
+          <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
+            Ask your School Admin to assign you as class teacher before you take attendance.
+          </p>
+        </section>
+      ) : !loading && classId && holiday ? (
+        <section className="glass-panel rounded-lg border border-amber-500/30 p-10 text-center">
+          <CalendarDays className="mx-auto size-7 text-amber-700" />
+          <h2 className="mt-3 font-display text-lg font-bold">{holiday.name}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This date is marked as a school holiday. Attendance cannot be recorded and it is
+            excluded from open-day totals.
+          </p>
+        </section>
+      ) : !loading && classId && students.length === 0 ? (
+        <section className="glass-panel rounded-lg border border-dashed border-border p-10 text-center">
+          <h2 className="font-display text-lg font-bold">No active learners for this date</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This class has no active enrollment records for the selected date.
+          </p>
+        </section>
+      ) : (
+        <section className="glass-panel overflow-hidden rounded-lg">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
+            <div>
+              <h2 className="font-display text-lg font-bold">
+                {selectedClass?.name ?? "Daily register"}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {date} · {students.length} active learners
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={loading || students.length === 0}
+                onClick={() =>
+                  setStudents((current) =>
+                    current.map((student) => ({ ...student, status: "present" })),
+                  )
+                }
+              >
+                <CheckCircle2 />
+                Mark all present
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  saving ||
+                  loading ||
+                  students.length === 0 ||
+                  students.some((student) => student.status === null)
+                }
+                onClick={() => void saveRegister()}
+              >
+                {saving ? "Saving..." : "Save register"}
+              </Button>
+            </div>
+          </div>
+          {loading ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              Loading attendance register...
+            </p>
+          ) : (
+            <>
+              <div className="divide-y divide-border/70 md:hidden">
+                {students.map((student) => (
+                  <article key={student.id} className="p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium">
+                          {student.first_name} {student.last_name}
+                        </p>
+                        <p className="font-mono text-[11px] text-muted-foreground">
+                          {student.admission_number}
+                        </p>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {student.status
+                          ? statusOptions.find((item) => item.value === student.status)?.label
+                          : "Not marked"}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {statusOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          aria-pressed={student.status === option.value}
+                          onClick={() => setStudentStatus(student.id, option.value)}
+                          className={`min-h-11 rounded-md px-3 text-sm font-medium ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground"}`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      aria-label={`Note for ${student.first_name} ${student.last_name}`}
+                      value={student.note}
+                      maxLength={500}
+                      onChange={(event) => setStudentNote(student.id, event.target.value)}
+                      placeholder="Optional note"
+                      className="mt-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    />
+                  </article>
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full min-w-[800px] text-left text-sm">
+                  <thead className="bg-muted/60 text-xs text-muted-foreground">
+                    <tr>
+                      {["Learner", "Attendance", "Note"].map((label) => (
+                        <th key={label} className="px-5 py-3 font-medium">
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/70">
+                    {students.map((student) => (
+                      <tr key={student.id}>
+                        <td className="px-5 py-3">
+                          <p className="font-medium">
+                            {student.first_name} {student.last_name}
+                          </p>
+                          <p className="font-mono text-[11px] text-muted-foreground">
+                            {student.admission_number}
+                          </p>
+                        </td>
+                        <td className="px-5 py-3">
+                          <div className="flex flex-wrap gap-1.5">
+                            {statusOptions.map((option) => (
+                              <button
+                                key={option.value}
+                                type="button"
+                                aria-pressed={student.status === option.value}
+                                onClick={() => setStudentStatus(student.id, option.value)}
+                                className={`min-h-9 rounded-full px-3 text-xs font-medium ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground hover:bg-muted-foreground/15"}`}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3">
+                          <input
+                            aria-label={`Note for ${student.first_name} ${student.last_name}`}
+                            value={student.note}
+                            maxLength={500}
+                            onChange={(event) => setStudentNote(student.id, event.target.value)}
+                            placeholder="Optional note"
+                            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      <section className="glass-panel rounded-lg p-4 sm:p-5">
+        <div className="flex items-center gap-2">
+          <CalendarDays className="size-5 text-primary" />
+          <div>
+            <h2 className="font-display text-lg font-bold">Monthly attendance</h2>
+            <p className="text-xs text-muted-foreground">
+              {monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" })} ·{" "}
+              {totals.sessions} register day(s)
+            </p>
           </div>
         </div>
-        {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading attendance register...</p> : (
+        {loading ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Loading monthly summary...
+          </p>
+        ) : !classId ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Select a class to view its monthly attendance.
+          </p>
+        ) : (
           <>
-            <div className="divide-y divide-border/70 md:hidden">
-              {students.map((student) => <article key={student.id} className="p-4">
-                <div className="flex items-start justify-between gap-2"><div><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></div><span className="text-xs text-muted-foreground">{student.status ? statusOptions.find((item) => item.value === student.status)?.label : "Not marked"}</span></div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  {statusOptions.map((option) => <button key={option.value} type="button" aria-pressed={student.status === option.value} onClick={() => setStudentStatus(student.id, option.value)} className={`min-h-11 rounded-md px-3 text-sm font-medium ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground"}`}>{option.label}</button>)}
+            <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+              {[
+                ["Present", totals.present],
+                ["Late", totals.late],
+                ["Absent", totals.absent],
+                ["Excused", totals.excused],
+              ].map(([label, count]) => (
+                <div key={label} className="rounded-md bg-muted/60 px-2 py-2">
+                  <p className="text-[11px] text-muted-foreground">{label}</p>
+                  <p className="font-display text-lg font-bold">{count}</p>
                 </div>
-                <input aria-label={`Note for ${student.first_name} ${student.last_name}`} value={student.note} maxLength={500} onChange={(event) => setStudentNote(student.id, event.target.value)} placeholder="Optional note" className="mt-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm" />
-              </article>)}
+              ))}
             </div>
-            <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[800px] text-left text-sm">
-                <thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["Learner", "Attendance", "Note"].map((label) => <th key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead>
-                <tbody className="divide-y divide-border/70">{students.map((student) => <tr key={student.id}>
-                  <td className="px-5 py-3"><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></td>
-                  <td className="px-5 py-3"><div className="flex flex-wrap gap-1.5">{statusOptions.map((option) => <button key={option.value} type="button" aria-pressed={student.status === option.value} onClick={() => setStudentStatus(student.id, option.value)} className={`min-h-9 rounded-full px-3 text-xs font-medium ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground hover:bg-muted-foreground/15"}`}>{option.label}</button>)}</div></td>
-                  <td className="px-5 py-3"><input aria-label={`Note for ${student.first_name} ${student.last_name}`} value={student.note} maxLength={500} onChange={(event) => setStudentNote(student.id, event.target.value)} placeholder="Optional note" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" /></td>
-                </tr>)}</tbody>
-              </table>
+            <div className="mt-4 grid grid-cols-7 gap-1 text-center">
+              {weekdays.map((weekday) => (
+                <p key={weekday} className="py-1 text-[11px] font-medium text-muted-foreground">
+                  {weekday}
+                </p>
+              ))}
+              {calendarCells.map((day, index) => {
+                if (day === null) return <span key={`blank-${index}`} />;
+                const calendarDate = `${month}-${String(day).padStart(2, "0")}`;
+                const summary = dayByDate.get(calendarDate);
+                return (
+                  <button
+                    key={calendarDate}
+                    type="button"
+                    onClick={() => setDate(calendarDate)}
+                    aria-label={`${calendarDate}${summary ? `, ${summary.marked_count} marked` : ", no register"}`}
+                    className={`min-h-12 rounded-md border px-1 py-1 text-xs ${date === calendarDate ? "border-primary bg-primary text-primary-foreground" : summary ? "border-emerald-600/25 bg-emerald-600/5 text-foreground hover:bg-emerald-600/10" : "border-transparent bg-muted/30 text-muted-foreground hover:bg-muted"}`}
+                  >
+                    <span className="block font-medium">{day}</span>
+                    {summary && (
+                      <span className="block truncate text-[9px]">
+                        {summary.present_count}P · {summary.absent_count}A
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </>
         )}
       </section>
-    )}
-
-    <section className="glass-panel rounded-lg p-4 sm:p-5">
-      <div className="flex items-center gap-2"><CalendarDays className="size-5 text-primary" /><div><h2 className="font-display text-lg font-bold">Monthly attendance</h2><p className="text-xs text-muted-foreground">{monthStart.toLocaleDateString(undefined, { month: "long", year: "numeric" })} · {totals.sessions} register day(s)</p></div></div>
-      {loading ? <p className="py-6 text-center text-sm text-muted-foreground">Loading monthly summary...</p> : !classId ? <p className="py-6 text-center text-sm text-muted-foreground">Select a class to view its monthly attendance.</p> : (
-        <>
-          <div className="mt-4 grid grid-cols-4 gap-2 text-center">
-            {[["Present", totals.present], ["Late", totals.late], ["Absent", totals.absent], ["Excused", totals.excused]].map(([label, count]) => <div key={label} className="rounded-md bg-muted/60 px-2 py-2"><p className="text-[11px] text-muted-foreground">{label}</p><p className="font-display text-lg font-bold">{count}</p></div>)}
-          </div>
-          <div className="mt-4 grid grid-cols-7 gap-1 text-center">
-            {weekdays.map((weekday) => <p key={weekday} className="py-1 text-[11px] font-medium text-muted-foreground">{weekday}</p>)}
-            {calendarCells.map((day, index) => {
-              if (day === null) return <span key={`blank-${index}`} />;
-              const calendarDate = `${month}-${String(day).padStart(2, "0")}`;
-              const summary = dayByDate.get(calendarDate);
-              return <button key={calendarDate} type="button" onClick={() => setDate(calendarDate)} aria-label={`${calendarDate}${summary ? `, ${summary.marked_count} marked` : ", no register"}`} className={`min-h-12 rounded-md border px-1 py-1 text-xs ${date === calendarDate ? "border-primary bg-primary text-primary-foreground" : summary ? "border-emerald-600/25 bg-emerald-600/5 text-foreground hover:bg-emerald-600/10" : "border-transparent bg-muted/30 text-muted-foreground hover:bg-muted"}`}>
-                <span className="block font-medium">{day}</span>
-                {summary && <span className="block truncate text-[9px]">{summary.present_count}P · {summary.absent_count}A</span>}
-              </button>;
-            })}
-          </div>
-        </>
-      )}
-    </section>
-  </div>;
+    </div>
+  );
 }
 
 function TeacherMarkEntry() {
@@ -599,11 +1063,15 @@ function TeacherMarkEntry() {
   const [students, setStudents] = useState<MarkStudent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [autoSaveState, setAutoSaveState] = useState<"saved" | "pending" | "saving" | "error">("saved");
+  const [autoSaveState, setAutoSaveState] = useState<"saved" | "pending" | "saving" | "error">(
+    "saved",
+  );
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const markRevision = useRef(0);
-  const selected = assignments.find((item) => `${item.class_subject_id}:${item.term_id}` === selectedKey);
+  const selected = assignments.find(
+    (item) => `${item.class_subject_id}:${item.term_id}` === selectedKey,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -615,10 +1083,17 @@ function TeacherMarkEntry() {
         if (first) setSelectedKey(`${first.class_subject_id}:${first.term_id}`);
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load teacher assignments");
+        if (!cancelled)
+          setError(
+            loadError instanceof Error ? loadError.message : "Could not load teacher assignments",
+          );
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -639,21 +1114,28 @@ function TeacherMarkEntry() {
         }
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Could not load marks");
+        if (!cancelled)
+          setError(loadError instanceof Error ? loadError.message : "Could not load marks");
       })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selected]);
 
-  function updateMark(studentId: string, field: typeof markFields[number][0], input: string) {
+  function updateMark(studentId: string, field: (typeof markFields)[number][0], input: string) {
     const limit = markFields.find(([key]) => key === field)?.[2] ?? 0;
     if (input !== "" && (!/^\d{0,3}(?:\.\d{0,2})?$/.test(input) || Number(input) > limit)) return;
     markRevision.current += 1;
-    setStudents((current) => current.map((student) => {
-      if (student.student_id !== studentId) return student;
-      const updated = { ...student, [field]: input === "" ? null : Number(input) };
-      return { ...updated, ...calculateMarkResult(updated) };
-    }));
+    setStudents((current) =>
+      current.map((student) => {
+        if (student.student_id !== studentId) return student;
+        const updated = { ...student, [field]: input === "" ? null : Number(input) };
+        return { ...updated, ...calculateMarkResult(updated) };
+      }),
+    );
     setAutoSaveState("pending");
     setError("");
     setNotice("");
@@ -682,7 +1164,9 @@ function TeacherMarkEntry() {
           })),
         }),
       });
-      setNotice("Marks saved. Final score and NaCCA performance level are calculated automatically.");
+      setNotice(
+        "Marks saved. Final score and NaCCA performance level are calculated automatically.",
+      );
       setAutoSaveState(markRevision.current === savedRevision ? "saved" : "pending");
       return true;
     } catch (saveError) {
@@ -696,7 +1180,9 @@ function TeacherMarkEntry() {
 
   useEffect(() => {
     if (autoSaveState !== "pending" || saving || !selected || students.length === 0) return;
-    const timer = window.setTimeout(() => { void saveMarks(); }, 900);
+    const timer = window.setTimeout(() => {
+      void saveMarks();
+    }, 900);
     return () => window.clearTimeout(timer);
   }, [autoSaveState, saveMarks, saving, selected, students.length]);
 
@@ -705,44 +1191,170 @@ function TeacherMarkEntry() {
     setSelectedKey(nextKey);
   }
 
-  const autoSaveMessage = autoSaveState === "saving" ? "Saving changes…"
-    : autoSaveState === "pending" ? "Changes will save automatically…"
-      : autoSaveState === "error" ? "Auto-save failed. Use Save now to retry."
-        : "All changes saved";
+  const autoSaveMessage =
+    autoSaveState === "saving"
+      ? "Saving changes…"
+      : autoSaveState === "pending"
+        ? "Changes will save automatically…"
+        : autoSaveState === "error"
+          ? "Auto-save failed. Use Save now to retry."
+          : "All changes saved";
 
-  return <section className="glass-panel mt-5 overflow-hidden rounded-lg">
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-      <div><h2 className="font-display text-lg font-bold">Subject mark sheet</h2><p className="text-xs text-muted-foreground">Coursework totals 50 marks; half of the exam score adds the remaining 50.</p></div>
-      <div className="flex flex-wrap items-center gap-3">
-      <span role="status" className={`text-xs ${autoSaveState === "error" ? "text-destructive" : "text-muted-foreground"}`}>{autoSaveMessage}</span>
-      <Button size="sm" variant="outline" disabled={saving || loading || !selected || students.length === 0} onClick={() => void saveMarks()}>{saving ? "Saving..." : "Save now"}</Button>
-      <select aria-label="Class, subject and term" value={selectedKey} disabled={saving} onChange={(event) => void changeAssignment(event.target.value)} className="h-9 max-w-full rounded-md border border-input bg-background px-3 text-sm">
-        {assignments.length === 0 && <option value="">No subject assignments available</option>}
-        {assignments.map((item) => <option key={`${item.class_subject_id}:${item.term_id}`} value={`${item.class_subject_id}:${item.term_id}`}>{item.class_name} · {item.subject_name} · {item.term_name}</option>)}
-      </select>
+  return (
+    <section className="glass-panel mt-5 overflow-hidden rounded-lg">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <h2 className="font-display text-lg font-bold">Subject mark sheet</h2>
+          <p className="text-xs text-muted-foreground">
+            Coursework totals 50 marks; half of the exam score adds the remaining 50.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span
+            role="status"
+            className={`text-xs ${autoSaveState === "error" ? "text-destructive" : "text-muted-foreground"}`}
+          >
+            {autoSaveMessage}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={saving || loading || !selected || students.length === 0}
+            onClick={() => void saveMarks()}
+          >
+            {saving ? "Saving..." : "Save now"}
+          </Button>
+          <select
+            aria-label="Class, subject and term"
+            value={selectedKey}
+            disabled={saving}
+            onChange={(event) => void changeAssignment(event.target.value)}
+            className="h-9 max-w-full rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {assignments.length === 0 && <option value="">No subject assignments available</option>}
+            {assignments.map((item) => (
+              <option
+                key={`${item.class_subject_id}:${item.term_id}`}
+                value={`${item.class_subject_id}:${item.term_id}`}
+              >
+                {item.class_name} · {item.subject_name} · {item.term_name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
-    </div>
-    <div role="tablist" aria-label="Mark sheet sections" className="flex gap-1 border-b border-border px-5">
-      <button role="tab" aria-selected={activeEntryTab === "grades"} onClick={() => setActiveEntryTab("grades")} className={`border-b-2 px-3 py-2 text-sm font-medium ${activeEntryTab === "grades" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}>Grades</button>
-      <button role="tab" aria-selected={activeEntryTab === "profile"} onClick={() => setActiveEntryTab("profile")} className={`border-b-2 px-3 py-2 text-sm font-medium ${activeEntryTab === "profile" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}>Conduct, Attitude &amp; Interest</button>
-    </div>
-    {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
-    {notice && <p role="status" className="mx-5 mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
-    <div role="tabpanel" hidden={activeEntryTab !== "grades"}>{loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading marks...</p> : students.length === 0 ? (
-      <p className="py-10 text-center text-sm text-muted-foreground">{assignments.length ? "No active students are enrolled in this class." : "Ask your School Admin to assign you to a class subject before entering marks."}</p>
-    ) : <>
-      <div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm">
-        <thead className="bg-muted/60 text-xs text-muted-foreground"><tr><th className="px-4 py-3 font-medium">Student</th>{markFields.map(([, label]) => <th key={label} className="px-3 py-3 font-medium">{label}</th>)}<th className="px-4 py-3 font-medium">Final /100</th><th className="px-4 py-3 font-medium">Level</th></tr></thead>
-        <tbody className="divide-y divide-border/70">{students.map((student) => <tr key={student.student_id}>
-          <td className="px-4 py-3"><p className="font-medium">{student.first_name} {student.last_name}</p><p className="font-mono text-[11px] text-muted-foreground">{student.admission_number}</p></td>
-          {markFields.map(([field, label, limit]) => <td key={field} className="px-3 py-3"><input aria-label={`${student.first_name} ${label}`} type="number" min="0" max={limit} step="0.01" value={student[field] ?? ""} disabled={saving} onChange={(event) => updateMark(student.student_id, field, event.target.value)} className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center disabled:opacity-60" /></td>)}
-          <td className="px-4 py-3 font-display">{student.total_score == null ? "Incomplete" : Number(student.total_score).toFixed(2)}</td>
-          <td className="px-4 py-3">{student.performance_level ?? "—"}</td>
-        </tr>)}</tbody>
-      </table></div>
-    </>}</div>
-    <div className="px-5">
-      <LearnerProfileEntry classId={selected?.class_id ?? ""} termId={selected?.term_id ?? ""} active={activeEntryTab === "profile"} />
-    </div>
-  </section>;
+      <div
+        role="tablist"
+        aria-label="Mark sheet sections"
+        className="flex gap-1 border-b border-border px-5"
+      >
+        <button
+          role="tab"
+          aria-selected={activeEntryTab === "grades"}
+          onClick={() => setActiveEntryTab("grades")}
+          className={`border-b-2 px-3 py-2 text-sm font-medium ${activeEntryTab === "grades" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+        >
+          Grades
+        </button>
+        <button
+          role="tab"
+          aria-selected={activeEntryTab === "profile"}
+          onClick={() => setActiveEntryTab("profile")}
+          className={`border-b-2 px-3 py-2 text-sm font-medium ${activeEntryTab === "profile" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+        >
+          Conduct, Attitude &amp; Interest
+        </button>
+      </div>
+      {error && (
+        <p
+          role="alert"
+          className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive"
+        >
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p
+          role="status"
+          className="mx-5 mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800"
+        >
+          {notice}
+        </p>
+      )}
+      <div role="tabpanel" hidden={activeEntryTab !== "grades"}>
+        {loading ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">Loading marks...</p>
+        ) : students.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            {assignments.length
+              ? "No active students are enrolled in this class."
+              : "Ask your School Admin to assign you to a class subject before entering marks."}
+          </p>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1000px] text-left text-sm">
+                <thead className="bg-muted/60 text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">Student</th>
+                    {markFields.map(([, label]) => (
+                      <th key={label} className="px-3 py-3 font-medium">
+                        {label}
+                      </th>
+                    ))}
+                    <th className="px-4 py-3 font-medium">Final /100</th>
+                    <th className="px-4 py-3 font-medium">Level</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/70">
+                  {students.map((student) => (
+                    <tr key={student.student_id}>
+                      <td className="px-4 py-3">
+                        <p className="font-medium">
+                          {student.first_name} {student.last_name}
+                        </p>
+                        <p className="font-mono text-[11px] text-muted-foreground">
+                          {student.admission_number}
+                        </p>
+                      </td>
+                      {markFields.map(([field, label, limit]) => (
+                        <td key={field} className="px-3 py-3">
+                          <input
+                            aria-label={`${student.first_name} ${label}`}
+                            type="number"
+                            min="0"
+                            max={limit}
+                            step="0.01"
+                            value={student[field] ?? ""}
+                            disabled={saving}
+                            onChange={(event) =>
+                              updateMark(student.student_id, field, event.target.value)
+                            }
+                            className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center disabled:opacity-60"
+                          />
+                        </td>
+                      ))}
+                      <td className="px-4 py-3 font-display">
+                        {student.total_score == null
+                          ? "Incomplete"
+                          : Number(student.total_score).toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3">{student.performance_level ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+      <div className="px-5">
+        <LearnerProfileEntry
+          classId={selected?.class_id ?? ""}
+          termId={selected?.term_id ?? ""}
+          active={activeEntryTab === "profile"}
+        />
+      </div>
+    </section>
+  );
 }
