@@ -258,7 +258,7 @@ function DailyPaymentsPage() {
 
   function ActionCell({ student }: { student: DailyStudent }) {
     return (
-      <div className="flex flex-col items-start gap-2">
+      <div className="flex w-full min-w-0 flex-col items-stretch gap-2">
         {student.payment_id && (
           <button
             type="button"
@@ -271,7 +271,7 @@ function DailyPaymentsPage() {
                 at: student.paid_at ?? new Date().toISOString(),
               })
             }
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-border bg-background/70 px-3 text-xs font-medium hover:bg-secondary"
+            className="inline-flex min-h-9 w-fit items-center gap-1.5 rounded-full border border-border bg-background/70 px-3 text-xs font-medium hover:bg-secondary"
           >
             <Receipt className="size-3.5" />
             Slip
@@ -331,14 +331,14 @@ function DailyPaymentsPage() {
               ))}
             </select>
           </label>
-          <div className="flex items-center gap-2 text-sm">
-            <span className="rounded-md bg-secondary px-2.5 py-1 text-secondary-foreground ring-1 ring-border">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="whitespace-nowrap rounded-md bg-secondary px-2.5 py-1 text-secondary-foreground ring-1 ring-border">
               {paidCount} paid
             </span>
-            <span className="rounded-md bg-muted px-2.5 py-1 text-muted-foreground">
+            <span className="whitespace-nowrap rounded-md bg-muted px-2.5 py-1 text-muted-foreground">
               {visible.length - paidCount} not recorded
             </span>
-            <label className="ml-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <label className="ml-0 flex items-center gap-2 whitespace-nowrap text-xs font-medium text-muted-foreground sm:ml-2">
               Method
               <select
                 value={method}
@@ -426,7 +426,7 @@ function DailyPaymentsPage() {
                 {visible.map((student) => (
                   <article
                     key={student.student_id}
-                    className="flex items-center justify-between gap-3 p-4"
+                    className="flex flex-col items-stretch gap-3 p-4"
                   >
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">
@@ -447,12 +447,15 @@ function DailyPaymentsPage() {
                 ))}
               </div>
               <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[820px] text-left text-sm">
+                <table className="w-full min-w-[1040px] text-left text-sm">
                   <thead className="bg-muted/60 text-xs text-muted-foreground">
                     <tr>
                       {["Student", "Class", "Attendance", "Daily fee", "Status", ""].map(
                         (heading) => (
-                          <th key={heading} className="px-5 py-3 font-medium">
+                          <th
+                            key={heading}
+                            className={`px-5 py-3 font-medium ${heading === "" ? "w-[260px]" : ""}`}
+                          >
                             {heading}
                           </th>
                         ),
@@ -495,7 +498,7 @@ function DailyPaymentsPage() {
                         <td className="px-5 py-3">
                           <StatusChip student={student} />
                         </td>
-                        <td className="px-5 py-3 text-right">
+                        <td className="w-[260px] px-5 py-3">
                           <ActionCell student={student} />
                         </td>
                       </tr>

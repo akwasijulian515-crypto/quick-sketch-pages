@@ -30,8 +30,8 @@ export function DailyPaymentControls({
   const recordLabel = `${schoolDays} ${schoolDays === 1 ? "day" : "days"}`;
 
   return (
-    <div className="w-full min-w-48 space-y-2 rounded-md border border-border bg-background p-3">
-      <label className="flex items-center justify-between gap-3 text-xs font-semibold text-foreground">
+    <div className="w-full min-w-0 space-y-2 rounded-md border border-border bg-background p-3">
+      <label className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 text-xs font-semibold text-foreground">
         Days to cover
         <select
           aria-label="School days to cover"
@@ -48,27 +48,34 @@ export function DailyPaymentControls({
         </select>
       </label>
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        Starting from the selected date, this covers upcoming school days. Weekends, holidays, and
-        dates already recorded are skipped.
+        Starts on the selected date; skips weekends, holidays, and recorded dates.
       </p>
       {splitEnabled ? (
         <div className="flex flex-col items-stretch gap-1.5">
           <Button
             type="button"
             size="sm"
+            className="h-auto min-h-9 w-full whitespace-normal px-2 py-2 text-center leading-tight"
             disabled={busy}
             onClick={() => onRecord(schoolDays, false)}
           >
-            {busy ? "Recording..." : `Studies only · ${recordLabel}`}
+            <span>
+              <span className="block">{busy ? "Recording..." : "Studies only"}</span>
+              {!busy && <span className="block text-[11px] font-normal">{recordLabel}</span>}
+            </span>
           </Button>
           <Button
             type="button"
             size="sm"
             variant="outline"
+            className="h-auto min-h-9 w-full whitespace-normal px-2 py-2 text-center leading-tight"
             disabled={busy || !feedingConfigured}
             onClick={() => onRecord(schoolDays, true)}
           >
-            Studies + feeding · {recordLabel}
+            <span>
+              <span className="block">Studies + feeding</span>
+              <span className="block text-[11px] font-normal">{recordLabel}</span>
+            </span>
           </Button>
           {!feedingConfigured && (
             <p className="text-[11px] leading-relaxed text-muted-foreground">
@@ -81,11 +88,16 @@ export function DailyPaymentControls({
         <Button
           type="button"
           size="sm"
-          className="w-full"
+          className="h-auto min-h-9 w-full whitespace-normal px-2 py-2 text-center leading-tight"
           disabled={busy}
           onClick={() => onRecord(schoolDays, false)}
         >
-          {busy ? "Recording..." : `${paid ? "Record more · " : "Mark Paid · "}${recordLabel}`}
+          <span>
+            <span className="block">
+              {busy ? "Recording..." : paid ? "Record more" : "Mark Paid"}
+            </span>
+            {!busy && <span className="block text-[11px] font-normal">{recordLabel}</span>}
+          </span>
         </Button>
       )}
     </div>
