@@ -319,33 +319,40 @@ function GradesPage() {
               No active students are enrolled in this class and term.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left text-sm">
-                <thead className="bg-muted/60 text-xs text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Student</th>
-                    {fields.map((field) => (
-                      <th key={field.key} className="px-3 py-3 font-medium">
-                        {field.label}
-                      </th>
-                    ))}
-                    <th className="px-4 py-3 font-medium">Final /100</th>
-                    <th className="px-4 py-3 font-medium">Level</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/70">
-                  {students.map((student) => (
-                    <tr key={student.student_id}>
-                      <td className="px-4 py-3">
-                        <p className="font-medium">
+            <>
+              <div className="space-y-3 p-3 md:hidden">
+                {students.map((student) => (
+                  <article
+                    key={student.student_id}
+                    className="rounded-lg border border-border/70 bg-background p-3"
+                  >
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
                           {student.first_name} {student.last_name}
                         </p>
                         <p className="font-mono text-xs text-muted-foreground">
                           {student.admission_number}
                         </p>
-                      </td>
+                      </div>
+                      <div className="shrink-0 text-right text-xs">
+                        <p className="font-medium">
+                          {student.total_score == null
+                            ? "—"
+                            : Number(student.total_score).toFixed(2)}{" "}
+                          / 100
+                        </p>
+                        <p className="text-muted-foreground">
+                          {student.performance_level ?? "No level"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
                       {fields.map((field) => (
-                        <td key={field.key} className="px-3 py-3">
+                        <label key={field.key} className="min-w-0 space-y-1">
+                          <span className="block text-xs text-muted-foreground">
+                            {field.label} / {field.max}
+                          </span>
                           <input
                             aria-label={`${student.first_name} ${field.label}`}
                             type="number"
@@ -361,19 +368,72 @@ function GradesPage() {
                                 field.max,
                               )
                             }
-                            className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center"
+                            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm"
                           />
-                        </td>
+                        </label>
                       ))}
-                      <td className="px-4 py-3">
-                        {student.total_score == null ? "—" : Number(student.total_score).toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3">{student.performance_level ?? "—"}</td>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full min-w-[900px] text-left text-sm">
+                  <thead className="bg-muted/60 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Student</th>
+                      {fields.map((field) => (
+                        <th key={field.key} className="px-3 py-3 font-medium">
+                          {field.label}
+                        </th>
+                      ))}
+                      <th className="px-4 py-3 font-medium">Final /100</th>
+                      <th className="px-4 py-3 font-medium">Level</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-border/70">
+                    {students.map((student) => (
+                      <tr key={student.student_id}>
+                        <td className="px-4 py-3">
+                          <p className="font-medium">
+                            {student.first_name} {student.last_name}
+                          </p>
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {student.admission_number}
+                          </p>
+                        </td>
+                        {fields.map((field) => (
+                          <td key={field.key} className="px-3 py-3">
+                            <input
+                              aria-label={`${student.first_name} ${field.label}`}
+                              type="number"
+                              min="0"
+                              max={field.max}
+                              step="0.01"
+                              value={student[field.key] ?? ""}
+                              onChange={(event) =>
+                                updateMark(
+                                  student.student_id,
+                                  field.key,
+                                  event.target.value,
+                                  field.max,
+                                )
+                              }
+                              className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center"
+                            />
+                          </td>
+                        ))}
+                        <td className="px-4 py-3">
+                          {student.total_score == null
+                            ? "—"
+                            : Number(student.total_score).toFixed(2)}
+                        </td>
+                        <td className="px-4 py-3">{student.performance_level ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
         <LearnerProfileEntry

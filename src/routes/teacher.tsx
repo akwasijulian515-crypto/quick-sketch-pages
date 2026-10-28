@@ -1312,8 +1312,58 @@ function TeacherMarkEntry() {
               : "Ask your School Admin to assign you to a class subject before entering marks."}
           </p>
         ) : (
-          <>
-            <div className="overflow-x-auto">
+          <div>
+            <div className="space-y-3 p-3 md:hidden">
+              {students.map((student) => (
+                <article
+                  key={student.student_id}
+                  className="rounded-lg border border-border/70 bg-background p-3"
+                >
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {student.first_name} {student.last_name}
+                      </p>
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {student.admission_number}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right text-xs">
+                      <p className="font-medium">
+                        {student.total_score == null
+                          ? "Incomplete"
+                          : `${Number(student.total_score).toFixed(2)} / 100`}
+                      </p>
+                      <p className="text-muted-foreground">
+                        {student.performance_level ?? "No level"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {markFields.map(([field, label, limit]) => (
+                      <label key={field} className="min-w-0 space-y-1">
+                        <span className="block text-xs text-muted-foreground">
+                          {label} / {limit}
+                        </span>
+                        <input
+                          aria-label={`${student.first_name} ${label}`}
+                          type="number"
+                          min="0"
+                          max={limit}
+                          step="0.01"
+                          value={student[field] ?? ""}
+                          onChange={(event) =>
+                            updateMark(student.student_id, field, event.target.value)
+                          }
+                          className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
               <table className="w-full min-w-[1000px] text-left text-sm">
                 <thead className="bg-muted/60 text-xs text-muted-foreground">
                   <tr>
@@ -1365,7 +1415,7 @@ function TeacherMarkEntry() {
                 </tbody>
               </table>
             </div>
-          </>
+          </div>
         )}
       </div>
       <div className="px-5">
