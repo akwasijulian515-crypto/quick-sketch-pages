@@ -1347,11 +1347,10 @@ function TeacherMarkEntry() {
                             max={limit}
                             step="0.01"
                             value={student[field] ?? ""}
-                            disabled={saving}
                             onChange={(event) =>
                               updateMark(student.student_id, field, event.target.value)
                             }
-                            className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center disabled:opacity-60"
+                            className="h-9 w-20 rounded-md border border-input bg-background px-2 text-center"
                           />
                         </td>
                       ))}
