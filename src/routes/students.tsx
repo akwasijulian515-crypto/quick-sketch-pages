@@ -101,7 +101,7 @@ type BulkAdmissionRow = {
 
 type BulkAdmissionOutcome = { rowNumber: number; error?: string };
 
-const csvHeaders = ["first_name", "last_name"] as const;
+const csvHeaders = ["first_name", "last_name", "gender"] as const;
 
 function localDateString(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -243,8 +243,14 @@ function parseBulkAdmissionRows(text: string): { rows: BulkAdmissionRow[]; error
 
     const firstName = value("first_name");
     const lastName = value("last_name");
+    const genderInput = value("gender");
+    const gender = genderInput.toLowerCase();
     if (!firstName || !lastName) {
       errors.push(`Row ${rowNumber}: first name and last name are required.`);
+      return;
+    }
+    if (gender && gender !== "male" && gender !== "female") {
+      errors.push(`Row ${rowNumber}: gender must be Male, Female, or blank.`);
       return;
     }
 
@@ -257,7 +263,7 @@ function parseBulkAdmissionRows(text: string): { rows: BulkAdmissionRow[]; error
         full_name: fullName,
         class_id: null,
         date_of_birth: "",
-        gender: "",
+        gender: gender === "male" ? "Male" : gender === "female" ? "Female" : "",
         address: "",
         emergency_contact: "",
         medical_notes: "",
@@ -1280,7 +1286,8 @@ function BulkAdmissionModal({
               Import Students from Spreadsheet
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Upload names only; student IDs are generated automatically.
+              Upload student names and optional profile details; student IDs are generated
+              automatically.
             </p>
           </div>
           <button
@@ -1296,8 +1303,8 @@ function BulkAdmissionModal({
         <div className="p-6 space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              Use a spreadsheet with first_name and last_name columns. CSV, Excel .xls, and .xlsx
-              are supported.
+              Use first_name and last_name columns. Gender is optional; use Male or Female. CSV,
+              Excel .xls, and .xlsx are supported.
             </p>
             <button
               type="button"
@@ -1358,6 +1365,7 @@ function BulkAdmissionModal({
                 {rows.slice(0, 8).map((row) => (
                   <p key={row.rowNumber}>
                     Row {row.rowNumber}: {row.input.full_name}
+                    {row.input.gender ? ` · ${row.input.gender}` : ""}
                   </p>
                 ))}
                 {rows.length > 8 && <p>And {rows.length - 8} more…</p>}
