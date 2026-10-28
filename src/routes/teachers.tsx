@@ -705,6 +705,14 @@ function AssignmentDialog({
             ))}
           </select>
         </Field>
+        <Field label="Subject code">
+          <input
+            readOnly
+            value={subjects.find((item) => item.id === subjectId)?.code ?? ""}
+            placeholder="Select a subject"
+            className="input bg-muted"
+          />
+        </Field>
         <Field label="Teacher (optional)">
           <select
             value={teacher}
