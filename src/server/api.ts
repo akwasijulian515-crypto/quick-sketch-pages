@@ -4253,7 +4253,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                    r.id as report_id, r.conduct, r.attitude, r.interest,
                    r.attendance_present, r.attendance_total, r.teacher_remark,
                    r.headteacher_remark, r.promotion_status, r.published_at,
-                   coalesce((
+                   case when r.published_at is not null then coalesce((
                      select jsonb_agg(jsonb_build_object(
                        'subject_id', i.subject_id, 'subject_name', s.name,
                        'class_test_score', i.class_test_score, 'project_score', i.project_score,
@@ -4261,9 +4261,24 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                        'exam_score', i.exam_score, 'total_score', i.total_score,
                        'performance_level', i.performance_level, 'remark', i.remark
                      ) order by s.name)
-                     from terminal_report_items i join subjects s on s.id = i.subject_id and s.school_id = i.school_id
+                     from terminal_report_items i
+                     join subjects s on s.id = i.subject_id and s.school_id = i.school_id
                      where i.report_id = r.id and i.school_id = st.school_id
-                   ), '[]'::jsonb) as items
+                   ), '[]'::jsonb) else coalesce((
+                     select jsonb_agg(jsonb_build_object(
+                       'subject_id', cs.subject_id, 'subject_name', s.name,
+                       'class_test_score', m.class_test_score, 'project_score', m.project_score,
+                       'homework_score', m.homework_score, 'group_work_score', m.group_work_score,
+                       'exam_score', m.exam_score, 'total_score', m.total_score,
+                       'performance_level', m.performance_level, 'remark', null
+                     ) order by s.name)
+                     from subject_term_marks m
+                     join class_subjects cs on cs.id = m.class_subject_id and cs.school_id = m.school_id
+                     join subjects s on s.id = cs.subject_id and s.school_id = cs.school_id
+                     where m.school_id = st.school_id and m.student_id = st.id
+                       and m.term_id = ${termId}::uuid and cs.class_id = c.id
+                       and m.total_score is not null
+                   ), '[]'::jsonb) end as items
             from class_enrollments e
             join students st on st.id = e.student_id and st.school_id = e.school_id
             join classes c on c.id = e.class_id and c.school_id = e.school_id
