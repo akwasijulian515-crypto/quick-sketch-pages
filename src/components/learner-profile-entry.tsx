@@ -116,7 +116,7 @@ export function LearnerProfileEntry({ classId, termId, active }: { classId: stri
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
       <div>
         <h2 className="font-display text-lg font-bold">Conduct, Attitude &amp; Interest</h2>
-        <p className="text-xs text-muted-foreground">Enter learner profile details for the selected class and term. Save drafts before changing the selection.</p>
+        <p className="text-xs text-muted-foreground">Enter learner profile details for your assigned class. Save drafts before changing the selection.</p>
       </div>
       <Button size="sm" variant="outline" disabled={saving || loading || !classId || !termId || profiles.length === 0} onClick={() => void saveProfiles()}>
         {saving ? "Saving..." : "Save profile drafts"}
@@ -125,7 +125,7 @@ export function LearnerProfileEntry({ classId, termId, active }: { classId: stri
     {error && <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">{error}</p>}
     {notice && <p role="status" className="mx-5 mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-3 py-2 text-sm text-emerald-800">{notice}</p>}
     {loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading learner profiles...</p>
-      : profiles.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">{classId && termId ? "No active students are enrolled in this class." : "Select a class, subject and term to enter learner profiles."}</p>
+      : profiles.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">{classId && termId ? "No active students are enrolled in this class." : "Select an assigned class with an active term to enter learner profiles."}</p>
         : <div className="divide-y divide-border/70">
           {profiles.map((profile) => <article key={profile.student_id} className="px-5 py-4">
             <div className="mb-3">

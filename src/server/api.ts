@@ -847,6 +847,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
   const classLifecycleMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)$/i);
+  const teachingAssignmentLifecycleMatch = url.pathname.match(
+    /^\/api\/school\/teaching-assignments\/([0-9a-f-]+)$/i,
+  );
   const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
   const guardianLifecycleMatch = url.pathname.match(/^\/api\/school\/guardians\/([0-9a-f-]+)$/i);
@@ -917,6 +920,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
     (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined) ??
     (classLifecycleMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
+    (teachingAssignmentLifecycleMatch && ["PATCH", "DELETE"].includes(request.method)
+      ? ["school_admin"]
+      : undefined) ??
     (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
   const schoolDataRoute =
     url.pathname === "/api/school/classes" ||
@@ -933,6 +939,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     paymentReviewMatch !== null ||
     classRosterMatch !== null ||
     classLifecycleMatch !== null ||
+    teachingAssignmentLifecycleMatch !== null ||
     termCloseMatch !== null ||
     workflowMethodRoles !== undefined;
   if (schoolDataRoute) {
@@ -4359,7 +4366,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
         tx`
           with report_students as (
-            select e.student_id, e.school_id, c.id as class_id
+            select e.student_id, e.school_id, c.id as class_id,
+                   c.class_teacher_id in (
+                     select id from staff_profiles
+                     where school_id = c.school_id and user_id = ${school.userId}::uuid
+                   ) as is_class_teacher
             from class_enrollments e
             join classes c on c.id = e.class_id and c.school_id = e.school_id
             join terms t on t.id = ${termId}::uuid and t.school_id = c.school_id
@@ -4388,7 +4399,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
              attendance_present, attendance_total, teacher_remark, headteacher_remark, promotion_status, published_at)
           select rs.school_id, rs.student_id, ${termId}::uuid,
                  (select id from staff_profiles where school_id = rs.school_id and user_id = ${school.userId}::uuid limit 1),
-                 ip.conduct, ip.attitude, ip.interest,
+                 case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.conduct else null end,
+                 case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.attitude else null end,
+                 case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.interest else null end,
                  (select count(*)::int from attendance_records ar
                   join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
                   where ar.school_id = rs.school_id and ar.student_id = rs.student_id
@@ -4405,9 +4418,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                       select 1 from school_holidays h
                       where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
                     )),
-                 ip.teacher_remark,
+                 case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.teacher_remark else null end,
                  case when ${school.role === "school_admin"} then ip.headteacher_remark else null end,
-                 nullif(ip.promotion_status, ''),
+                 case when ${school.role === "school_admin"} or rs.is_class_teacher
+                   then nullif(ip.promotion_status, '') else null end,
                  case when ${publish} then now() else null end
           from report_students rs
           join terms t on t.id = ${termId}::uuid and t.school_id = rs.school_id
@@ -4981,7 +4995,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             select c.id as class_id, c.name as class_name, c.academic_year_id, ay.name as academic_year_name,
                    class_teacher_user.display_name as class_teacher_name,
                    cs.id as class_subject_id, s.id as subject_id, s.code as subject_code, s.name as subject_name,
-                   sp.user_id as teacher_user_id, u.display_name as teacher_name, u.email as teacher_email
+                   ta.id as assignment_id, sp.user_id as teacher_user_id,
+                   u.display_name as teacher_name, u.email as teacher_email
             from classes c
             join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
             left join class_subjects cs on cs.class_id = c.id and cs.school_id = c.school_id
@@ -5190,6 +5205,72 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       );
     }
 
+    if (teachingAssignmentLifecycleMatch && request.method === "PATCH") {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const teacherId = body["teacher_user_id"];
+      const classSubjectId = body["class_subject_id"];
+      if (
+        typeof teacherId !== "string" ||
+        !uuidOrNull(teacherId) ||
+        typeof classSubjectId !== "string" ||
+        !uuidOrNull(classSubjectId)
+      )
+        return badRequest("Choose a valid teacher");
+      try {
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) =>
+            tx`
+          update teaching_assignments ta
+          set staff_profile_id = sp.id,
+              class_subject_id = cs.id,
+              academic_year_id = c.academic_year_id
+          from staff_profiles sp
+          join memberships m on m.user_id = sp.user_id and m.school_id = sp.school_id
+          join class_subjects cs on cs.id = ${classSubjectId}::uuid
+            and cs.school_id = sp.school_id
+          join classes c on c.id = cs.class_id and c.school_id = cs.school_id
+          where ta.id = ${teachingAssignmentLifecycleMatch[1]}::uuid
+            and ta.school_id = ${school.schoolId}::uuid
+            and sp.user_id = ${teacherId}::uuid
+            and sp.school_id = ${school.schoolId}::uuid
+            and m.role = 'teacher' and m.active
+          returning ta.id
+        `,
+        );
+        if (!rows[0])
+          return json({ error: "Assignment or active teacher was not found in this school." }, 404);
+        return json({ assignment: rows[0]["id"] });
+      } catch (error) {
+        if (error instanceof Error && /unique/i.test(error.message))
+          return json(
+            { error: "That teacher already has this class and subject assignment." },
+            409,
+          );
+        throw error;
+      }
+    }
+
+    if (teachingAssignmentLifecycleMatch && request.method === "DELETE") {
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
+          delete from teaching_assignments
+          where id = ${teachingAssignmentLifecycleMatch[1]}::uuid
+            and school_id = ${school.schoolId}::uuid
+          returning id
+        `,
+      );
+      if (!rows[0]) return json({ error: "Teaching assignment was not found." }, 404);
+      return json({ removed: rows[0]["id"] });
+    }
+
     if (url.pathname === "/api/school/classes" && request.method === "GET") {
       const rows = await withDatabaseContext(
         sql,
@@ -5198,6 +5279,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           tx`
           select c.id, c.name, c.form_level as grade_level,
                  c.class_teacher_id,
+                 c.class_teacher_id in (
+                   select id from staff_profiles
+                   where school_id = c.school_id and user_id = ${school.userId}::uuid
+                 ) as is_class_teacher,
                  teacher.display_name as class_teacher_name,
                    ay.id as academic_year_id, ay.name as academic_year_name, ay.starts_on as academic_year_starts_on,
                  t.id as term_id, t.name as term_name,

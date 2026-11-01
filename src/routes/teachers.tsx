@@ -42,6 +42,7 @@ type TeachingRow = {
   subject_id: string | null;
   subject_code: string | null;
   subject_name: string | null;
+  assignment_id: string | null;
   teacher_user_id: string | null;
   teacher_name: string | null;
 };
@@ -147,6 +148,9 @@ function TeachersPage() {
         [...new Set(teacherAssignments.map((item) => item.subject_name).filter(Boolean))].join(
           ", ",
         ) || "No subject assigned",
+      assignments: teacherAssignments.filter(
+        (item) => item.assignment_id && item.subject_name && item.teacher_user_id,
+      ),
       load: teacherAssignments.length,
       status: teacherAssignments.length ? "Assigned" : "Unassigned",
     };
@@ -199,6 +203,48 @@ function TeachersPage() {
       setNotice("Subject linked to class.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not link subject to class");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateTeachingAssignment(
+    assignmentId: string,
+    teacherUserId: string,
+    classSubjectId: string,
+  ) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await schoolApi(`/api/school/teaching-assignments/${assignmentId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          teacher_user_id: teacherUserId,
+          class_subject_id: classSubjectId,
+        }),
+      });
+      await load();
+      setNotice("Teacher assignment updated.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not update assignment");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeTeachingAssignment(assignmentId: string) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await schoolApi(`/api/school/teaching-assignments/${assignmentId}`, {
+        method: "DELETE",
+      });
+      await load();
+      setNotice("Teacher assignment removed.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not remove assignment");
     } finally {
       setSaving(false);
     }
@@ -458,6 +504,100 @@ function TeachersPage() {
                             {row.load} {row.load === 1 ? "subject" : "subjects"}
                           </span>
                         </div>
+                        {canManageStaff && row.assignments.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            {row.assignments.map((assignment) => (
+                              <div
+                                key={assignment.assignment_id}
+                                className="flex flex-wrap items-center gap-2 rounded-md border border-border/70 p-2"
+                              >
+                                <select
+                                  aria-label={`Change class or subject for ${row.teacher}`}
+                                  value={assignment.class_subject_id ?? ""}
+                                  disabled={saving}
+                                  onChange={(event) => {
+                                    if (
+                                      assignment.assignment_id &&
+                                      assignment.teacher_user_id &&
+                                      event.target.value
+                                    ) {
+                                      void updateTeachingAssignment(
+                                        assignment.assignment_id,
+                                        assignment.teacher_user_id,
+                                        event.target.value,
+                                      );
+                                    }
+                                  }}
+                                  className="h-8 min-w-36 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                                >
+                                  {assignments
+                                    .filter(
+                                      (item) =>
+                                        item.class_subject_id &&
+                                        item.subject_id &&
+                                        item.class_name &&
+                                        item.subject_name,
+                                    )
+                                    .filter(
+                                      (item, index, rows) =>
+                                        rows.findIndex(
+                                          (candidate) =>
+                                            candidate.class_subject_id === item.class_subject_id,
+                                        ) === index,
+                                    )
+                                    .map((item) => (
+                                      <option
+                                        key={item.class_subject_id ?? item.class_name}
+                                        value={item.class_subject_id ?? ""}
+                                      >
+                                        {item.class_name} · {item.subject_name}
+                                      </option>
+                                    ))}
+                                </select>
+                                <select
+                                  aria-label={`Assign teacher for ${assignment.subject_name} in ${assignment.class_name}`}
+                                  value={assignment.teacher_user_id ?? ""}
+                                  disabled={saving}
+                                  onChange={(event) => {
+                                    if (
+                                      assignment.assignment_id &&
+                                      event.target.value &&
+                                      assignment.class_subject_id
+                                    ) {
+                                      void updateTeachingAssignment(
+                                        assignment.assignment_id,
+                                        event.target.value,
+                                        assignment.class_subject_id,
+                                      );
+                                    }
+                                  }}
+                                  className="h-8 max-w-48 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                                >
+                                  {teachers.map((item) => (
+                                    <option key={item.user_id} value={item.user_id}>
+                                      {item.display_name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  aria-label={`Remove ${assignment.subject_name} assignment from ${row.teacher}`}
+                                  title="Remove assignment"
+                                  disabled={saving}
+                                  onClick={() => {
+                                    if (assignment.assignment_id) {
+                                      void removeTeachingAssignment(assignment.assignment_id);
+                                    }
+                                  }}
+                                >
+                                  <X />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-4">
                         <Badge value={row.status} />

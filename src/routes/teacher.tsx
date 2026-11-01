@@ -35,6 +35,7 @@ type TeacherTab = "register" | "grades" | "coupons";
 function TeacherPortal() {
   const navigate = useNavigate();
   const [allowed, setAllowed] = useState(false);
+  const [teacherName, setTeacherName] = useState("");
   const [tab, setTab] = useState<TeacherTab>("register");
 
   useEffect(() => {
@@ -50,10 +51,14 @@ function TeacherPortal() {
         const response = await fetchWithNeonAuth(endpoint);
         const payload = (await response.json().catch(() => null)) as {
           membership?: { role?: string };
+          user?: { displayName?: string };
         } | null;
         if (!response.ok || payload?.membership?.role !== "teacher")
           throw new Error("Teacher membership is required");
-        if (!cancelled) setAllowed(true);
+        if (!cancelled) {
+          setTeacherName(payload.user?.displayName?.trim() ?? "");
+          setAllowed(true);
+        }
       } catch {
         if (!cancelled) window.location.assign(`/login${window.location.search}`);
       }
@@ -74,8 +79,10 @@ function TeacherPortal() {
             S
           </div>
           <div className="leading-tight">
-            <p className="font-display text-[15px] font-bold">Teacher Portal</p>
-            <p className="text-[11px] text-muted-foreground">School workspace</p>
+            <p className="font-display text-[15px] font-bold">{teacherName || "Teacher Portal"}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {teacherName ? "Teacher workspace" : "School workspace"}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -156,6 +163,15 @@ type MarkAssignment = {
   academic_year_name: string;
   term_id: string;
   term_name: string;
+};
+
+type ClassTeacherClass = {
+  id: string;
+  name: string;
+  academic_year_name: string;
+  term_id: string | null;
+  term_name: string | null;
+  is_class_teacher: boolean;
 };
 
 type MarkStudent = {
@@ -1082,6 +1098,9 @@ function TeacherMarkEntry() {
   const isOnline = useOnlineStatus();
   const [activeEntryTab, setActiveEntryTab] = useState<"grades" | "profile">("grades");
   const [assignments, setAssignments] = useState<MarkAssignment[]>([]);
+  const [classTeacherClasses, setClassTeacherClasses] = useState<ClassTeacherClass[]>([]);
+  const [selectedProfileClassId, setSelectedProfileClassId] = useState("");
+  const [profileClassError, setProfileClassError] = useState("");
   const [selectedKey, setSelectedKey] = useState("");
   const [students, setStudents] = useState<MarkStudent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1097,6 +1116,9 @@ function TeacherMarkEntry() {
   const wasOnline = useRef(isOnline);
   const selected = assignments.find(
     (item) => `${item.class_subject_id}:${item.term_id}` === selectedKey,
+  );
+  const selectedProfileClass = classTeacherClasses.find(
+    (item) => item.id === selectedProfileClassId,
   );
 
   useEffect(() => {
@@ -1127,6 +1149,34 @@ function TeacherMarkEntry() {
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOnline, loadRetry]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isOnline) return;
+    void teacherApi<{ classes: ClassTeacherClass[] }>("/api/school/classes")
+      .then(({ classes }) => {
+        if (cancelled) return;
+        const assignedClasses = classes.filter((item) => item.is_class_teacher);
+        setClassTeacherClasses(assignedClasses);
+        setSelectedProfileClassId((current) =>
+          assignedClasses.some((item) => item.id === current)
+            ? current
+            : assignedClasses[0]?.id ?? "",
+        );
+        setProfileClassError("");
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled)
+          setProfileClassError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Could not load class-teacher assignments",
+          );
       });
     return () => {
       cancelled = true;
@@ -1322,10 +1372,11 @@ function TeacherMarkEntry() {
         <button
           role="tab"
           aria-selected={activeEntryTab === "profile"}
+          disabled={classTeacherClasses.length === 0}
           onClick={() => setActiveEntryTab("profile")}
-          className={`border-b-2 px-3 py-2 text-sm font-medium ${activeEntryTab === "profile" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
+          className={`border-b-2 px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${activeEntryTab === "profile" ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`}
         >
-          Conduct, Attitude &amp; Interest
+          Class Teacher Profile
         </button>
       </div>
       {error && (
@@ -1470,11 +1521,46 @@ function TeacherMarkEntry() {
         )}
       </div>
       <div className="px-5">
-        <LearnerProfileEntry
-          classId={selected?.class_id ?? ""}
-          termId={selected?.term_id ?? ""}
-          active={activeEntryTab === "profile"}
-        />
+        {activeEntryTab === "profile" && (
+          classTeacherClasses.length > 0 ? (
+            <>
+              <div className="flex flex-wrap items-end gap-3 pt-4">
+                <label className="min-w-52 flex-1 space-y-1 text-xs font-medium text-muted-foreground">
+                  Class you are responsible for
+                  <select
+                    value={selectedProfileClassId}
+                    onChange={(event) => setSelectedProfileClassId(event.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                  >
+                    {classTeacherClasses.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name} · {item.academic_year_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="pb-2 text-xs text-muted-foreground">
+                  {selectedProfileClass?.term_name ?? "No current term selected"}
+                </p>
+              </div>
+              {profileClassError && (
+                <p role="alert" className="mt-3 text-sm text-destructive">
+                  {profileClassError}
+                </p>
+              )}
+              <LearnerProfileEntry
+                classId={selectedProfileClass?.id ?? ""}
+                termId={selectedProfileClass?.term_id ?? ""}
+                active={activeEntryTab === "profile"}
+              />
+            </>
+          ) : (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              {profileClassError ||
+                "Only a class teacher can enter learner conduct, attitude, and interest. Ask your School Admin to assign you as a class teacher."}
+            </p>
+          )
+        )}
       </div>
     </section>
   );

@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Activity, Building2, Check, CheckCircle2, Clock3, Copy, ExternalLink, Eye, Mail, Plus, Search, ShieldCheck, Trash2, UserPlus, X } from "lucide-react";
+import { Activity, Building2, Check, CheckCircle2, Clock3, Copy, Download, ExternalLink, Eye, Mail, Plus, Search, ShieldCheck, Trash2, UserPlus, X } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,38 @@ function tenantLoginUrl(subdomain: string, rootDomain: string | null) {
   return url.toString();
 }
 
+function downloadSchoolDirectoryCsv(schools: School[], rootDomain: string | null) {
+  const rows = [
+    ["School", "Subdomain", "Tenant login URL", "Students", "Admins", "Status"],
+    ...schools.map((school) => [
+      school.name,
+      school.subdomain,
+      tenantLoginUrl(school.subdomain, rootDomain),
+      String(school.students ?? ""),
+      String(school.admins ?? ""),
+      school.status,
+    ]),
+  ];
+  const csv = rows
+    .map((row) =>
+      row
+        .map((value) => {
+          const safeValue = /^[=+\-@]/.test(value) ? `'${value}` : value;
+          return `"${safeValue.replaceAll('"', '""')}"`;
+        })
+        .join(","),
+    )
+    .join("\r\n");
+  const objectUrl = URL.createObjectURL(
+    new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }),
+  );
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = `klasora-school-directory-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
 async function platformAuthHeaders() {
   try {
     return { authorization: `Bearer ${await getNeonAccessToken()}` };
@@ -48,7 +80,6 @@ function SuperAdminPage() {
   const [subdomain, setSubdomain] = useState("");
   const [color, setColor] = useState("#1f5c3b");
   const [rootDomain, setRootDomain] = useState<string | null>(null);
-  const filtered = schools.filter((school) => `${school.name} ${school.subdomain}`.toLowerCase().includes(query.trim().toLowerCase()));
   const pending = applications.filter((application) => application.status === "Pending");
   const studentsAvailable = schools.every((school) => school.students !== null);
   useEffect(() => {
@@ -93,21 +124,21 @@ function SuperAdminPage() {
         : [...current, { id: application.id, name: application.schoolName, subdomain: application.subdomain, students: 0, admins: 1, status: "Trial", color: application.color }]);
     }
   }, []);
-  function updateStatus(id: string, status: SchoolStatus, loadedSchool?: School) {
+  const updateStatus = useCallback((id: string, status: SchoolStatus, loadedSchool?: School) => {
     setSchools((current) => {
       const existing = current.some((school) => school.id === id);
       if (existing) return current.map((school) => school.id === id ? { ...school, status } : school);
       return loadedSchool ? [...current, { ...loadedSchool, status }] : current;
     });
-  }
+  }, []);
   function removeSchool(school: School) {
     setSchools((current) => current.filter((item) => item.id !== school.id));
     setApplications((current) => current.filter((application) => application.subdomain !== school.subdomain));
   }
-  return <SchoolShell title="Super Admin" platform><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><ShieldCheck className="size-5" /></div><h1 className="font-display text-3xl font-bold">Klasora Platform</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Control school tenants, approve onboarding, and oversee platform health without entering a school&apos;s operational workspace.</p></div><Button onClick={() => setCreating(true)}><Plus />Create school</Button></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Active schools" value={String(schools.filter((school) => school.status === "Active").length)} note={`${schools.length} total tenant workspaces`} /><Metric label="Pending onboarding" value={String(pending.length)} note="Requires Super Admin approval" /><Metric label="Platform students" value={schools.reduce((total, school) => total + (school.students ?? 0), 0).toLocaleString()} note="Across active and trial schools" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={tab === "schools"} set={() => setTab("schools")} label="School directory" /><Tab active={tab === "onboarding"} set={() => setTab("onboarding")} label={`Onboarding (${pending.length})`} /><Tab active={tab === "platform"} set={() => setTab("platform")} label="Platform health" /></div>{tab === "schools" && <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schools or subdomains" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>}</div>  {tab === "schools" && <Directory schools={filtered} setStatus={updateStatus} onDeleted={removeSchool} rootDomain={rootDomain} />}{tab === "onboarding" && <Onboarding applications={applications} approve={approve} openSignup={() => navigate({ to: "/signup" })} rootDomain={rootDomain} />}{tab === "platform" && <Health schools={schools} />}</section></div>{creating && <CreateDialog name={name} subdomain={subdomain} color={color} setName={(value) => { setName(value); setSubdomain(slugify(value)); }} setSubdomain={(value) => setSubdomain(slugify(value))} setColor={setColor} close={() => setCreating(false)} submit={createSchool} />}</SchoolShell>;
+  return <SchoolShell title="Super Admin" platform><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><ShieldCheck className="size-5" /></div><h1 className="font-display text-3xl font-bold">Klasora Platform</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Control school tenants, approve onboarding, and oversee platform health without entering a school&apos;s operational workspace.</p></div><Button onClick={() => setCreating(true)}><Plus />Create school</Button></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Active schools" value={String(schools.filter((school) => school.status === "Active").length)} note={`${schools.length} total tenant workspaces`} /><Metric label="Pending onboarding" value={String(pending.length)} note="Requires Super Admin approval" /><Metric label="Platform students" value={schools.reduce((total, school) => total + (school.students ?? 0), 0).toLocaleString()} note="Across active and trial schools" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={tab === "schools"} set={() => setTab("schools")} label="School directory" /><Tab active={tab === "onboarding"} set={() => setTab("onboarding")} label={`Onboarding (${pending.length})`} /><Tab active={tab === "platform"} set={() => setTab("platform")} label="Platform health" /></div>{tab === "schools" && <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schools or subdomains" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>}</div>  {tab === "schools" && <Directory schools={schools} query={query} setStatus={updateStatus} onDeleted={removeSchool} rootDomain={rootDomain} />}{tab === "onboarding" && <Onboarding applications={applications} approve={approve} openSignup={() => navigate({ to: "/signup" })} rootDomain={rootDomain} />}{tab === "platform" && <Health schools={schools} />}</section></div>{creating && <CreateDialog name={name} subdomain={subdomain} color={color} setName={(value) => { setName(value); setSubdomain(slugify(value)); }} setSubdomain={(value) => setSubdomain(slugify(value))} setColor={setColor} close={() => setCreating(false)} submit={createSchool} />}</SchoolShell>;
 }
 
-function Directory({ schools, setStatus, onDeleted, rootDomain }: { schools: School[]; setStatus: (id: string, status: SchoolStatus, loadedSchool?: School) => void; onDeleted: (school: School) => void; rootDomain: string | null }) {
+function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schools: School[]; query: string; setStatus: (id: string, status: SchoolStatus, loadedSchool?: School) => void; onDeleted: (school: School) => void; rootDomain: string | null }) {
   const navigate = useNavigate();
   const [directorySchools, setDirectorySchools] = useState(schools);
   const [platformToken, setPlatformToken] = useState("");
@@ -115,10 +146,16 @@ function Directory({ schools, setStatus, onDeleted, rootDomain }: { schools: Sch
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [copiedSchoolId, setCopiedSchoolId] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"All" | SchoolStatus>("All");
   const [deleteTarget, setDeleteTarget] = useState<School | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
   const session = usePlatformSession();
+  const visibleSchools = directorySchools.filter(
+    (school) =>
+      (statusFilter === "All" || school.status === statusFilter) &&
+      `${school.name} ${school.subdomain}`.toLowerCase().includes(query.trim().toLowerCase()),
+  );
 
   const loadSchools = useCallback(async () => {
     setLoading(true);
@@ -140,7 +177,7 @@ function Directory({ schools, setStatus, onDeleted, rootDomain }: { schools: Sch
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setStatus]);
 
   useEffect(() => {
     if (session.authenticated) void loadSchools();
@@ -204,7 +241,31 @@ function Directory({ schools, setStatus, onDeleted, rootDomain }: { schools: Sch
     {session.checkingSession ? <p className="border-b border-border px-5 py-4 text-sm text-muted-foreground">Checking Super Admin session...</p> : session.authenticated ? (
       <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
         <p className="text-xs text-muted-foreground">{loaded ? `${directorySchools.length} saved schools loaded` : "Loading saved schools..."}</p>
-        <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void loadSchools()} disabled={loading}>{loading ? "Loading..." : "Refresh schools"}</Button><Button size="sm" variant="ghost" onClick={() => void session.signOut()}>Sign out</Button></div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="sr-only" htmlFor="school-status-filter">Filter schools by status</label>
+          <select
+            id="school-status-filter"
+            aria-label="Filter schools by status"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as "All" | SchoolStatus)}
+            className="h-9 rounded-md border border-input bg-background px-2 text-xs"
+          >
+            <option>All</option>
+            <option>Active</option>
+            <option>Trial</option>
+            <option>Suspended</option>
+          </select>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => downloadSchoolDirectoryCsv(visibleSchools, rootDomain)}
+            disabled={!visibleSchools.length}
+          >
+            <Download />Export CSV
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void loadSchools()} disabled={loading}>{loading ? "Loading..." : "Refresh schools"}</Button>
+          <Button size="sm" variant="ghost" onClick={() => void session.signOut()}>Sign out</Button>
+        </div>
       </div>
     ) : (
       <div className="border-b border-border px-5 py-4">
@@ -219,7 +280,7 @@ function Directory({ schools, setStatus, onDeleted, rootDomain }: { schools: Sch
       </div>
     )}
     {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
-    {session.authenticated && <DirectoryTable schools={directorySchools} setStatus={updateDirectoryStatus} rootDomain={rootDomain} copiedSchoolId={copiedSchoolId} copyTenantLink={copyTenantLink} onDelete={setDeleteTarget} />}
+    {session.authenticated && <DirectoryTable schools={visibleSchools} setStatus={updateDirectoryStatus} rootDomain={rootDomain} copiedSchoolId={copiedSchoolId} copyTenantLink={copyTenantLink} onDelete={setDeleteTarget} />}
     {!session.authenticated && !session.checkingSession && <p className="px-5 py-10 text-center text-sm text-muted-foreground">Sign in to load schools saved in Neon.</p>}
     {deleteTarget && <DeleteSchoolDialog school={deleteTarget} confirmation={deleteConfirmation} setConfirmation={setDeleteConfirmation} deleting={deleting} onClose={() => { if (!deleting) { setDeleteTarget(null); setDeleteConfirmation(""); } }} onConfirm={() => void deleteSchool()} />}
   </div>;

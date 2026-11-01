@@ -24,6 +24,7 @@ type SchoolClass = {
   name: string;
   academic_year_id: string;
   academic_year_name: string;
+  is_class_teacher: boolean;
 };
 type Term = { id: string; name: string; is_current: boolean; is_closed: boolean };
 type AcademicYear = { id: string; name: string; terms: Term[] };
@@ -242,6 +243,8 @@ function TerminalReportsPage() {
   }
 
   const selectedClass = classes.find((item) => item.id === classId);
+  const canEditTeacherProfile =
+    canPublish === true || selectedClass?.is_class_teacher === true;
   const availableTerms = years.flatMap((year) =>
     year.terms.map((term) => ({ ...term, year_name: year.name })),
   );
@@ -294,6 +297,12 @@ function TerminalReportsPage() {
               Review marks and attendance, add learner profiles and remarks, then save drafts or
               publish reports.
             </p>
+            {!canEditTeacherProfile && (
+              <p className="mt-2 max-w-2xl text-xs text-muted-foreground">
+                Conduct, attitude, interest, and teacher remarks can only be entered by the
+                assigned class teacher. School Admins can manage all class profiles.
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -425,6 +434,7 @@ function TerminalReportsPage() {
                         <Input
                           value={profile[field]}
                           maxLength={80}
+                          disabled={!canEditTeacherProfile}
                           onChange={(event) =>
                             updateProfile(report.student_id, field, event.target.value)
                           }
@@ -461,6 +471,7 @@ function TerminalReportsPage() {
                       <textarea
                         value={profile.teacher_remark}
                         maxLength={2000}
+                        disabled={!canEditTeacherProfile}
                         onChange={(event) =>
                           updateProfile(report.student_id, "teacher_remark", event.target.value)
                         }
