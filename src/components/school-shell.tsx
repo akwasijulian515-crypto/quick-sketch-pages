@@ -18,7 +18,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import headTeacher from "@/assets/head-teacher.jpg";
-import { neonAuthClient } from "../auth/client";
+import { invalidateNeonAccessToken, neonAuthClient } from "../auth/client";
 import { useTenantBranding } from "./tenant-branding-provider";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -253,6 +253,7 @@ function Sidebar({
             prepareSignedOutContext(platform, subdomain);
             if (platform) await fetch("/api/platform/session", { method: "DELETE" });
             await fetch("/api/auth/session", { method: "DELETE" });
+            invalidateNeonAccessToken();
             await neonAuthClient?.signOut().catch(() => undefined);
             onNavigate?.();
             navigate({ to: platform ? "/" : "/login" });
@@ -355,6 +356,7 @@ export function SchoolShell({
               onClick={async () => {
                 prepareSignedOutContext(false, subdomain);
                 await fetch("/api/auth/session", { method: "DELETE" });
+                invalidateNeonAccessToken();
                 await neonAuthClient?.signOut().catch(() => undefined);
                 navigate({ to: "/login" });
               }}
@@ -419,6 +421,15 @@ export function SchoolShell({
             >
               <Menu />
             </Button>
+            <div className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-primary font-display text-sm font-bold text-primary-foreground">
+              {platform ? (
+                <img src="/brand/klasora-icon.png" alt="Klasora" className="size-full object-contain" />
+              ) : crestUrl ? (
+                <img src={crestUrl} alt={`${schoolName} badge`} className="size-full object-cover" />
+              ) : (
+                (schoolName[0] ?? "S")
+              )}
+            </div>
             <div className="hidden h-8 w-px bg-primary/10 sm:block" />
             <div className="min-w-0">
               <p className="hidden truncate text-xs text-muted-foreground sm:block">
@@ -439,6 +450,7 @@ export function SchoolShell({
                 prepareSignedOutContext(platform, subdomain);
                 if (platform) await fetch("/api/platform/session", { method: "DELETE" });
                 await fetch("/api/auth/session", { method: "DELETE" });
+                invalidateNeonAccessToken();
                 await neonAuthClient?.signOut().catch(() => undefined);
                 navigate({ to: platform ? "/" : "/login" });
               }}

@@ -12,10 +12,11 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { fetchWithNeonAuth, neonAuthClient } from "../auth/client";
+import { fetchWithNeonAuth, invalidateNeonAccessToken, neonAuthClient } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { DailyPaymentControls } from "@/components/daily-payment-controls";
 import { LearnerProfileEntry } from "@/components/learner-profile-entry";
+import { useTenantBranding } from "@/components/tenant-branding-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { calculateMarkResult } from "@/lib/grade-calculations";
@@ -34,6 +35,7 @@ type TeacherTab = "register" | "grades" | "coupons";
 
 function TeacherPortal() {
   const navigate = useNavigate();
+  const { schoolName, crestUrl } = useTenantBranding();
   const [allowed, setAllowed] = useState(false);
   const [teacherName, setTeacherName] = useState("");
   const [tab, setTab] = useState<TeacherTab>("register");
@@ -75,8 +77,12 @@ function TeacherPortal() {
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
         <div className="flex items-center gap-2.5">
-          <div className="grid size-9 place-items-center rounded-md bg-primary font-display text-base font-bold text-primary-foreground">
-            S
+          <div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-primary font-display text-base font-bold text-primary-foreground">
+            {crestUrl ? (
+              <img src={crestUrl} alt={`${schoolName} badge`} className="size-full object-cover" />
+            ) : (
+              (schoolName[0] ?? "S")
+            )}
           </div>
           <div className="leading-tight">
             <p className="font-display text-[15px] font-bold">{teacherName || "Teacher Portal"}</p>
@@ -91,6 +97,7 @@ function TeacherPortal() {
             variant="outline"
             size="sm"
             onClick={() => {
+              invalidateNeonAccessToken();
               void neonAuthClient?.signOut();
               navigate({ to: "/login" });
             }}

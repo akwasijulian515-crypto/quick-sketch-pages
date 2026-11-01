@@ -35,6 +35,8 @@ export function ensureNeonAuthClient(): Promise<NeonAuthClient | null> {
 if (typeof window !== "undefined") void ensureNeonAuthClient();
 
 let accessTokenPromise: Promise<string> | null = null;
+let cachedAccessToken: { token: string; expiresAt: number } | null = null;
+let accessTokenGeneration = 0;
 
 function asJwt(value: unknown) {
   if (typeof value !== "string") return null;
@@ -46,6 +48,21 @@ function asSessionCredential(value: unknown) {
   if (typeof value !== "string") return null;
   const token = value.trim().replace(/^Bearer\s+/i, "").trim();
   return /^[\x21-\x7e]{1,4096}$/.test(token) ? token : null;
+}
+
+function jwtExpiry(value: string) {
+  try {
+    const payload = value.split(".")[1];
+    if (!payload) return null;
+    const decoded = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    const parsed: unknown = JSON.parse(decoded);
+    if (!parsed || typeof parsed !== "object" || !("exp" in parsed)) return null;
+    return typeof parsed.exp === "number" && Number.isFinite(parsed.exp)
+      ? parsed.exp * 1000
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 async function loadNeonAccessToken() {
@@ -86,12 +103,31 @@ export async function getNeonSessionCredential() {
 }
 
 export function getNeonAccessToken() {
+  if (cachedAccessToken && cachedAccessToken.expiresAt - Date.now() > 60_000) {
+    return Promise.resolve(cachedAccessToken.token);
+  }
   if (!accessTokenPromise) {
-    accessTokenPromise = loadNeonAccessToken().finally(() => {
-      accessTokenPromise = null;
-    });
+    const generation = accessTokenGeneration;
+    const request = loadNeonAccessToken()
+      .then((token) => {
+        const expiresAt = jwtExpiry(token);
+        if (generation === accessTokenGeneration && expiresAt && expiresAt - Date.now() > 60_000) {
+          cachedAccessToken = { token, expiresAt };
+        }
+        return token;
+      })
+      .finally(() => {
+        if (accessTokenPromise === request) accessTokenPromise = null;
+      });
+    accessTokenPromise = request;
   }
   return accessTokenPromise;
+}
+
+export function invalidateNeonAccessToken() {
+  accessTokenGeneration += 1;
+  cachedAccessToken = null;
+  accessTokenPromise = null;
 }
 
 export async function requestSchoolPasswordReset(email: string) {
@@ -121,6 +157,7 @@ export async function fetchWithNeonAuth(input: RequestInfo | URL, init?: Request
 
   let response = await requestWithCredential(accessToken);
   if (response.status === 401) {
+    invalidateNeonAccessToken();
     const sessionCredential = await getNeonSessionCredential();
     if (sessionCredential !== accessToken) response = await requestWithCredential(sessionCredential);
   }

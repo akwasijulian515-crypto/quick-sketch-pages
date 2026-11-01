@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { ensureNeonAuthClient, getNeonAccessToken } from "../auth/client";
+import { ensureNeonAuthClient, getNeonAccessToken, invalidateNeonAccessToken } from "../auth/client";
 
 export function usePlatformSession() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -55,6 +55,7 @@ export function usePlatformSession() {
   }
 
   async function signOut() {
+    invalidateNeonAccessToken();
     await (await ensureNeonAuthClient())?.signOut().catch(() => undefined);
     await fetch("/api/platform/session", { method: "DELETE" }).catch(() => undefined);
     setAuthenticated(false);

@@ -2,9 +2,10 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { CheckCircle2, GraduationCap, LockKeyhole, LogOut } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { getNeonAccessToken, neonAuthClient } from "../../auth/client";
+import { getNeonAccessToken, invalidateNeonAccessToken, neonAuthClient } from "../../auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useTenantBranding } from "@/components/tenant-branding-provider";
 
 export const Route = createFileRoute("/teacher/promotion")({
   head: () => ({ meta: [{ title: "Class Promotion — Klasora" }, { name: "description", content: "Class teacher promotion register." }] }),
@@ -40,6 +41,7 @@ async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
 
 function PromotionPage() {
   const navigate = useNavigate();
+  const { schoolName, crestUrl } = useTenantBranding();
   const [allowed, setAllowed] = useState(false);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [years, setYears] = useState<AcademicYear[]>([]);
@@ -160,8 +162,8 @@ function PromotionPage() {
   return <div className="relative min-h-screen bg-background font-body text-foreground">
     <div className="pointer-events-none fixed inset-0 ambient-wash" />
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
-      <div className="flex items-center gap-2.5"><div className="grid size-9 place-items-center rounded-md bg-primary font-display text-base font-bold text-primary-foreground">S</div><div className="leading-tight"><p className="font-display text-[15px] font-bold">Teacher Portal</p><p className="text-[11px] text-muted-foreground">Class promotion</p></div></div>
-      <Button variant="outline" size="sm" onClick={() => { void neonAuthClient?.signOut(); navigate({ to: "/login" }); }}><LogOut />Sign out</Button>
+      <div className="flex items-center gap-2.5"><div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-primary font-display text-base font-bold text-primary-foreground">{crestUrl ? <img src={crestUrl} alt={`${schoolName} badge`} className="size-full object-cover" /> : (schoolName[0] ?? "S")}</div><div className="leading-tight"><p className="font-display text-[15px] font-bold">Teacher Portal</p><p className="text-[11px] text-muted-foreground">Class promotion</p></div></div>
+      <Button variant="outline" size="sm" onClick={() => { invalidateNeonAccessToken(); void neonAuthClient?.signOut(); navigate({ to: "/login" }); }}><LogOut />Sign out</Button>
     </header>
     <main className="relative mx-auto max-w-5xl px-4 py-6 sm:px-6">
       <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><GraduationCap className="size-5" /></div><h1 className="font-display text-3xl font-bold">Class promotion</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Submit Term 3 placement recommendations. Enrollment changes only after School Admin approval.</p></div><Button variant="outline" onClick={() => navigate({ to: "/teacher" })}>Back to portal</Button></div>

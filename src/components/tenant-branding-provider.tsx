@@ -61,8 +61,18 @@ export function useTenantBranding() {
 
 export function TenantBrandingProvider({ children }: { children: ReactNode }) {
   const [branding, setBranding] = useState(defaultBranding);
-  const { href: locationHref, pathname } = useRouterState({
-    select: (state) => state.location,
+  const isPlatformRoute = useRouterState({
+    select: (state) => state.location.pathname === "/admin",
+  });
+  const isLoginRoute = useRouterState({
+    select: (state) => state.location.pathname === "/login",
+  });
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const queryTenant = useRouterState({
+    select: (state) =>
+      new URL(state.location.href, "http://localhost").searchParams.get("tenant")?.trim() ?? "",
   });
   const activeContext = useRef("");
   const brandingRef = useRef(defaultBranding);
@@ -93,33 +103,32 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const title =
       branding.schoolName === "Klasora"
-        ? pathname === "/login"
+        ? isLoginRoute
           ? "Sign in — Klasora"
-          : pathname === "/admin"
+          : isPlatformRoute
             ? "Super Admin — Klasora"
             : "Klasora | School operations"
         : `${branding.schoolName} | Klasora`;
     document.title = title;
-  }, [branding.schoolName, pathname]);
+  }, [branding.schoolName, isLoginRoute, isPlatformRoute]);
 
   useEffect(() => {
     let cancelled = false;
-    const isPlatformRoute = pathname === "/admin";
-    const queryTenant = new URLSearchParams(window.location.search).get("tenant")?.trim() ?? "";
     const storedTenant = sessionStorage.getItem("hg-school")?.trim() ?? "";
     const selectedTenant = queryTenant || storedTenant;
     const context = isPlatformRoute ? "platform" : selectedTenant || window.location.host;
 
-    if (activeContext.current !== context) {
+    if (activeContext.current === context) return;
+    const alreadyMatches = isPlatformRoute
+      ? brandingRef.current.schoolName === defaultBranding.schoolName
+      : selectedTenant
+        ? brandingRef.current.subdomain === selectedTenant
+        : false;
+    if (!alreadyMatches) updateTenantBranding(defaultBranding);
+    if (isPlatformRoute) {
       activeContext.current = context;
-      const alreadyMatches = isPlatformRoute
-        ? brandingRef.current.schoolName === defaultBranding.schoolName
-        : selectedTenant
-          ? brandingRef.current.subdomain === selectedTenant
-          : false;
-      if (!alreadyMatches) updateTenantBranding(defaultBranding);
+      return;
     }
-    if (isPlatformRoute) return;
 
     async function loadBranding() {
       try {
@@ -127,7 +136,10 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
           ? `/api/school?tenant=${encodeURIComponent(selectedTenant)}`
           : "/api/school";
         const response = await fetch(endpoint);
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (!cancelled && activeContext.current !== context) activeContext.current = "";
+          return;
+        }
         const payload = (await response.json()) as {
           school?: (Partial<TenantBranding> & { name?: string }) | null;
         };
@@ -146,9 +158,10 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
           crestUrl: school.crestUrl ?? null,
         };
 
+        activeContext.current = context;
         updateTenantBranding(nextBranding);
       } catch {
-        // Keep the platform defaults when no tenant is available.
+        if (!cancelled && activeContext.current !== context) activeContext.current = "";
       }
     }
 
@@ -156,7 +169,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [locationHref, pathname, updateTenantBranding]);
+  }, [isPlatformRoute, pathname, queryTenant, updateTenantBranding]);
 
   return (
     <TenantBrandingContext.Provider value={{ ...branding, updateTenantBranding }}>
