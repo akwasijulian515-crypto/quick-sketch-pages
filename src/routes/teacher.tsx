@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { DailyPaymentControls } from "@/components/daily-payment-controls";
 import { LearnerProfileEntry } from "@/components/learner-profile-entry";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { useOnlineStatus } from "@/hooks/use-online-status";
 import { calculateMarkResult } from "@/lib/grade-calculations";
 
 export const Route = createFileRoute("/teacher")({
@@ -1078,30 +1079,45 @@ function AttendanceRegister() {
 }
 
 function TeacherMarkEntry() {
+  const isOnline = useOnlineStatus();
   const [activeEntryTab, setActiveEntryTab] = useState<"grades" | "profile">("grades");
   const [assignments, setAssignments] = useState<MarkAssignment[]>([]);
   const [selectedKey, setSelectedKey] = useState("");
   const [students, setStudents] = useState<MarkStudent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadRetry, setLoadRetry] = useState(0);
   const [autoSaveState, setAutoSaveState] = useState<"saved" | "pending" | "saving" | "error">(
     "saved",
   );
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const markRevision = useRef(0);
+  const savedRevision = useRef(0);
+  const wasOnline = useRef(isOnline);
   const selected = assignments.find(
     (item) => `${item.class_subject_id}:${item.term_id}` === selectedKey,
   );
 
   useEffect(() => {
     let cancelled = false;
+    if (!isOnline) {
+      setLoading(false);
+      return;
+    }
+    setError("");
+    setLoading(true);
     void teacherApi<{ assignments: MarkAssignment[] }>("/api/school/marks")
       .then((result) => {
         if (cancelled) return;
         setAssignments(result.assignments);
-        const first = result.assignments[0];
-        if (first) setSelectedKey(`${first.class_subject_id}:${first.term_id}`);
+        setSelectedKey((current) =>
+          result.assignments.some((item) => `${item.class_subject_id}:${item.term_id}` === current)
+            ? current
+            : result.assignments[0]
+              ? `${result.assignments[0].class_subject_id}:${result.assignments[0].term_id}`
+              : "",
+        );
       })
       .catch((loadError: unknown) => {
         if (!cancelled)
@@ -1115,7 +1131,7 @@ function TeacherMarkEntry() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isOnline, loadRetry]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1123,14 +1139,20 @@ function TeacherMarkEntry() {
       setStudents([]);
       return;
     }
+    if (!isOnline || markRevision.current !== savedRevision.current) {
+      setLoading(false);
+      return;
+    }
+    const requestedRevision = markRevision.current;
     setLoading(true);
     setError("");
     void teacherApi<{ students: MarkStudent[] }>(
       `/api/school/marks?class_subject_id=${encodeURIComponent(selected.class_subject_id)}&term_id=${encodeURIComponent(selected.term_id)}`,
     )
       .then((result) => {
-        if (!cancelled) {
+        if (!cancelled && markRevision.current === requestedRevision) {
           setStudents(result.students);
+          savedRevision.current = requestedRevision;
           setAutoSaveState("saved");
         }
       })
@@ -1144,7 +1166,7 @@ function TeacherMarkEntry() {
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [isOnline, loadRetry, selected]);
 
   function updateMark(studentId: string, field: (typeof markFields)[number][0], input: string) {
     const limit = markFields.find(([key]) => key === field)?.[2] ?? 0;
@@ -1162,9 +1184,21 @@ function TeacherMarkEntry() {
     setNotice("");
   }
 
+  useEffect(() => {
+    const reconnected = isOnline && !wasOnline.current;
+    wasOnline.current = isOnline;
+    if (reconnected && markRevision.current !== savedRevision.current && students.length > 0) {
+      setAutoSaveState("pending");
+    }
+  }, [isOnline, students.length]);
+
   const saveMarks = useCallback(async (): Promise<boolean> => {
     if (!selected || students.length === 0) return false;
-    const savedRevision = markRevision.current;
+    if (!isOnline) {
+      setAutoSaveState("pending");
+      return false;
+    }
+    const revisionToSave = markRevision.current;
     setSaving(true);
     setAutoSaveState("saving");
     setError("");
@@ -1185,10 +1219,11 @@ function TeacherMarkEntry() {
           })),
         }),
       });
+      savedRevision.current = revisionToSave;
       setNotice(
         "Marks saved. Final score and NaCCA performance level are calculated automatically.",
       );
-      setAutoSaveState(markRevision.current === savedRevision ? "saved" : "pending");
+      setAutoSaveState(markRevision.current === revisionToSave ? "saved" : "pending");
       return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save marks");
@@ -1197,23 +1232,30 @@ function TeacherMarkEntry() {
     } finally {
       setSaving(false);
     }
-  }, [selected, students]);
+  }, [isOnline, selected, students]);
 
   useEffect(() => {
-    if (autoSaveState !== "pending" || saving || !selected || students.length === 0) return;
+    if (!isOnline || autoSaveState !== "pending" || saving || !selected || students.length === 0)
+      return;
     const timer = window.setTimeout(() => {
       void saveMarks();
     }, 900);
     return () => window.clearTimeout(timer);
-  }, [autoSaveState, saveMarks, saving, selected, students.length]);
+  }, [autoSaveState, isOnline, saveMarks, saving, selected, students.length]);
 
   async function changeAssignment(nextKey: string) {
-    if ((autoSaveState === "pending" || autoSaveState === "error") && !(await saveMarks())) return;
+    if (
+      students.length > 0 &&
+      (autoSaveState === "pending" || autoSaveState === "error") &&
+      !(await saveMarks())
+    )
+      return;
     setSelectedKey(nextKey);
   }
 
-  const autoSaveMessage =
-    autoSaveState === "saving"
+  const autoSaveMessage = !isOnline
+    ? "Offline — unsaved changes stay on this page and will retry when connected."
+    : autoSaveState === "saving"
       ? "Saving changes…"
       : autoSaveState === "pending"
         ? "Changes will save automatically…"
@@ -1287,12 +1329,21 @@ function TeacherMarkEntry() {
         </button>
       </div>
       {error && (
-        <p
-          role="alert"
-          className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive"
-        >
-          {error}
-        </p>
+        <div className="mx-5 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/30 px-3 py-2">
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+          {students.length === 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!isOnline || loading}
+              onClick={() => setLoadRetry((current) => current + 1)}
+            >
+              Retry loading
+            </Button>
+          )}
+        </div>
       )}
       {notice && (
         <p

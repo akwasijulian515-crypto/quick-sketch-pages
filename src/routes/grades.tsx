@@ -2,10 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { BookOpenCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { getNeonAccessToken } from "../auth/client";
+import { fetchWithNeonAuth } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { LearnerProfileEntry } from "@/components/learner-profile-entry";
 import { SchoolShell } from "@/components/school-shell";
+import { useOnlineStatus } from "@/hooks/use-online-status";
 import { calculateMarkResult } from "@/lib/grade-calculations";
 
 export const Route = createFileRoute("/grades")({
@@ -53,16 +54,14 @@ const fields: { key: MarkField; label: string; max: number }[] = [
 ];
 
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = await getNeonAccessToken();
   const url = new URL(path, window.location.origin);
   const tenant =
     new URLSearchParams(window.location.search).get("tenant") ??
     sessionStorage.getItem("hg-school");
   if (tenant) url.searchParams.set("tenant", tenant);
   const headers = new Headers(init?.headers);
-  headers.set("authorization", `Bearer ${token}`);
   if (init?.body && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const response = await fetch(`${url.pathname}${url.search}`, { ...init, headers });
+  const response = await fetchWithNeonAuth(`${url.pathname}${url.search}`, { ...init, headers });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message =
@@ -78,18 +77,22 @@ async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function GradesPage() {
+  const isOnline = useOnlineStatus();
   const [activeTab, setActiveTab] = useState<"grades" | "profile">("grades");
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [selection, setSelection] = useState("");
   const [students, setStudents] = useState<StudentMark[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadRetry, setLoadRetry] = useState(0);
   const [autoSaveState, setAutoSaveState] = useState<"saved" | "pending" | "saving" | "error">(
     "saved",
   );
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const markRevision = useRef(0);
+  const savedRevision = useRef(0);
+  const wasOnline = useRef(isOnline);
   const selected = useMemo(
     () => assignments.find((item) => `${item.class_subject_id}:${item.term_id}` === selection),
     [assignments, selection],
@@ -97,12 +100,23 @@ function GradesPage() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!isOnline) {
+      setLoading(false);
+      return;
+    }
+    setError("");
+    setLoading(true);
     void schoolApi<{ assignments: Assignment[] }>("/api/school/marks")
       .then((result) => {
         if (cancelled) return;
         setAssignments(result.assignments);
-        const current = result.assignments[0];
-        if (current) setSelection(`${current.class_subject_id}:${current.term_id}`);
+        setSelection((current) =>
+          result.assignments.some((item) => `${item.class_subject_id}:${item.term_id}` === current)
+            ? current
+            : result.assignments[0]
+              ? `${result.assignments[0].class_subject_id}:${result.assignments[0].term_id}`
+              : "",
+        );
       })
       .catch((loadError: unknown) => {
         if (!cancelled)
@@ -114,13 +128,18 @@ function GradesPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isOnline, loadRetry]);
 
   const loadStudents = useCallback(async () => {
     if (!selected) {
       setStudents([]);
       return;
     }
+    if (!isOnline || markRevision.current !== savedRevision.current) {
+      setLoading(false);
+      return;
+    }
+    const requestedRevision = markRevision.current;
     setLoading(true);
     setError("");
     try {
@@ -129,18 +148,21 @@ function GradesPage() {
         term_id: selected.term_id,
       });
       const result = await schoolApi<{ students: StudentMark[] }>(`/api/school/marks?${query}`);
-      setStudents(result.students);
-      setAutoSaveState("saved");
+      if (markRevision.current === requestedRevision) {
+        setStudents(result.students);
+        savedRevision.current = requestedRevision;
+        setAutoSaveState("saved");
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Could not load student grades");
     } finally {
       setLoading(false);
     }
-  }, [selected]);
+  }, [isOnline, selected]);
 
   useEffect(() => {
     void loadStudents();
-  }, [loadStudents]);
+  }, [loadRetry, loadStudents]);
 
   function updateMark(studentId: string, field: MarkField, value: string, max: number) {
     const score = value === "" ? null : Number(value);
@@ -157,9 +179,21 @@ function GradesPage() {
     setNotice("");
   }
 
+  useEffect(() => {
+    const reconnected = isOnline && !wasOnline.current;
+    wasOnline.current = isOnline;
+    if (reconnected && markRevision.current !== savedRevision.current && students.length > 0) {
+      setAutoSaveState("pending");
+    }
+  }, [isOnline, students.length]);
+
   const save = useCallback(async (): Promise<boolean> => {
     if (!selected || students.length === 0) return false;
-    const savedRevision = markRevision.current;
+    if (!isOnline) {
+      setAutoSaveState("pending");
+      return false;
+    }
+    const revisionToSave = markRevision.current;
     setSaving(true);
     setAutoSaveState("saving");
     setError("");
@@ -180,8 +214,9 @@ function GradesPage() {
           })),
         }),
       });
+      savedRevision.current = revisionToSave;
       setNotice(`Grades saved for ${result.saved} student${result.saved === 1 ? "" : "s"}.`);
-      setAutoSaveState(markRevision.current === savedRevision ? "saved" : "pending");
+      setAutoSaveState(markRevision.current === revisionToSave ? "saved" : "pending");
       return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save grades");
@@ -190,23 +225,30 @@ function GradesPage() {
     } finally {
       setSaving(false);
     }
-  }, [selected, students]);
+  }, [isOnline, selected, students]);
 
   useEffect(() => {
-    if (autoSaveState !== "pending" || saving || !selected || students.length === 0) return;
+    if (!isOnline || autoSaveState !== "pending" || saving || !selected || students.length === 0)
+      return;
     const timer = window.setTimeout(() => {
       void save();
     }, 900);
     return () => window.clearTimeout(timer);
-  }, [autoSaveState, save, saving, selected, students.length]);
+  }, [autoSaveState, isOnline, save, saving, selected, students.length]);
 
   async function changeSelection(nextSelection: string) {
-    if ((autoSaveState === "pending" || autoSaveState === "error") && !(await save())) return;
+    if (
+      students.length > 0 &&
+      (autoSaveState === "pending" || autoSaveState === "error") &&
+      !(await save())
+    )
+      return;
     setSelection(nextSelection);
   }
 
-  const autoSaveMessage =
-    autoSaveState === "saving"
+  const autoSaveMessage = !isOnline
+    ? "Offline — unsaved changes stay on this page and will retry when connected."
+    : autoSaveState === "saving"
       ? "Saving changes…"
       : autoSaveState === "pending"
         ? "Changes will save automatically…"
@@ -227,12 +269,21 @@ function GradesPage() {
           </p>
         </div>
         {error && (
-          <p
-            role="alert"
-            className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-          >
-            {error}
-          </p>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3">
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+            {students.length === 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!isOnline || loading}
+                onClick={() => setLoadRetry((current) => current + 1)}
+              >
+                Retry loading
+              </Button>
+            )}
+          </div>
         )}
         {notice && (
           <p
