@@ -292,6 +292,7 @@ export function SchoolShell({
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminView, setAdminView] = useState(schoolAdmin);
   const navigate = useNavigate();
+  const location = useRouterState({ select: (state) => state.location });
   const { schoolName, subdomain, crestUrl } = useTenantBranding();
 
   useEffect(() => {
@@ -458,7 +459,25 @@ export function SchoolShell({
               <LogOut />
               <span className="max-[420px]:sr-only">Sign out</span>
             </Button>
-            <Button size="sm" className="hidden sm:inline-flex">
+            <Button
+              size="sm"
+              type="button"
+              className={cn(adminView && !platform ? "" : "hidden sm:inline-flex")}
+              onClick={() => {
+                if (!adminView || platform) return;
+                if (location.pathname === "/teachers" && location.search["view"] !== "subjects") {
+                  document
+                    .getElementById("staff-setup")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  return;
+                }
+                void navigate({
+                  to: "/teachers",
+                  search: { view: "teachers" },
+                  hash: "staff-setup",
+                });
+              }}
+            >
               {platform
                 ? "Add school"
                 : adminView
