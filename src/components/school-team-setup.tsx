@@ -444,7 +444,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
       {loading ? (
         <p className="py-5 text-sm text-muted-foreground">Loading school staff...</p>
       ) : (
-        <div className="mt-5 overflow-x-auto">
+        <div className="mobile-cards mt-5 overflow-x-auto">
           <table className="w-full min-w-[620px] text-left text-sm">
             <thead className="border-b text-xs text-muted-foreground">
               <tr>
@@ -460,13 +460,15 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
                 .filter((item) => item.class_subject_id || item.class_teacher_name)
                 .map((item) => (
                   <tr key={item.class_subject_id ?? item.class_id}>
-                    <td className="px-3 py-3">
+                    <td className="break-words px-3 py-3">
                       {item.teacher_name ?? item.class_teacher_name ?? "Unassigned"}
                     </td>
                     <td className="px-3 py-3">Teacher</td>
-                    <td className="px-3 py-3">{item.class_name}</td>
-                    <td className="px-3 py-3">{item.subject_name ?? "—"}</td>
-                    <td className="px-3 py-3">{item.class_teacher_name ?? "Unassigned"}</td>
+                    <td className="break-words px-3 py-3">{item.class_name}</td>
+                    <td className="break-words px-3 py-3">{item.subject_name ?? "—"}</td>
+                    <td className="break-words px-3 py-3">
+                      {item.class_teacher_name ?? "Unassigned"}
+                    </td>
                   </tr>
                 ))}
               {classes.filter((item) => item.class_subject_id || item.class_teacher_name).length ===
@@ -482,7 +484,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
                 <tr key={member.user_id}>
                   <td className="px-3 py-3">
                     {member.display_name}
-                    <p className="text-xs text-muted-foreground">{member.email}</p>
+                    <p className="break-all text-xs text-muted-foreground">{member.email}</p>
                   </td>
                   <td className="px-3 py-3 capitalize">{member.role.replace("_", " ")}</td>
                   <td className="px-3 py-3">—</td>
