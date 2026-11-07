@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { fetchWithNeonAuth } from "@/auth/client";
 import { SchoolShell } from "@/components/school-shell";
@@ -1469,6 +1469,15 @@ function StudentProfile({
   const [savingStatus, setSavingStatus] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+  const [detailsSaveState, setDetailsSaveState] = useState<"idle" | "pending" | "saved" | "error">(
+    "idle",
+  );
+  const pendingDetailsSave = useRef<{ revision: number; payload: Record<string, unknown> } | null>(
+    null,
+  );
+  const detailsSaveRevision = useRef(0);
+  const detailsSaveTimer = useRef<number | null>(null);
+  const detailsSaveInProgress = useRef(false);
   const [deletingStudent, setDeletingStudent] = useState(false);
   const [statusNotice, setStatusNotice] = useState("");
   const [exportingRecord, setExportingRecord] = useState(false);
@@ -1533,47 +1542,114 @@ function StudentProfile({
     }
   }
 
-  async function saveStudentDetails(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    setSavingDetails(true);
-    setError("");
-    setStatusNotice("");
-    try {
-      const result = await schoolApi<{ student: StudentRecord }>(
-        `/api/school/students/${encodeURIComponent(student.id)}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            first_name: String(data.get("first_name") ?? "").trim(),
-            last_name: String(data.get("last_name") ?? "").trim(),
-            admission_number: String(data.get("admission_number") ?? "").trim(),
-            class_id: String(data.get("class_id") ?? ""),
-            joined_on: String(data.get("joined_on") ?? ""),
-            date_of_birth: String(data.get("date_of_birth") ?? ""),
-            gender: String(data.get("gender") ?? "").trim(),
-            address: String(data.get("address") ?? "").trim(),
-            emergency_contact: String(data.get("emergency_contact") ?? "").trim(),
-            medical_notes: String(data.get("medical_notes") ?? "").trim(),
-            guardian: {
-              full_name: String(data.get("guardian_name") ?? "").trim(),
-              phone: String(data.get("guardian_phone") ?? "").trim(),
-              email: String(data.get("guardian_email") ?? "").trim(),
-              relationship: String(data.get("guardian_relationship") ?? "").trim(),
-            },
-          }),
-        },
-      );
-      const updated = mapStudent(result.student);
-      setDetails(updated);
-      onStudentUpdated(updated);
-      setEditingDetails(false);
-      setStatusNotice("Student details saved.");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update student details");
-    } finally {
-      setSavingDetails(false);
+  function queueStudentDetailsSave(form: HTMLFormElement, immediate = false) {
+    if (!form.checkValidity()) {
+      detailsSaveRevision.current += 1;
+      pendingDetailsSave.current = null;
+      if (detailsSaveTimer.current !== null) {
+        window.clearTimeout(detailsSaveTimer.current);
+        detailsSaveTimer.current = null;
+      }
+      setDetailsSaveState("pending");
+      return false;
     }
+
+    const data = new FormData(form);
+    pendingDetailsSave.current = {
+      revision: ++detailsSaveRevision.current,
+      payload: {
+        first_name: String(data.get("first_name") ?? "").trim(),
+        last_name: String(data.get("last_name") ?? "").trim(),
+        admission_number: String(data.get("admission_number") ?? "").trim(),
+        class_id: String(data.get("class_id") ?? ""),
+        joined_on: String(data.get("joined_on") ?? ""),
+        date_of_birth: String(data.get("date_of_birth") ?? ""),
+        gender: String(data.get("gender") ?? "").trim(),
+        address: String(data.get("address") ?? "").trim(),
+        emergency_contact: String(data.get("emergency_contact") ?? "").trim(),
+        medical_notes: String(data.get("medical_notes") ?? "").trim(),
+        guardian: {
+          full_name: String(data.get("guardian_name") ?? "").trim(),
+          phone: String(data.get("guardian_phone") ?? "").trim(),
+          email: String(data.get("guardian_email") ?? "").trim(),
+          relationship: String(data.get("guardian_relationship") ?? "").trim(),
+        },
+      },
+    };
+    setDetailsSaveState("pending");
+    setError("");
+    if (detailsSaveTimer.current !== null) window.clearTimeout(detailsSaveTimer.current);
+    if (immediate) {
+      void flushStudentDetailsSave();
+    } else {
+      detailsSaveTimer.current = window.setTimeout(() => {
+        detailsSaveTimer.current = null;
+        void flushStudentDetailsSave();
+      }, 300);
+    }
+    return true;
+  }
+
+  async function flushStudentDetailsSave() {
+    if (detailsSaveInProgress.current || !pendingDetailsSave.current) return;
+    detailsSaveInProgress.current = true;
+    setSavingDetails(true);
+    try {
+      while (pendingDetailsSave.current) {
+        const job = pendingDetailsSave.current;
+        pendingDetailsSave.current = null;
+        try {
+          const result = await schoolApi<{ student: StudentRecord }>(
+            `/api/school/students/${encodeURIComponent(student.id)}`,
+            { method: "PATCH", body: JSON.stringify(job.payload) },
+          );
+          if (job.revision === detailsSaveRevision.current && !pendingDetailsSave.current) {
+            const updated = mapStudent(result.student);
+            setDetails(updated);
+            onStudentUpdated(updated);
+            setDetailsSaveState("saved");
+          }
+        } catch (cause) {
+          if (!pendingDetailsSave.current) {
+            setError(cause instanceof Error ? cause.message : "Could not update student details");
+            setDetailsSaveState("error");
+          }
+        }
+      }
+    } finally {
+      detailsSaveInProgress.current = false;
+      setSavingDetails(false);
+      if (pendingDetailsSave.current) void flushStudentDetailsSave();
+    }
+  }
+
+  function saveStudentDetails(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    queueStudentDetailsSave(event.currentTarget, true);
+  }
+
+  function finishEditingStudentDetails() {
+    const form = document.getElementById("student-details-form");
+    if (!(form instanceof HTMLFormElement)) {
+      setEditingDetails(false);
+      return;
+    }
+    if (!form.reportValidity()) return;
+    if (detailsSaveTimer.current !== null) {
+      window.clearTimeout(detailsSaveTimer.current);
+      detailsSaveTimer.current = null;
+    }
+    queueStudentDetailsSave(form, true);
+    setEditingDetails(false);
+  }
+
+  function closeStudentProfile() {
+    if (detailsSaveTimer.current !== null) {
+      window.clearTimeout(detailsSaveTimer.current);
+      detailsSaveTimer.current = null;
+    }
+    void flushStudentDetailsSave();
+    onClose();
   }
 
   async function permanentlyDeleteStudent() {
@@ -1636,7 +1712,7 @@ function StudentProfile({
   return (
     <div
       className="fixed inset-0 z-50 bg-foreground/30 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={onClose}
+      onClick={closeStudentProfile}
     >
       <div
         className="bg-card rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
@@ -1673,7 +1749,7 @@ function StudentProfile({
                 {exportingRecord ? "Preparing…" : "Download PDF"}
               </button>
             )}
-            <button onClick={onClose} aria-label="Close student profile">
+            <button onClick={closeStudentProfile} aria-label="Close student profile">
               <X className="w-5 h-5 text-muted-foreground" />
             </button>
           </div>
@@ -1712,7 +1788,23 @@ function StudentProfile({
             <p className="text-sm text-muted-foreground">Loading saved profile details…</p>
           ) : activeTab === "Overview" ? (
             editingDetails ? (
-              <form className="space-y-5" onSubmit={(event) => void saveStudentDetails(event)}>
+              <form
+                id="student-details-form"
+                className="space-y-5"
+                onSubmit={saveStudentDetails}
+                onChange={(event) => queueStudentDetailsSave(event.currentTarget)}
+              >
+                <p role="status" className="text-xs text-muted-foreground" aria-live="polite">
+                  {savingDetails
+                    ? "Saving changes…"
+                    : detailsSaveState === "pending"
+                      ? "Changes will save automatically. Complete required fields to save."
+                      : detailsSaveState === "error"
+                        ? "Could not save your latest changes. Edit a field or use Save now to retry."
+                        : detailsSaveState === "saved"
+                          ? "All changes saved."
+                          : "Changes save automatically as you edit."}
+                </p>
                 <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2">
                   <label className="flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-foreground">
                     First name
@@ -1868,18 +1960,16 @@ function StudentProfile({
                 <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
                   <button
                     type="button"
-                    onClick={() => setEditingDetails(false)}
-                    disabled={savingDetails}
+                    onClick={finishEditingStudentDetails}
                     className="inline-flex min-h-10 w-full items-center justify-center rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition hover:bg-muted disabled:opacity-50 sm:w-auto"
                   >
-                    Cancel
+                    Done
                   </button>
                   <button
                     type="submit"
-                    disabled={savingDetails}
                     className="inline-flex min-h-10 w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-50 sm:w-auto"
                   >
-                    {savingDetails ? "Saving…" : "Save student details"}
+                    {savingDetails ? "Saving…" : "Save now"}
                   </button>
                 </div>
               </form>
@@ -1930,6 +2020,7 @@ function StudentProfile({
                       onClick={() => {
                         setError("");
                         setStatusNotice("");
+                        setDetailsSaveState("idle");
                         setEditingDetails(true);
                       }}
                       disabled={!details}
