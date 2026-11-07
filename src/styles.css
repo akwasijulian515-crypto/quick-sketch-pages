@@ -338,6 +338,7 @@
   .mobile-cards td {
     display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
     padding: 0.35rem 0 !important; border: 0 !important; text-align: right; white-space: normal !important;
+    overflow-wrap: anywhere;
   }
   .mobile-cards td > * { min-width: 0; }
   .mobile-cards td[data-label]::before {

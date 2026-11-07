@@ -495,7 +495,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
         </div>
       )}
       {!loading && members.length > 0 && (
-        <div className="mt-6 overflow-x-auto">
+        <div className="mobile-cards mt-6 overflow-x-auto">
           <h3 className="mb-2 text-sm font-semibold">School accounts</h3>
           <table className="w-full min-w-[620px] text-left text-sm">
             <thead className="border-b text-xs text-muted-foreground">
@@ -510,9 +510,9 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
             <tbody className="divide-y divide-border/70">
               {members.map((member) => (
                 <tr key={`account-${member.user_id}-${member.role}`}>
-                  <td className="px-3 py-3">{member.display_name}</td>
+                  <td className="px-3 py-3 break-words">{member.display_name}</td>
                   <td className="px-3 py-3 capitalize">{member.role.replace("_", " ")}</td>
-                  <td className="px-3 py-3">{member.email}</td>
+                  <td className="break-all px-3 py-3">{member.email}</td>
                   <td className="px-3 py-3">{member.active ? "Active" : "Archived"}</td>
                   <td className="px-3 py-3">
                     <div className="flex flex-wrap gap-2">

@@ -456,7 +456,7 @@ function TeachersPage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="mobile-cards overflow-x-auto">
             <table className="w-full min-w-[680px] text-left text-sm">
               <thead className="bg-muted/40 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
                 <tr>
@@ -489,8 +489,8 @@ function TeachersPage() {
                             {row.teacher.slice(0, 1)}
                           </span>
                           <span className="min-w-0">
-                            <span className="block font-semibold">{row.teacher}</span>
-                            <span className="mt-0.5 block text-xs text-muted-foreground">
+                            <span className="block break-words font-semibold">{row.teacher}</span>
+                            <span className="mt-0.5 block break-all text-xs text-muted-foreground">
                               {row.email}
                             </span>
                           </span>
@@ -632,7 +632,7 @@ function TeachersPage() {
                           {classNames.length ? (
                             <span className="inline-flex items-center gap-2 text-muted-foreground">
                               <span className="size-1.5 rounded-full bg-emerald-500" />
-                              {classNames.join(", ")}
+                              <span className="break-words">{classNames.join(", ")}</span>
                             </span>
                           ) : (
                             <Badge value="Not assigned" />
@@ -644,7 +644,7 @@ function TeachersPage() {
                               <span className="grid size-7 place-items-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">
                                 {teacherNames[0]?.slice(0, 1)}
                               </span>
-                              {teacherNames.join(", ")}
+                              <span className="break-words">{teacherNames.join(", ")}</span>
                             </span>
                           ) : (
                             <Badge value="Needs teacher" />

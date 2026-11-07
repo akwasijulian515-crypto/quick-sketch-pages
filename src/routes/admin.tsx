@@ -239,7 +239,7 @@ function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schoo
 
   return <div>
     {session.checkingSession ? <p className="border-b border-border px-5 py-4 text-sm text-muted-foreground">Checking Super Admin session...</p> : session.authenticated ? (
-      <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+      <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <p className="text-xs text-muted-foreground">{loaded ? `${directorySchools.length} saved schools loaded` : "Loading saved schools..."}</p>
         <div className="flex flex-wrap items-center gap-2">
           <label className="sr-only" htmlFor="school-status-filter">Filter schools by status</label>
@@ -286,11 +286,123 @@ function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schoo
   </div>;
 }
 
-function DirectoryTable({ schools, setStatus, rootDomain, copiedSchoolId, copyTenantLink, onDelete }: { schools: School[]; setStatus: (id: string, status: SchoolStatus) => void; rootDomain: string | null; copiedSchoolId: string; copyTenantLink: (school: School) => void; onDelete: (school: School) => void }) {
-  return <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm"><thead className="bg-muted/60 text-xs text-muted-foreground"><tr>{["School", "Workspace", "Students", "Admins", "Status", "Control"].map((column) => <th key={column} className="px-5 py-3 font-medium">{column}</th>)}</tr></thead><tbody className="divide-y divide-border/70">{schools.map((school) => {
-    const loginUrl = tenantLoginUrl(school.subdomain, rootDomain);
-    return <tr key={school.id} className="hover:bg-muted/30"><td className="px-5 py-4"><div className="flex items-center gap-3"><div className="grid size-8 place-items-center rounded-md text-white" style={{ backgroundColor: school.color }}><Building2 className="size-4" /></div><span className="font-medium">{school.name}</span></div></td><td className="px-5 py-4"><div className="flex items-center gap-2"><a href={loginUrl} target="_blank" rel="noreferrer" className="max-w-64 break-all font-mono text-xs text-secondary-foreground underline">{loginUrl}</a><Button size="icon" variant="ghost" aria-label={`Copy ${school.name} tenant login link`} title="Copy tenant login link" onClick={() => copyTenantLink(school)}>{copiedSchoolId === school.id ? <Check /> : <Copy />}</Button><a href={loginUrl} target="_blank" rel="noreferrer" aria-label={`Open ${school.name} tenant login`} title="Open tenant login" className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"><ExternalLink className="size-4" /></a></div></td><td className="px-5 py-4">{(school.students ?? 0).toLocaleString()}</td><td className="px-5 py-4">{school.admins}</td><td className="px-5 py-4"><Status status={school.status} /></td><td className="px-5 py-4"><div className="flex items-center gap-2"><select value={school.status} onChange={(event) => setStatus(school.id, event.target.value as SchoolStatus)} className="h-8 rounded-md border border-input bg-background px-2 text-xs outline-none"><option>Active</option><option>Trial</option><option>Suspended</option></select><Button type="button" size="icon" variant="ghost" aria-label={`Permanently delete ${school.name}`} title={`Permanently delete ${school.name}`} onClick={() => onDelete(school)} className="text-destructive hover:bg-destructive/10 hover:text-destructive"><Trash2 className="size-4" /></Button></div></td></tr>;
-  })}</tbody></table>{schools.length === 0 && <p className="px-5 py-10 text-center text-sm text-muted-foreground">No schools loaded. Enter the platform token above to load saved schools.</p>}</div>;
+function DirectoryTable({
+  schools,
+  setStatus,
+  rootDomain,
+  copiedSchoolId,
+  copyTenantLink,
+  onDelete,
+}: {
+  schools: School[];
+  setStatus: (id: string, status: SchoolStatus) => void;
+  rootDomain: string | null;
+  copiedSchoolId: string;
+  copyTenantLink: (school: School) => void;
+  onDelete: (school: School) => void;
+}) {
+  return (
+    <div className="mobile-cards overflow-x-auto px-3 sm:px-0">
+      <table className="w-full min-w-[820px] text-left text-sm">
+        <thead className="bg-muted/60 text-xs text-muted-foreground">
+          <tr>
+            {["School", "Workspace", "Students", "Admins", "Status", "Control"].map((column) => (
+              <th key={column} className="px-5 py-3 font-medium">
+                {column}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/70">
+          {schools.map((school) => {
+            const loginUrl = tenantLoginUrl(school.subdomain, rootDomain);
+            return (
+              <tr key={school.id} className="hover:bg-muted/30">
+                <td className="px-5 py-4">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div
+                      className="grid size-8 shrink-0 place-items-center rounded-md text-white"
+                      style={{ backgroundColor: school.color }}
+                    >
+                      <Building2 className="size-4" />
+                    </div>
+                    <span className="min-w-0 break-words font-medium">{school.name}</span>
+                  </div>
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <a
+                      href={loginUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="min-w-0 max-w-64 break-all font-mono text-xs text-secondary-foreground underline"
+                    >
+                      {loginUrl}
+                    </a>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Copy ${school.name} tenant login link`}
+                      title="Copy tenant login link"
+                      onClick={() => copyTenantLink(school)}
+                    >
+                      {copiedSchoolId === school.id ? <Check /> : <Copy />}
+                    </Button>
+                    <a
+                      href={loginUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Open ${school.name} tenant login`}
+                      title="Open tenant login"
+                      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted"
+                    >
+                      <ExternalLink className="size-4" />
+                    </a>
+                  </div>
+                </td>
+                <td className="px-5 py-4">{(school.students ?? 0).toLocaleString()}</td>
+                <td className="px-5 py-4">{school.admins}</td>
+                <td className="px-5 py-4">
+                  <Status status={school.status} />
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={school.status}
+                      onChange={(event) =>
+                        setStatus(school.id, event.target.value as SchoolStatus)
+                      }
+                      className="h-8 max-w-full rounded-md border border-input bg-background px-2 text-xs outline-none"
+                    >
+                      <option>Active</option>
+                      <option>Trial</option>
+                      <option>Suspended</option>
+                    </select>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Permanently delete ${school.name}`}
+                      title={`Permanently delete ${school.name}`}
+                      onClick={() => onDelete(school)}
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {schools.length === 0 && (
+        <p className="px-5 py-10 text-center text-sm text-muted-foreground">
+          No schools loaded. Enter the platform token above to load saved schools.
+        </p>
+      )}
+    </div>
+  );
 }
 
 function DeleteSchoolDialog({ school, confirmation, setConfirmation, deleting, onClose, onConfirm }: { school: School; confirmation: string; setConfirmation: (value: string) => void; deleting: boolean; onClose: () => void; onConfirm: () => void }) {
