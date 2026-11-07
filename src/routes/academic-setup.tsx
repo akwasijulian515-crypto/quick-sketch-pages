@@ -28,6 +28,7 @@ type AcademicYear = {
     school_days: number;
     is_current: boolean;
     is_closed: boolean;
+    attendance_register_closed_at: string | null;
     arrears_processed_at: string | null;
   }[];
 };
@@ -149,6 +150,27 @@ function AcademicSetupPage() {
     }
   }
 
+  async function closeAttendanceRegister(termId: string, termName: string) {
+    if (!window.confirm(`Close the attendance register for ${termName}? Teachers will no longer be able to edit attendance dates in this term.`)) {
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await schoolApi(`/api/school/terms/${encodeURIComponent(termId)}/close-attendance-register`, {
+        method: "POST",
+        body: "{}",
+      });
+      setNotice(`${termName} attendance register is closed.`);
+      await load();
+    } catch (closeError) {
+      setError(closeError instanceof Error ? closeError.message : "Could not close attendance register");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <SchoolShell title="Academic setup" schoolAdmin>
       <div className="mx-auto max-w-6xl rise">
@@ -180,7 +202,7 @@ function AcademicSetupPage() {
           {loading ? <p className="py-6 text-sm text-muted-foreground">Loading academic periods...</p> : years.length === 0 ? <p className="py-6 text-sm text-muted-foreground">No academic years yet. Add a year to get started.</p> : (
             <div className="mt-3 space-y-4">{years.map((year) => <article key={year.id} className="rounded-md border border-border p-4">
               <h3 className="font-semibold">{year.name}{year.is_current ? " · Current" : ""}<span className="ml-2 text-xs font-normal text-muted-foreground">{year.terms.length}/3 terms configured</span></h3>
-              {year.terms.length ? <ul className="mt-3 divide-y divide-border/70">{year.terms.map((term) => <li key={term.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><span>{term.name} · {term.starts_on} to {term.ends_on}{term.is_current ? " · Current" : ""}{term.is_closed ? " · Closed" : ""}<span className="block text-xs text-muted-foreground">{term.school_days} school days (weekdays, excluding holidays) · {term.arrears_processed_at ? "Term-fee arrears carried forward" : term.ends_on < new Date().toISOString().slice(0, 10) ? "Arrears will carry after pending payments are resolved and next-term fees are set up" : "Unpaid term-based fees carry forward after the end date"}</span></span>{term.name.toLowerCase().includes("term 3") && !term.is_closed && <Button size="sm" variant="outline" disabled={saving} onClick={() => void closeTerm(term.id)}>Close Term 3</Button>}</li>)}</ul> : <p className="mt-2 text-sm text-muted-foreground">No terms set for this year.</p>}
+              {year.terms.length ? <ul className="mt-3 divide-y divide-border/70">{year.terms.map((term) => <li key={term.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><span>{term.name} · {term.starts_on} to {term.ends_on}{term.is_current ? " · Current" : ""}{term.is_closed ? " · Term closed" : ""}<span className="block text-xs text-muted-foreground">{term.school_days} school days (weekdays, excluding holidays) · {term.attendance_register_closed_at ? "Attendance register closed" : "Attendance register open"} · {term.arrears_processed_at ? "Term-fee arrears carried forward" : term.ends_on < new Date().toISOString().slice(0, 10) ? "Arrears will carry after pending payments are resolved and next-term fees are set up" : "Unpaid term-based fees carry forward after the end date"}</span></span><div className="flex gap-2">{!term.attendance_register_closed_at && <Button size="sm" variant="outline" disabled={saving} onClick={() => void closeAttendanceRegister(term.id, term.name)}>Close attendance register</Button>}{term.name.toLowerCase().includes("term 3") && !term.is_closed && <Button size="sm" variant="outline" disabled={saving} onClick={() => void closeTerm(term.id)}>Close Term 3</Button>}</div></li>)}</ul> : <p className="mt-2 text-sm text-muted-foreground">No terms set for this year.</p>}
             </article>)}</div>
           )}
         </section>

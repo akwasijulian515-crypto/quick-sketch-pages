@@ -959,6 +959,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     /^\/api\/school\/teaching-assignments\/([0-9a-f-]+)$/i,
   );
   const termCloseMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)\/close$/i);
+  const termAttendanceRegisterCloseMatch = url.pathname.match(
+    /^\/api\/school\/terms\/([0-9a-f-]+)\/close-attendance-register$/i,
+  );
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
   const guardianLifecycleMatch = url.pathname.match(/^\/api\/school\/guardians\/([0-9a-f-]+)$/i);
   const teacherLifecycleMatch = url.pathname.match(
@@ -967,6 +970,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const studentHistoryMatch = url.pathname.match(
     /^\/api\/school\/students\/([0-9a-f-]+)\/history\/(attendance|grades)$/i,
   );
+  const feeRuleMatch = url.pathname.match(/^\/api\/school\/fees\/([0-9a-f-]+)$/i);
   const paymentReviewMatch = url.pathname.match(/^\/api\/school\/payments\/([0-9a-f-]+)\/review$/i);
   const workflowRoles: Record<string, Record<string, readonly string[]>> = {
     "/api/school/dashboard": { GET: ["school_admin"] },
@@ -1025,13 +1029,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       : undefined) ??
     (studentProfileMatch && request.method === "DELETE" ? ["school_admin"] : undefined) ??
     (studentHistoryMatch && request.method === "GET" ? ["school_admin"] : undefined) ??
+    (feeRuleMatch && ["PATCH", "DELETE"].includes(request.method) ? ["school_admin"] : undefined) ??
     (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
     (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined) ??
     (classLifecycleMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
     (teachingAssignmentLifecycleMatch && ["PATCH", "DELETE"].includes(request.method)
       ? ["school_admin"]
       : undefined) ??
-    (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
+    (termCloseMatch && request.method === "POST" ? ["school_admin"] : undefined) ??
+    (termAttendanceRegisterCloseMatch && request.method === "POST" ? ["school_admin"] : undefined);
   const schoolDataRoute =
     url.pathname === "/api/school/classes" ||
     url.pathname === "/api/school/students" ||
@@ -1049,6 +1055,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     classLifecycleMatch !== null ||
     teachingAssignmentLifecycleMatch !== null ||
     termCloseMatch !== null ||
+    termAttendanceRegisterCloseMatch !== null ||
     workflowMethodRoles !== undefined;
   if (schoolDataRoute) {
     const isGet = request.method === "GET";
@@ -2532,6 +2539,26 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       return json({ term: rows[0] });
     }
 
+    if (termAttendanceRegisterCloseMatch) {
+      const termId = termAttendanceRegisterCloseMatch[1];
+      if (!uuidOrNull(termId)) return badRequest("Invalid term ID");
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) => tx`
+          update terms
+          set attendance_register_closed_at = now(),
+              attendance_register_closed_by_user_id = ${school.userId}::uuid
+          where id = ${termId}::uuid and school_id = ${school.schoolId}::uuid
+            and attendance_register_closed_at is null
+          returning id, name, attendance_register_closed_at
+        `,
+      );
+      if (!rows[0])
+        return json({ error: "Term not found or its attendance register is already closed" }, 409);
+      return json({ term: rows[0] });
+    }
+
     if (url.pathname === "/api/school/student-attendance" && request.method === "GET") {
       const attendanceDate =
         url.searchParams.get("date")?.trim() || new Date().toISOString().slice(0, 10);
@@ -2793,6 +2820,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             (tx) =>
               tx`
               select c.id, c.name, ay.name as academic_year_name,
+                     active_term.attendance_register_closed_at::text as attendance_register_closed_at,
                      exists (
                        select 1 from school_holidays h
                        where h.school_id = c.school_id and h.holiday_date = ${attendanceDate}::date
@@ -2815,6 +2843,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                      coalesce(attendance.marked_count, 0)::int as marked_count
               from classes c
               join academic_years ay on ay.id = c.academic_year_id and ay.school_id = c.school_id
+              left join lateral (
+                select t.attendance_register_closed_at
+                from terms t
+                where t.school_id = c.school_id and t.academic_year_id = c.academic_year_id
+                  and ${attendanceDate}::date between t.starts_on and t.ends_on
+                order by t.starts_on desc
+                limit 1
+              ) active_term on true
               left join lateral (
                 select count(*) filter (where r.status = 'present') as present_count,
                        count(*) filter (where r.status = 'late') as late_count,
@@ -3019,6 +3055,20 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           `,
         );
         if (holidays[0]) return json({ session_id: null, students: [], holiday: holidays[0] });
+        const attendanceRegisterRows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
+            select t.attendance_register_closed_at::text as attendance_register_closed_at
+            from terms t
+            join classes c on c.id = ${classId}::uuid and c.school_id = t.school_id
+              and c.academic_year_id = t.academic_year_id
+            where t.school_id = ${school.schoolId}::uuid
+              and ${attendanceDate}::date between t.starts_on and t.ends_on
+            order by t.starts_on desc
+            limit 1
+          `,
+        );
         const rows = await withDatabaseContext(
           sql,
           { schoolId: school.schoolId },
@@ -3057,6 +3107,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         );
         return json({
           session_id: rows[0]?.["session_id"] ?? null,
+          attendance_register_closed_at:
+            attendanceRegisterRows[0]?.["attendance_register_closed_at"] ?? null,
           students: rows.map((row) => ({
             id: String(row["student_id"]),
             first_name: String(row["first_name"]),
@@ -3115,11 +3167,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           409,
         );
 
-      const rows = await withDatabaseContext(
-        sql,
-        { schoolId: school.schoolId },
-        (tx) =>
-          tx`
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+        tx`
+            select t.id
+            from terms t
+            join classes c on c.school_id = t.school_id
+              and c.academic_year_id = t.academic_year_id
+              and c.id = ${requestedClassId}::uuid
+            where t.school_id = ${school.schoolId}::uuid
+              and ${attendanceDate}::date between t.starts_on and t.ends_on
+            for update of t
+          `,
+        tx`
           with authorized_class as materialized (
             select c.id, c.school_id, c.class_teacher_id
             from classes c
@@ -3157,6 +3216,16 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 select 1 from school_holidays h
                 where h.school_id = c.school_id and h.holiday_date = ${attendanceDate}::date
               )
+              and not exists (
+                select 1
+                from terms t
+                join classes term_class on term_class.school_id = t.school_id
+                  and term_class.academic_year_id = t.academic_year_id
+                  and term_class.id = c.id
+                where t.school_id = c.school_id
+                  and ${attendanceDate}::date between t.starts_on and t.ends_on
+                  and t.attendance_register_closed_at is not null
+              )
             on conflict (class_id, attendance_date) do update
               set taken_by_staff_id = excluded.taken_by_staff_id
             returning id, school_id
@@ -3177,13 +3246,33 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                  (select count(*)::int from saved_records) as saved_count,
                  (select id from created_session limit 1) as session_id
         `,
-      );
+      ]);
       if (!Number(rows[0]?.["authorized_count"] ?? 0))
         return json({ error: "You are not assigned as class teacher for this class" }, 403);
       if (
         Number(rows[0]?.["roster_count"] ?? 0) !== records.length ||
         Number(rows[0]?.["saved_count"] ?? 0) !== records.length
       ) {
+        const closedRegister = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
+            select 1
+            from terms t
+            join classes c on c.school_id = t.school_id
+              and c.academic_year_id = t.academic_year_id
+              and c.id = ${requestedClassId}::uuid
+            where t.school_id = ${school.schoolId}::uuid
+              and ${attendanceDate}::date between t.starts_on and t.ends_on
+              and t.attendance_register_closed_at is not null
+            limit 1
+          `,
+        );
+        if (closedRegister.length)
+          return json(
+            { error: "This term's attendance register is closed and can no longer be changed." },
+            409,
+          );
         const concurrentHoliday = await withDatabaseContext(
           sql,
           { schoolId: school.schoolId },
@@ -3213,6 +3302,101 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         session_id: rows[0]?.["session_id"],
         saved_count: Number(rows[0]?.["saved_count"] ?? 0),
       });
+    }
+
+    if (feeRuleMatch) {
+      const feeId = feeRuleMatch[1];
+      if (!uuidOrNull(feeId)) return badRequest("Invalid fee rule ID");
+
+      if (request.method === "DELETE") {
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
+            update class_fees
+            set is_active = false
+            where id = ${feeId}::uuid and school_id = ${school.schoolId}::uuid
+            returning id, is_active
+          `,
+        );
+        if (!rows[0]) return json({ error: "Fee rule not found" }, 404);
+        return json({ fee: rows[0] });
+      }
+
+      if (request.method !== "PATCH") return json({ error: "Method not allowed" }, 405);
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const yearId = body["academic_year_id"];
+      const termId = body["term_id"] ?? null;
+      const feeType = body["fee_type"];
+      const description = typeof body["description"] === "string" ? body["description"].trim() : "";
+      const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
+      const currency =
+        typeof body["currency"] === "string" ? body["currency"].trim().toUpperCase() : "";
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(yearId) || !yearId || !uuidOrNull(termId))
+        return badRequest("Choose a valid class, academic year, and term");
+      if (!["daily", "daily_feeding", "tuition", "pta", "exam", "other"].includes(String(feeType)))
+        return badRequest("Choose a valid fee type");
+      if ((feeType === "daily" || feeType === "daily_feeding") && termId)
+        return badRequest(
+          "Daily fees apply to the whole academic year and cannot be term-specific",
+        );
+      if (description.length < 2 || description.length > 160)
+        return badRequest("Fee description must be 2–160 characters");
+      if (!Number.isFinite(amount) || amount < 0 || amount > 99_999_999.99)
+        return badRequest("Enter a valid non-negative fee amount");
+      if (!/^[A-Z]{3}$/.test(currency)) return badRequest("Currency must be a three-letter code");
+
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) => tx`
+          with valid_period as materialized (
+            select c.id as class_id, ay.id as academic_year_id, t.id as term_id
+            from classes c
+            join academic_years ay
+              on ay.id = ${yearId}::uuid and ay.school_id = c.school_id
+            left join terms t
+              on t.id = ${termId}::uuid and t.academic_year_id = ay.id and t.school_id = c.school_id
+            where c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
+              and c.academic_year_id = ay.id
+              and ((${termId}::uuid is null) or t.id is not null)
+          )
+          update class_fees f
+          set class_id = period.class_id,
+              academic_year_id = period.academic_year_id,
+              term_id = period.term_id,
+              fee_type = ${feeType},
+              description = ${description},
+              amount = ${amount},
+              currency = ${currency},
+              is_active = true
+          from valid_period period
+          where f.id = ${feeId}::uuid and f.school_id = ${school.schoolId}::uuid
+            and not exists (
+              select 1 from class_fees duplicate
+              where duplicate.school_id = f.school_id and duplicate.id <> f.id
+                and duplicate.class_id = period.class_id
+                and duplicate.academic_year_id = period.academic_year_id
+                and duplicate.term_id is not distinct from period.term_id
+                and duplicate.fee_type = ${feeType}
+            )
+          returning f.id, f.class_id, f.academic_year_id, f.term_id, f.fee_type,
+                    f.description, f.amount, f.currency, f.is_active
+        `,
+      );
+      if (!rows[0])
+        return json(
+          {
+            error:
+              "Fee rule was not found or another rule already exists for that class, period, and fee type",
+          },
+          409,
+        );
+      return json({ fee: rows[0] });
     }
 
     if (url.pathname === "/api/school/fees") {
@@ -5010,6 +5194,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                )) as term_school_days,
             (current_date between t.starts_on and t.ends_on) as term_is_current,
             t.is_closed as term_is_closed,
+            t.attendance_register_closed_at,
             t.arrears_processed_at as term_arrears_processed_at
           from academic_years ay
           left join terms t on t.academic_year_id = ay.id and t.school_id = ay.school_id
@@ -5032,6 +5217,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             school_days: number;
             is_current: boolean;
             is_closed: boolean;
+            attendance_register_closed_at: string | null;
             arrears_processed_at: string | null;
           }[];
         }
@@ -5058,6 +5244,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             school_days: Number(row["term_school_days"] ?? 0),
             is_current: row["term_is_current"] === true,
             is_closed: row["term_is_closed"] === true,
+            attendance_register_closed_at:
+              row["attendance_register_closed_at"] == null
+                ? null
+                : String(row["attendance_register_closed_at"]),
             arrears_processed_at:
               row["term_arrears_processed_at"] == null
                 ? null

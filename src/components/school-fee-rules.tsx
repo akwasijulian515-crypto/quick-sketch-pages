@@ -23,6 +23,7 @@ type FeeRule = {
   description: string;
   amount: number | string;
   currency: string;
+  is_active: boolean;
 };
 
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
@@ -65,6 +66,7 @@ export function SchoolFeeRules() {
   const [yearId, setYearId] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editingRule, setEditingRule] = useState<FeeRule | null>(null);
   const [dailyFeeSplitEnabled, setDailyFeeSplitEnabled] = useState(false);
   const [error, setError] = useState("");
   const selectedYear =
@@ -114,24 +116,65 @@ export function SchoolFeeRules() {
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     try {
-      await schoolApi("/api/school/fees", {
-        method: "POST",
-        body: JSON.stringify({
-          class_id: classId,
-          academic_year_id: yearId || selectedYear?.id,
-          term_id: ["daily", "daily_feeding"].includes(String(form.get("fee_type")))
-            ? null
-            : form.get("term_id") || null,
-          fee_type: form.get("fee_type"),
-          description: form.get("description"),
-          amount: Number(form.get("amount")),
-          currency: form.get("currency"),
-        }),
-      });
+      await schoolApi(
+        editingRule ? `/api/school/fees/${encodeURIComponent(editingRule.id)}` : "/api/school/fees",
+        {
+          method: editingRule ? "PATCH" : "POST",
+          body: JSON.stringify({
+            class_id: classId,
+            academic_year_id: yearId || selectedYear?.id,
+            term_id: ["daily", "daily_feeding"].includes(String(form.get("fee_type")))
+              ? null
+              : form.get("term_id") || null,
+            fee_type: form.get("fee_type"),
+            description: form.get("description"),
+            amount: Number(form.get("amount")),
+            currency: form.get("currency"),
+          }),
+        },
+      );
       await load();
+      setEditingRule(null);
       formElement.reset();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Could not save fee rule");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setRuleActive(fee: FeeRule, active: boolean) {
+    if (
+      !active &&
+      !window.confirm(
+        `Delete the ${fee.description} fee rule? Existing receipts and balances will be preserved.`,
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await schoolApi(`/api/school/fees/${encodeURIComponent(fee.id)}`, {
+        method: active ? "PATCH" : "DELETE",
+        ...(active
+          ? {
+              body: JSON.stringify({
+                class_id: fee.class_id,
+                academic_year_id: fee.academic_year_id,
+                term_id: fee.term_id,
+                fee_type: fee.fee_type,
+                description: fee.description,
+                amount: Number(fee.amount),
+                currency: fee.currency,
+              }),
+            }
+          : {}),
+      });
+      if (editingRule?.id === fee.id) setEditingRule(null);
+      await load();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Could not update fee rule");
     } finally {
       setSaving(false);
     }
@@ -163,9 +206,13 @@ export function SchoolFeeRules() {
       ) : (
         <>
           <form
+            key={editingRule?.id ?? "new-fee-rule"}
             onSubmit={(event) => void save(event)}
             className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
           >
+            <h3 className="font-display text-base font-semibold sm:col-span-2 lg:col-span-4">
+              {editingRule ? `Edit fee rule · ${editingRule.description}` : "Add fee rule"}
+            </h3>
             <label className="space-y-1 text-xs font-medium text-muted-foreground">
               Class
               <select
@@ -203,6 +250,7 @@ export function SchoolFeeRules() {
               Fee type
               <select
                 name="fee_type"
+                defaultValue={editingRule?.fee_type ?? "daily"}
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
               >
                 <option value="daily">
@@ -221,6 +269,7 @@ export function SchoolFeeRules() {
               Term (optional)
               <select
                 name="term_id"
+                defaultValue={editingRule?.term_id ?? ""}
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
               >
                 <option value="">Whole academic year</option>
@@ -238,6 +287,7 @@ export function SchoolFeeRules() {
                 required
                 minLength={2}
                 maxLength={160}
+                defaultValue={editingRule?.description ?? ""}
                 placeholder="e.g. Daily feeding fee"
               />
             </label>
@@ -250,17 +300,34 @@ export function SchoolFeeRules() {
                 min="0"
                 max="99999999.99"
                 step="0.01"
+                defaultValue={editingRule?.amount ?? ""}
                 placeholder="0.00"
               />
             </label>
             <label className="space-y-1 text-xs font-medium text-muted-foreground">
               Currency
-              <Input name="currency" required minLength={3} maxLength={3} defaultValue="GHS" />
+              <Input
+                name="currency"
+                required
+                minLength={3}
+                maxLength={3}
+                defaultValue={editingRule?.currency ?? "GHS"}
+              />
             </label>
-            <div className="flex items-end">
+            <div className="flex items-end gap-2">
               <Button type="submit" disabled={saving || !classId || !selectedYear}>
-                {saving ? "Saving..." : "Save fee rule"}
+                {saving ? "Saving..." : editingRule ? "Update fee rule" : "Save fee rule"}
               </Button>
+              {editingRule && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={saving}
+                  onClick={() => setEditingRule(null)}
+                >
+                  Cancel
+                </Button>
+              )}
             </div>
           </form>
           {fees.length === 0 ? (
@@ -272,7 +339,7 @@ export function SchoolFeeRules() {
               <table className="w-full min-w-[620px] text-left text-sm">
                 <thead className="border-b text-xs text-muted-foreground">
                   <tr>
-                    {["Class", "Fee", "Period", "Amount"].map((label) => (
+                    {["Class", "Fee", "Period", "Amount", "Actions"].map((label) => (
                       <th key={label} className="px-3 py-2 font-medium">
                         {label}
                       </th>
@@ -298,6 +365,35 @@ export function SchoolFeeRules() {
                       <td className="px-3 py-3">{fee.term_name ?? fee.academic_year_name}</td>
                       <td className="px-3 py-3">
                         {fee.currency} {Number(fee.amount).toFixed(2)}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={saving}
+                            onClick={() => {
+                              setEditingRule(fee);
+                              setClassId(fee.class_id);
+                              setYearId(fee.academic_year_id);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={saving}
+                            onClick={() => void setRuleActive(fee, !fee.is_active)}
+                          >
+                            {fee.is_active ? "Delete" : "Restore"}
+                          </Button>
+                        </div>
+                        {!fee.is_active && (
+                          <p className="mt-1 text-xs text-muted-foreground">Inactive</p>
+                        )}
                       </td>
                     </tr>
                   ))}

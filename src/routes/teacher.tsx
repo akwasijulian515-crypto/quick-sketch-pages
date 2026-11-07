@@ -657,6 +657,7 @@ function AttendanceRegister() {
   const [classId, setClassId] = useState("");
   const [date, setDate] = useState(() => localDateString(new Date()));
   const [students, setStudents] = useState<AttendanceStudent[]>([]);
+  const [attendanceRegisterClosedAt, setAttendanceRegisterClosedAt] = useState<string | null>(null);
   const [holiday, setHoliday] = useState<SchoolHoliday | null>(null);
   const [days, setDays] = useState<AttendanceDay[]>([]);
   const [loading, setLoading] = useState(true);
@@ -714,6 +715,7 @@ function AttendanceRegister() {
       setStudents([]);
       setDays([]);
       setHoliday(null);
+      setAttendanceRegisterClosedAt(null);
       return;
     }
     setLoading(true);
@@ -724,6 +726,7 @@ function AttendanceRegister() {
         session_id: string | null;
         students: AttendanceStudent[];
         holiday?: SchoolHoliday;
+        attendance_register_closed_at?: string | null;
       }>(
         `/api/school/attendance?class_id=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
       ),
@@ -735,6 +738,7 @@ function AttendanceRegister() {
         if (cancelled) return;
         setStudents(register.students);
         setHoliday(register.holiday ?? null);
+        setAttendanceRegisterClosedAt(register.attendance_register_closed_at ?? null);
         setDays(monthly.days);
       })
       .catch((loadError: unknown) => {
@@ -860,6 +864,15 @@ function AttendanceRegister() {
             {notice}
           </p>
         )}
+        {attendanceRegisterClosedAt && (
+          <p
+            role="status"
+            className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-800"
+          >
+            This term&apos;s attendance register was closed by the School Admin. Attendance can no
+            longer be changed.
+          </p>
+        )}
       </section>
 
       {!loading && classes.length === 0 ? (
@@ -902,7 +915,7 @@ function AttendanceRegister() {
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={loading || students.length === 0}
+                disabled={loading || students.length === 0 || Boolean(attendanceRegisterClosedAt)}
                 onClick={() =>
                   setStudents((current) =>
                     current.map((student) => ({ ...student, status: "present" })),
@@ -918,6 +931,7 @@ function AttendanceRegister() {
                 disabled={
                   saving ||
                   loading ||
+                  Boolean(attendanceRegisterClosedAt) ||
                   students.length === 0 ||
                   students.some((student) => student.status === null)
                 }
@@ -957,8 +971,9 @@ function AttendanceRegister() {
                           key={option.value}
                           type="button"
                           aria-pressed={student.status === option.value}
+                          disabled={Boolean(attendanceRegisterClosedAt)}
                           onClick={() => setStudentStatus(student.id, option.value)}
-                          className={`min-h-11 rounded-md px-3 text-sm font-medium ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground"}`}
+                          className={`min-h-11 rounded-md px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground"}`}
                         >
                           {option.label}
                         </button>
@@ -968,8 +983,9 @@ function AttendanceRegister() {
                       aria-label={`Note for ${student.first_name} ${student.last_name}`}
                       value={student.note}
                       maxLength={500}
+                      disabled={Boolean(attendanceRegisterClosedAt)}
                       onChange={(event) => setStudentNote(student.id, event.target.value)}
-                      placeholder="Optional note"
+                      placeholder={attendanceRegisterClosedAt ? "Register closed" : "Optional note"}
                       className="mt-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                     />
                   </article>
@@ -1004,8 +1020,9 @@ function AttendanceRegister() {
                                 key={option.value}
                                 type="button"
                                 aria-pressed={student.status === option.value}
+                                disabled={Boolean(attendanceRegisterClosedAt)}
                                 onClick={() => setStudentStatus(student.id, option.value)}
-                                className={`min-h-9 rounded-full px-3 text-xs font-medium ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground hover:bg-muted-foreground/15"}`}
+                                className={`min-h-9 rounded-full px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 ${student.status === option.value ? option.selected : "bg-muted text-muted-foreground hover:bg-muted-foreground/15"}`}
                               >
                                 {option.label}
                               </button>
@@ -1017,6 +1034,7 @@ function AttendanceRegister() {
                             aria-label={`Note for ${student.first_name} ${student.last_name}`}
                             value={student.note}
                             maxLength={500}
+                            disabled={Boolean(attendanceRegisterClosedAt)}
                             onChange={(event) => setStudentNote(student.id, event.target.value)}
                             placeholder="Optional note"
                             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -1173,7 +1191,7 @@ function TeacherMarkEntry() {
         setSelectedProfileClassId((current) =>
           assignedClasses.some((item) => item.id === current)
             ? current
-            : assignedClasses[0]?.id ?? "",
+            : (assignedClasses[0]?.id ?? ""),
         );
         setProfileClassError("");
       })
@@ -1528,8 +1546,8 @@ function TeacherMarkEntry() {
         )}
       </div>
       <div className="px-5">
-        {activeEntryTab === "profile" && (
-          classTeacherClasses.length > 0 ? (
+        {activeEntryTab === "profile" &&
+          (classTeacherClasses.length > 0 ? (
             <>
               <div className="flex flex-wrap items-end gap-3 pt-4">
                 <label className="min-w-52 flex-1 space-y-1 text-xs font-medium text-muted-foreground">
@@ -1566,8 +1584,7 @@ function TeacherMarkEntry() {
               {profileClassError ||
                 "Only a class teacher can enter learner conduct, attitude, and interest. Ask your School Admin to assign you as a class teacher."}
             </p>
-          )
-        )}
+          ))}
       </div>
     </section>
   );
