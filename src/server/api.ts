@@ -5411,7 +5411,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             left join staff_profiles class_teacher on class_teacher.id = c.class_teacher_id and class_teacher.school_id = c.school_id
             left join users class_teacher_user on class_teacher_user.id = class_teacher.user_id
             where c.school_id = ${school.schoolId}::uuid
-            order by ay.starts_on desc, c.name, s.name
+            order by ay.starts_on desc,
+              lower(regexp_replace(c.name, '[0-9]+', '', 'g')),
+              nullif(substring(c.name from '[0-9]+'), '')::integer nulls last,
+              lower(c.name), s.name
           `,
         );
         const team = await withDatabaseContext(
@@ -5713,7 +5716,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                   and sp.user_id = ${school.userId}::uuid
               )
             )
-          order by ay.is_current desc, ay.starts_on desc, c.name
+          order by ay.is_current desc, ay.starts_on desc,
+            lower(regexp_replace(c.name, '[0-9]+', '', 'g')),
+            nullif(substring(c.name from '[0-9]+'), '')::integer nulls last,
+            lower(c.name)
         `,
       );
       return json({ classes: rows });
