@@ -261,7 +261,7 @@ function TeachersPage() {
 
   return (
     <SchoolShell title="Teachers & subjects">
-      <div className="mx-auto min-w-0 max-w-6xl rise">
+      <div className="mobile-cards mx-auto min-w-0 max-w-6xl rise">
         <section className="hero-gloss relative isolate overflow-hidden rounded-lg px-4 py-6 sm:px-8 sm:py-9">
           <div
             aria-hidden="true"

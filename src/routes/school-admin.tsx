@@ -125,7 +125,7 @@ function SchoolAdminPage() {
 
   return (
     <SchoolShell title="School Admin" schoolAdmin>
-      <div className="staff-setup mx-auto min-w-0 max-w-6xl rise">
+      <div className="mobile-cards staff-setup mx-auto min-w-0 max-w-6xl rise">
         <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
             <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">
