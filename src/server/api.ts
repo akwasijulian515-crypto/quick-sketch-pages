@@ -552,6 +552,114 @@ async function sendActivationInvitation(
   }
 }
 
+async function sendTerminalReportPublishedEmail(
+  env: RuntimeEnv,
+  email: string,
+  details: {
+    guardianName: string;
+    schoolName: string;
+    termName: string;
+    academicYearName: string;
+    studentNames: string[];
+    portalUrl: string;
+  },
+) {
+  const subject = `Term results are available for ${details.termName}`;
+  const safeGuardian = escapeHtml(details.guardianName);
+  const safeSchool = escapeHtml(details.schoolName);
+  const safeTerm = escapeHtml(details.termName);
+  const safeYear = escapeHtml(details.academicYearName);
+  const safeNames = details.studentNames.map(escapeHtml);
+  const safePortalUrl = escapeHtml(details.portalUrl);
+  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#183237"><h1 style="color:#1f5c3b">Term results are ready</h1><p>Hello ${safeGuardian},</p><p>${safeSchool} has published ${safeTerm} results for ${safeYear} for ${safeNames.join(", ")}.</p><p>Sign in to the Parent Portal to view the reports and subject results.</p><p><a href="${safePortalUrl}">Open the Parent Portal</a></p></div>`;
+  const text = `Hello ${details.guardianName},\n\n${details.schoolName} has published ${details.termName} results for ${details.academicYearName} for ${details.studentNames.join(", ")}.\n\nSign in to the Parent Portal to view the reports and subject results:\n${details.portalUrl}\n`;
+  const smtpValues = [
+    env.SMTP_HOST,
+    env.SMTP_PORT,
+    env.SMTP_USERNAME,
+    env.SMTP_PASSWORD,
+    env.SMTP_FROM_EMAIL,
+  ];
+  const hasSmtpConfiguration = smtpValues.some((value) => value !== undefined && value !== "");
+  const smtpConfigured = smtpValues.every(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+  const smtpFromEmail = env.SMTP_FROM_EMAIL?.trim();
+
+  if (hasSmtpConfiguration) {
+    const port = Number(env.SMTP_PORT);
+    if (!smtpConfigured || !smtpFromEmail || !Number.isInteger(port) || port < 1 || port > 65535) {
+      return { sent: false as const, error: "SMTP email settings are incomplete or invalid." };
+    }
+    try {
+      const transporter = createTransport({
+        host: env.SMTP_HOST,
+        port,
+        secure: port === 465,
+        auth: { user: env.SMTP_USERNAME, pass: env.SMTP_PASSWORD },
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
+      });
+      await transporter.sendMail({
+        from: { name: env.SMTP_FROM_NAME?.trim() || "Klasora", address: smtpFromEmail },
+        to: email,
+        subject,
+        html,
+        text,
+      });
+      return { sent: true as const };
+    } catch (error) {
+      console.error(
+        "SMTP terminal report notification failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      return { sent: false as const, error: "SMTP could not deliver a results notification." };
+    }
+  }
+
+  if (!env.RESEND_API_KEY || !env.RESEND_FROM_EMAIL) {
+    return {
+      sent: false as const,
+      error:
+        "Results email is not configured. Set SMTP settings or RESEND_API_KEY and RESEND_FROM_EMAIL.",
+    };
+  }
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        from: env.RESEND_FROM_EMAIL,
+        to: [email],
+        subject,
+        html,
+        text,
+      }),
+    });
+    if (!response.ok) {
+      console.error("Resend rejected a terminal report notification", response.status);
+      return {
+        sent: false as const,
+        error: "The email provider could not deliver a results notification.",
+      };
+    }
+    return { sent: true as const };
+  } catch (error) {
+    console.error(
+      "Could not reach Resend for a terminal report notification",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+    return {
+      sent: false as const,
+      error: "Could not reach the email provider to deliver results.",
+    };
+  }
+}
+
 async function sendPlatformSignupNotification(
   env: RuntimeEnv,
   recipients: string[],
@@ -1636,14 +1744,14 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                        where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
                      )
                      and ar.status in ('present', 'late')) as attendance_present,
-                  (select count(*)::int from attendance_records ar
-                   join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
-                   where ar.school_id = ${school.schoolId}::uuid and ar.student_id = lc.id
-                     and lc.term_id is not null
-                     and ase.attendance_date between lc.term_starts_on and current_date
+                  (select count(*)::int
+                   from generate_series(lc.term_starts_on, least(lc.term_ends_on, current_date), interval '1 day') school_day(day)
+                   where lc.term_id is not null
+                     and extract(isodow from school_day.day) < 6
                      and not exists (
                        select 1 from school_holidays h
-                       where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                       where h.school_id = ${school.schoolId}::uuid
+                         and h.holiday_date = school_day.day::date
                      )) as attendance_total,
                   (select greatest(coalesce(sum(i.amount_due - coalesce(paid.paid_amount, 0) - coalesce(paid.pending_amount, 0)), 0), 0)::numeric(12,2)
                    from invoices i
@@ -1658,7 +1766,31 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                      and lc.term_id is not null and m.term_id = lc.term_id) as mark_count,
                   (select avg(m.total_score)::numeric(5,2) from subject_term_marks m
                    where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
-                     and lc.term_id is not null and m.term_id = lc.term_id) as term_average
+                     and lc.term_id is not null and m.term_id = lc.term_id) as term_average,
+                  (select coalesce(jsonb_agg(jsonb_build_object(
+                    'id', r.id, 'term_name', t.name, 'academic_year_name', ay.name,
+                    'published_at', r.published_at, 'conduct', r.conduct,
+                    'attitude', r.attitude, 'interest', r.interest,
+                    'attendance_present', r.attendance_present,
+                    'attendance_total', r.attendance_total,
+                    'teacher_remark', r.teacher_remark,
+                    'headteacher_remark', r.headteacher_remark,
+                    'items', coalesce((
+                      select jsonb_agg(jsonb_build_object(
+                        'subject_name', s.name, 'total_score', i.total_score,
+                        'performance_level', i.performance_level, 'remark', i.remark
+                      ) order by s.name)
+                      from terminal_report_items i
+                      join subjects s on s.id = i.subject_id and s.school_id = i.school_id
+                      where i.report_id = r.id and i.school_id = r.school_id
+                    ), '[]'::jsonb)
+                  ) order by t.starts_on desc), '[]'::jsonb)
+                   from terminal_reports r
+                   join terms t on t.id = r.term_id and t.school_id = r.school_id
+                   join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+                   where r.school_id = ${school.schoolId}::uuid
+                     and r.student_id = lc.id and r.published_at is not null
+                  ) as published_reports
                 from linked_children lc
               )
               select coalesce(jsonb_agg(to_jsonb(child_data) order by last_name, first_name), '[]'::jsonb) as children,
@@ -1722,7 +1854,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             ) class_info on true
             left join lateral (
               select count(*) filter (where ar.status in ('present', 'late'))::int as present_count,
-                     count(*)::int as total_count
+                     (select count(*)::int
+                      from generate_series(
+                        term.starts_on,
+                        least(term.ends_on, current_date),
+                        interval '1 day'
+                      ) school_day(day)
+                      where extract(isodow from school_day.day) < 6
+                        and not exists (
+                          select 1 from school_holidays h
+                          where h.school_id = ${school.schoolId}::uuid
+                            and h.holiday_date = school_day.day::date
+                        )) as total_count
               from attendance_records ar
               join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
               where ar.school_id = ${school.schoolId}::uuid and ar.student_id = st.id
@@ -4411,12 +4554,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                       where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
                     )
                     and ar.status in ('present', 'late')),
-                 (select count(*)::int from attendance_sessions ase
-                  where ase.school_id = rs.school_id and ase.class_id = rs.class_id
-                    and ase.attendance_date between t.starts_on and t.ends_on
+                 (select count(*)::int
+                  from generate_series(t.starts_on, t.ends_on, interval '1 day') school_day(day)
+                  where extract(isodow from school_day.day) < 6
                     and not exists (
                       select 1 from school_holidays h
-                      where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                      where h.school_id = rs.school_id and h.holiday_date = school_day.day::date
                     )),
                  case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.teacher_remark else null end,
                  case when ${school.role === "school_admin"} then ip.headteacher_remark else null end,
@@ -4520,7 +4663,72 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           { error: "No authorized active students were found for that class and term" },
           400,
         );
-      return json({ saved_count: Number(rows[0]?.["saved_count"] ?? 0), published: publish });
+      let emailSentCount = 0;
+      let emailError: string | null = null;
+      if (publish) {
+        const recipients = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
+          select lower(g.email) as guardian_email, max(g.full_name) as guardian_name,
+                 array_agg(distinct (st.first_name || ' ' || st.last_name)) as student_names,
+                 t.name as term_name, ay.name as academic_year_name
+          from terminal_reports r
+          join students st on st.id = r.student_id and st.school_id = r.school_id
+          join terms t on t.id = r.term_id and t.school_id = r.school_id
+          join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+          join student_guardians sg on sg.student_id = st.id and sg.school_id = st.school_id
+          join guardians g on g.id = sg.guardian_id and g.school_id = sg.school_id
+          where r.school_id = ${school.schoolId}::uuid and r.term_id = ${termId}::uuid
+            and r.published_at is not null and g.active
+            and g.email is not null and btrim(g.email) <> ''
+            and exists (
+              select 1 from class_enrollments e
+              where e.school_id = r.school_id and e.student_id = r.student_id
+                and e.class_id = ${classId}::uuid and e.ends_on is null
+            )
+          group by lower(g.email), t.name, ay.name
+        `,
+        );
+        const portalUrl = new URL("/parent", request.url);
+        portalUrl.searchParams.set("tenant", school.subdomain);
+        const emailResults: { sent: boolean; error?: string }[] = [];
+        for (let index = 0; index < recipients.length; index += 10) {
+          const batch = recipients.slice(index, index + 10);
+          emailResults.push(
+            ...(await Promise.all(
+              batch.map((recipient) => {
+                const studentNames = Array.isArray(recipient["student_names"])
+                  ? recipient["student_names"].map(String)
+                  : [];
+                return sendTerminalReportPublishedEmail(env, String(recipient["guardian_email"]), {
+                  guardianName: String(recipient["guardian_name"]),
+                  schoolName: school.schoolName,
+                  termName: String(recipient["term_name"]),
+                  academicYearName: String(recipient["academic_year_name"]),
+                  studentNames,
+                  portalUrl: portalUrl.toString(),
+                });
+              }),
+            )),
+          );
+        }
+        emailSentCount = emailResults.filter((result) => result.sent).length;
+        const emailErrors = [
+          ...new Set(emailResults.flatMap((result) => (result.error ? [result.error] : []))),
+        ];
+        if (recipients.length === 0) {
+          emailError = "No active guardian email addresses are linked to these learners.";
+        } else if (emailErrors.length) {
+          emailError = `${emailSentCount} email(s) sent; ${emailResults.length - emailSentCount} failed. ${emailErrors.join(" ")}`;
+        }
+      }
+      return json({
+        saved_count: Number(rows[0]?.["saved_count"] ?? 0),
+        published: publish,
+        email_sent_count: emailSentCount,
+        email_error: emailError,
+      });
     }
 
     if (url.pathname === "/api/school/promotions") {
@@ -4749,32 +4957,30 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         const isCurrent = body["is_current"] === true;
         if (name.length < 2 || name.length > 80)
           return badRequest("Academic year name must be 2–80 characters");
-        if (
-          !/^\d{4}-\d{2}-\d{2}$/.test(startsOn) ||
-          !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) ||
-          startsOn >= endsOn
-        ) {
+        if (!validIsoDate(startsOn) || !validIsoDate(endsOn) || startsOn >= endsOn) {
           return badRequest("Enter valid academic year start and end dates");
         }
-        const rows = await withDatabaseContext(
-          sql,
-          { schoolId: school.schoolId },
-          (tx) =>
-            tx`
-            with cleared_current as (
-              update academic_years set is_current = false
-              where school_id = ${school.schoolId}::uuid and is_current and ${isCurrent}
-              returning id
-            ),
-            inserted as (
-              insert into academic_years (school_id, name, starts_on, ends_on, is_current)
-              select ${school.schoolId}::uuid, ${name}, ${startsOn}::date, ${endsOn}::date, ${isCurrent}
-              where not ${isCurrent} or (select count(*) >= 0 from cleared_current)
-              returning id, name, starts_on, ends_on, is_current
-            )
-            select * from inserted
+        const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) => [
+          tx`select pg_advisory_xact_lock(hashtext(${school.schoolId}), hashtext('academic_year_current'))`,
+          tx`
+            update academic_years set is_current = false
+            where school_id = ${school.schoolId}::uuid and is_current and ${isCurrent}
+              and not exists (
+                select 1 from academic_years
+                where school_id = ${school.schoolId}::uuid and name = ${name}
+              )
           `,
-        );
+          tx`
+            insert into academic_years (school_id, name, starts_on, ends_on, is_current)
+            select ${school.schoolId}::uuid, ${name}, ${startsOn}::date, ${endsOn}::date, ${isCurrent}
+            where not exists (
+              select 1 from academic_years
+              where school_id = ${school.schoolId}::uuid and name = ${name}
+            )
+            on conflict (school_id, name) do nothing
+            returning id, name, starts_on, ends_on, is_current
+          `,
+        ]);
         if (!rows[0])
           return json({ error: "Academic year already exists or could not be created" }, 409);
         return json({ academic_year: rows[0] }, 201);
@@ -4795,6 +5001,13 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             t.name as term_name,
             t.starts_on as term_starts_on,
             t.ends_on as term_ends_on,
+            (select count(*)::int
+             from generate_series(t.starts_on, t.ends_on, interval '1 day') school_day(day)
+             where extract(isodow from school_day.day) < 6
+               and not exists (
+                 select 1 from school_holidays h
+                 where h.school_id = t.school_id and h.holiday_date = school_day.day::date
+               )) as term_school_days,
             (current_date between t.starts_on and t.ends_on) as term_is_current,
             t.is_closed as term_is_closed,
             t.arrears_processed_at as term_arrears_processed_at
@@ -4816,6 +5029,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             name: string;
             starts_on: string;
             ends_on: string;
+            school_days: number;
             is_current: boolean;
             is_closed: boolean;
             arrears_processed_at: string | null;
@@ -4841,6 +5055,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             name: String(row["term_name"]),
             starts_on: String(row["term_starts_on"]),
             ends_on: String(row["term_ends_on"]),
+            school_days: Number(row["term_school_days"] ?? 0),
             is_current: row["term_is_current"] === true,
             is_closed: row["term_is_closed"] === true,
             arrears_processed_at:
@@ -4866,11 +5081,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         return badRequest("Choose a valid academic year");
       if (name.length < 2 || name.length > 80)
         return badRequest("Term name must be 2–80 characters");
-      if (
-        !/^\d{4}-\d{2}-\d{2}$/.test(startsOn) ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(endsOn) ||
-        startsOn >= endsOn
-      ) {
+      if (!validIsoDate(startsOn) || !validIsoDate(endsOn) || startsOn >= endsOn) {
         return badRequest("Enter valid term start and end dates");
       }
       const rows = await withDatabaseContext(

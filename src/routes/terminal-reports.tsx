@@ -198,24 +198,26 @@ function TerminalReportsPage() {
     setError("");
     setNotice("");
     try {
-      const result = await schoolApi<{ saved_count: number; published: boolean }>(
-        "/api/school/terminal-reports",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            class_id: classId,
-            term_id: termId,
-            publish,
-            profiles: reports.map((report) => ({
-              student_id: report.student_id,
-              ...profiles[report.student_id],
-            })),
-          }),
-        },
-      );
+      const result = await schoolApi<{
+        saved_count: number;
+        published: boolean;
+        email_sent_count: number;
+        email_error: string | null;
+      }>("/api/school/terminal-reports", {
+        method: "POST",
+        body: JSON.stringify({
+          class_id: classId,
+          term_id: termId,
+          publish,
+          profiles: reports.map((report) => ({
+            student_id: report.student_id,
+            ...profiles[report.student_id],
+          })),
+        }),
+      });
       setNotice(
         publish
-          ? `${result.saved_count} report(s) published.`
+          ? `${result.saved_count} report(s) published. ${result.email_sent_count} results email(s) sent.${result.email_error ? ` ${result.email_error}` : ""}`
           : `${result.saved_count} report(s) saved as drafts.`,
       );
       await loadReports();
@@ -243,8 +245,7 @@ function TerminalReportsPage() {
   }
 
   const selectedClass = classes.find((item) => item.id === classId);
-  const canEditTeacherProfile =
-    canPublish === true || selectedClass?.is_class_teacher === true;
+  const canEditTeacherProfile = canPublish === true || selectedClass?.is_class_teacher === true;
   const availableTerms = years.flatMap((year) =>
     year.terms.map((term) => ({ ...term, year_name: year.name })),
   );
@@ -299,8 +300,8 @@ function TerminalReportsPage() {
             </p>
             {!canEditTeacherProfile && (
               <p className="mt-2 max-w-2xl text-xs text-muted-foreground">
-                Conduct, attitude, interest, and teacher remarks can only be entered by the
-                assigned class teacher. School Admins can manage all class profiles.
+                Conduct, attitude, interest, and teacher remarks can only be entered by the assigned
+                class teacher. School Admins can manage all class profiles.
               </p>
             )}
           </div>

@@ -24,6 +24,26 @@ type Child = {
   currency: string;
   mark_count: number;
   term_average: number | string | null;
+  published_reports: PublishedReport[];
+};
+type PublishedReport = {
+  id: string;
+  term_name: string;
+  academic_year_name: string;
+  published_at: string;
+  conduct: string | null;
+  attitude: string | null;
+  interest: string | null;
+  attendance_present: number | null;
+  attendance_total: number | null;
+  teacher_remark: string | null;
+  headteacher_remark: string | null;
+  items: {
+    subject_name: string;
+    total_score: number | string | null;
+    performance_level: string | null;
+    remark: string | null;
+  }[];
 };
 type Payment = {
   id: string;
@@ -124,6 +144,36 @@ function ParentPortal() {
                     <SmallStat icon={GraduationCap} label="Term average" value={child.term_average === null ? "No grades" : `${Number(child.term_average).toFixed(1)}%`} />
                   </div>
                   {child.academic_year_name && <p className="mt-4 text-xs text-muted-foreground">Academic year: {child.academic_year_name}</p>}
+                  {child.published_reports?.length > 0 && (
+                    <section className="mt-5 border-t border-border pt-4">
+                      <h3 className="font-display font-semibold">Published results</h3>
+                      <div className="mt-3 space-y-3">
+                        {child.published_reports.map((report) => (
+                          <article key={report.id} className="rounded-md border border-border p-3">
+                            <h4 className="text-sm font-semibold">{report.term_name} · {report.academic_year_name}</h4>
+                            <p className="mt-1 text-xs text-muted-foreground">Published {new Date(report.published_at).toLocaleDateString()}</p>
+                            <p className="mt-2 text-xs text-muted-foreground">Attendance: {report.attendance_present ?? 0}/{report.attendance_total ?? 0} school days</p>
+                            {report.items.length > 0 && (
+                              <ul className="mt-3 divide-y divide-border/70">
+                                {report.items.map((item) => (
+                                  <li key={item.subject_name} className="flex items-center justify-between gap-3 py-2 text-sm">
+                                    <span>{item.subject_name}</span>
+                                    <span className="text-right font-medium">{item.total_score === null ? "—" : `${Number(item.total_score).toFixed(1)}%`}{item.performance_level ? ` · ${item.performance_level}` : ""}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {(report.teacher_remark || report.headteacher_remark) && (
+                              <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+                                {report.teacher_remark && <p><span className="font-medium">Teacher:</span> {report.teacher_remark}</p>}
+                                {report.headteacher_remark && <p><span className="font-medium">Headteacher:</span> {report.headteacher_remark}</p>}
+                              </div>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  )}
                 </article>
               );
             })}
