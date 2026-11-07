@@ -254,7 +254,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
   }
 
   return (
-    <section id="staff-setup" className="glass-panel mt-4 scroll-mt-6 rounded-lg p-5">
+    <section id="staff-setup" className="staff-setup glass-panel mt-4 min-w-0 scroll-mt-20 rounded-lg p-3 sm:p-5">
       <div>
         <h2 className="font-display text-xl font-bold">Staff and teaching assignments</h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -444,7 +444,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
         <p className="py-5 text-sm text-muted-foreground">Loading school staff...</p>
       ) : (
         <div className="mt-5 overflow-x-auto">
-          <table className="w-full min-w-[620px] text-left text-sm">
+          <table className="staff-mobile-list w-full min-w-[620px] text-left text-sm">
             <thead className="border-b text-xs text-muted-foreground">
               <tr>
                 {["Member", "Role", "Class", "Subject", "Class teacher"].map((label) => (
@@ -496,7 +496,7 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
       {!loading && members.length > 0 && (
         <div className="mt-6 overflow-x-auto">
           <h3 className="mb-2 text-sm font-semibold">School accounts</h3>
-          <table className="w-full min-w-[620px] text-left text-sm">
+          <table className="staff-mobile-list w-full min-w-[620px] text-left text-sm">
             <thead className="border-b text-xs text-muted-foreground">
               <tr>
                 {["Member", "Role", "Email", "Status", "Actions"].map((label) => (

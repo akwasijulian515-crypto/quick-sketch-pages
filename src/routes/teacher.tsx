@@ -26,6 +26,10 @@ export const Route = createFileRoute("/teacher")({
     meta: [
       { title: "Teacher Portal — Klasora" },
       { name: "description", content: "Teacher mark entry and school tools." },
+      { property: "og:title", content: "Teacher Workspace — Klasora" },
+      { property: "og:description", content: "Manage assigned classes, attendance, marks, and daily fees." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: TeacherPortal,
@@ -75,8 +79,8 @@ function TeacherPortal() {
   return (
     <div className="relative min-h-screen bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
-        <div className="flex items-center gap-2.5">
+      <header className="sticky top-0 z-30 grid h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 bg-background/75 px-4 backdrop-blur-xl sm:px-6">
+        <div className="flex min-w-0 items-center gap-2.5">
           <div className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-primary font-display text-base font-bold text-primary-foreground">
             {crestUrl ? (
               <img src={crestUrl} alt={`${schoolName} badge`} className="size-full object-cover" />
@@ -84,8 +88,8 @@ function TeacherPortal() {
               (schoolName[0] ?? "S")
             )}
           </div>
-          <div className="leading-tight">
-            <p className="font-display text-[15px] font-bold">{teacherName || "Teacher Portal"}</p>
+          <div className="min-w-0 leading-tight">
+            <p className="truncate font-display text-[15px] font-bold">{teacherName || "Teacher Portal"}</p>
             <p className="text-[11px] text-muted-foreground">
               {teacherName ? "Teacher workspace" : "School workspace"}
             </p>
@@ -96,6 +100,7 @@ function TeacherPortal() {
           <Button
             variant="outline"
             size="sm"
+            aria-label="Sign out"
             onClick={() => {
               invalidateNeonAccessToken();
               void neonAuthClient?.signOut();
@@ -103,7 +108,7 @@ function TeacherPortal() {
             }}
           >
             <LogOut />
-            Sign out
+            <span className="hidden sm:inline">Sign out</span>
           </Button>
         </div>
       </header>
@@ -115,7 +120,7 @@ function TeacherPortal() {
               Use your assigned classes and subjects to manage school records.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
             {(
               [
                 ["register", "Register", UserRoundCheck],
@@ -1349,7 +1354,7 @@ function TeacherMarkEntry() {
             value={selectedKey}
             disabled={saving}
             onChange={(event) => void changeAssignment(event.target.value)}
-            className="h-9 max-w-full rounded-md border border-input bg-background px-3 text-sm"
+            className="h-11 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm sm:h-9 sm:w-auto sm:max-w-full"
           >
             {assignments.length === 0 && <option value="">No subject assignments available</option>}
             {assignments.map((item) => (
@@ -1366,7 +1371,7 @@ function TeacherMarkEntry() {
       <div
         role="tablist"
         aria-label="Mark sheet sections"
-        className="flex gap-1 border-b border-border px-5"
+        className="grid grid-cols-[auto_minmax(0,1fr)] gap-1 border-b border-border px-3 sm:flex sm:px-5"
       >
         <button
           role="tab"
