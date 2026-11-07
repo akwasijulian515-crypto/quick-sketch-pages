@@ -5412,6 +5412,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             left join users class_teacher_user on class_teacher_user.id = class_teacher.user_id
             where c.school_id = ${school.schoolId}::uuid
             order by ay.starts_on desc,
+              case
+                when lower(c.name) ~ '(^|[^a-z])(creche|crèche)([^a-z]|$)' then 1
+                when lower(c.name) ~ '(^|[^a-z])nursery([^a-z]|$)' then 2
+                when lower(c.name) ~ '(^|[^a-z])(kindergarten|kg)([^a-z]|$)' then 3
+                else 4
+              end,
               lower(regexp_replace(c.name, '[0-9]+', '', 'g')),
               nullif(substring(c.name from '[0-9]+'), '')::integer nulls last,
               lower(c.name), s.name
@@ -5717,6 +5723,12 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               )
             )
           order by ay.is_current desc, ay.starts_on desc,
+            case
+              when lower(c.name) ~ '(^|[^a-z])(creche|crèche)([^a-z]|$)' then 1
+              when lower(c.name) ~ '(^|[^a-z])nursery([^a-z]|$)' then 2
+              when lower(c.name) ~ '(^|[^a-z])(kindergarten|kg)([^a-z]|$)' then 3
+              else 4
+            end,
             lower(regexp_replace(c.name, '[0-9]+', '', 'g')),
             nullif(substring(c.name from '[0-9]+'), '')::integer nulls last,
             lower(c.name)
