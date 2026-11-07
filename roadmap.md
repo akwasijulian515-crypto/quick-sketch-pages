@@ -1,6 +1,6 @@
 # Roadmap
 
-- [ ] Refine admin, teaching team, teaching assignments, and school accounts for mobile (UI only)
+- [x] Refine admin, teaching team, teaching assignments, and school accounts for mobile (UI only; sample-data layout checks at phone, tablet, desktop)
 
 - [x] Build the shared school workspace and navigation
 - [x] Build the polished dashboard homepage
