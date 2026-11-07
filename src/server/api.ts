@@ -5344,7 +5344,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (name.length < 2 || name.length > 160) return badRequest("Name must be 2–160 characters");
       if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
         return badRequest("Enter a valid email address");
-      if (role !== "teacher" && role !== "finance") return badRequest("Choose teacher or finance");
+      if (role !== "school_admin" && role !== "teacher" && role !== "finance")
+        return badRequest("Choose school admin, teacher, or finance");
       const rows = await withDatabaseContext(
         sql,
         { schoolId: school.schoolId },
@@ -5379,7 +5380,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         recipient: String(rows[0]["email"]),
         contactName: String(rows[0]["display_name"]),
         schoolName: school.schoolName,
-        roleName: role === "teacher" ? "Teacher" : "Finance",
+        roleName:
+          role === "school_admin" ? "School Admin" : role === "teacher" ? "Teacher" : "Finance",
         activationUrl: activationUrl.toString(),
         primaryColor: school.primaryColor,
       });

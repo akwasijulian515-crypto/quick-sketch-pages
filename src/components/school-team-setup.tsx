@@ -258,8 +258,8 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
       <div>
         <h2 className="font-display text-xl font-bold">Staff and teaching assignments</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Add a teacher or Finance user, then assign teachers to class subjects so they can enter
-          marks.
+          Add another school admin, teacher, or Finance user. Assign teachers to class subjects so
+          they can enter marks.
         </p>
       </div>
       {error && (
@@ -314,13 +314,14 @@ export function SchoolTeamSetup({ onDataChanged }: { onDataChanged?: () => void 
             name="role"
             className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
           >
+            <option value="school_admin">School Admin</option>
             <option value="teacher">Teacher</option>
             <option value="finance">Finance</option>
           </select>
         </label>
         <div className="flex items-end">
           <Button type="submit" disabled={saving}>
-            {saving ? "Saving..." : "Add staff account"}
+            {saving ? "Saving..." : "Add user"}
           </Button>
         </div>
       </form>
