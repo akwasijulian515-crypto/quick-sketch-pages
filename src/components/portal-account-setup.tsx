@@ -282,7 +282,7 @@ export function PortalAccountSetup() {
           {students.some((student) => student.linked && student.email) && (
             <div className="overflow-x-auto rounded-md border border-border p-4">
               <h3 className="mb-2 font-semibold">Linked student accounts</h3>
-              <table className="w-full min-w-[560px] text-left text-sm">
+              <table className="staff-mobile-list w-full min-w-[560px] text-left text-sm">
                 <thead className="border-b text-xs text-muted-foreground">
                   <tr>{["Student", "Email", "Class", "Action"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
                 </thead>
@@ -310,7 +310,7 @@ export function PortalAccountSetup() {
       {!loading && guardians.length > 0 && (
         <div className="mt-6 overflow-x-auto">
           <h3 className="mb-2 text-sm font-semibold">Parent contacts</h3>
-          <table className="w-full min-w-[680px] text-left text-sm">
+          <table className="staff-mobile-list w-full min-w-[680px] text-left text-sm">
             <thead className="border-b text-xs text-muted-foreground">
               <tr>{["Parent", "Contact", "Linked wards", "Status", "Actions"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr>
             </thead>

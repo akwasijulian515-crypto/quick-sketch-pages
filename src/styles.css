@@ -355,6 +355,78 @@
   .rise { animation: none; }
 }
 
+/* Staff directories need full-width fields, not cramped label/value columns. */
+.staff-mobile-list th { white-space: nowrap; }
+.staff-mobile-list td:nth-child(2) { word-break: normal; overflow-wrap: normal; }
+@media (max-width: 1023px) {
+  .mobile-cards table.staff-mobile-list,
+  .mobile-cards table.staff-mobile-list tbody,
+  .mobile-cards table.staff-mobile-list tr {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+  }
+  .mobile-cards table.staff-mobile-list thead { display: none; }
+  .mobile-cards :has(> table.staff-mobile-list) { overflow-x: visible; }
+  .mobile-cards table.staff-mobile-list tbody {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+  .mobile-cards table.staff-mobile-list tr {
+    min-width: 0;
+    margin: 0;
+    padding: 1rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--card);
+  }
+  .mobile-cards table.staff-mobile-list td {
+    display: block;
+    min-width: 0;
+    padding: 0.625rem 0 !important;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .mobile-cards table.staff-mobile-list td[data-label]::before {
+    display: block;
+    margin-bottom: 0.375rem;
+    font-size: 0.6875rem;
+    letter-spacing: 0;
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--muted-foreground);
+  }
+  .mobile-cards table.staff-mobile-list td:first-child {
+    padding-top: 0 !important;
+    font-size: 0.9375rem;
+  }
+  .mobile-cards table.staff-mobile-list td:first-child::before,
+  .mobile-cards table.staff-mobile-list td[colspan]::before { display: none; }
+  .mobile-cards table.staff-mobile-list td[colspan] { text-align: center; }
+  .mobile-cards table.staff-mobile-list :where(input, select) {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 2.75rem;
+  }
+  .mobile-cards table.staff-mobile-list td[data-label="Actions"] > div,
+  .mobile-cards table.staff-mobile-list td[data-label="Action"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+  .mobile-cards table.staff-mobile-list :where(button, a[role="button"]) {
+    min-height: 2.75rem;
+    white-space: normal;
+    height: auto;
+  }
+  .staff-setup :where(form, label) { min-width: 0; }
+  .staff-setup form > div > button,
+  .staff-setup form > button { width: 100%; min-height: 2.75rem; }
+  .staff-setup select { min-width: 0; max-width: 100%; }
+}
+
 /* Responsive polish: no sideways overflow, readable forms, visible focus, comfy touch targets */
 @layer base {
   html, body { overflow-x: clip; }

@@ -1,5 +1,7 @@
 # Roadmap
 
+- [x] Refine admin, teaching team, teaching assignments, and school accounts for mobile (UI only; sample-data layout checks at phone, tablet, desktop)
+
 - [x] Build the shared school workspace and navigation
 - [x] Build the polished dashboard homepage
 - [x] Add lightweight shells for Students, Payments, Attendance, Grades, Teachers, Subjects, Classes, and Coupons

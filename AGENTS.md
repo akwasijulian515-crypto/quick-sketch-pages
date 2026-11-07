@@ -10,3 +10,4 @@
 <!-- LOVABLE:END -->
 - Database schema lives only in database/migrations/*.sql, applied in name order by scripts/migrate.mjs (tracked in schema_migrations) — one source of truth avoids schema drift.
 - All workspace sidebars use the shared SchoolShell with a viewport-height frame and independently scrolling navigation, keeping branding and sign-out reachable.
+- Staff and account tables use the scoped staff-mobile-list presentation class for full-width mobile fields and actions, preserving the same controls and data on desktop.
