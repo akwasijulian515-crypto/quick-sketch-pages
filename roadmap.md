@@ -1,6 +1,6 @@
 # Roadmap
 
-- [ ] Add a glossy fictional terminal report to the homepage and check mobile, tablet, desktop, and dark mode.
+- [x] Add a glossy fictional terminal report to the homepage; checked mobile, tablet, desktop, dark mode, and no horizontal overflow.
 
 - [x] Enrich the public homepage with school imagery, community and branding sections, and common questions; verified images, FAQ, registration link, and no horizontal overflow at phone, tablet, desktop widths.
 
