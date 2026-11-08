@@ -66,17 +66,17 @@ function HomePage() {
       <header className="relative z-10 border-b border-border/70 bg-background/80 backdrop-blur">
         <nav
           aria-label="Main navigation"
-          className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8"
+          className="mx-auto grid min-h-16 max-w-7xl grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-4 py-2 sm:flex sm:justify-between sm:gap-4 sm:px-6 lg:px-8"
         >
-          <Link to="/" className="flex items-center gap-2.5" aria-label="Klasora home">
-            <img src="/brand/klasora-logo-horizontal.png" alt="Klasora" className="h-9 w-auto object-contain" />
+          <Link to="/" className="flex min-w-0 items-center gap-2.5" aria-label="Klasora home">
+            <img src="/brand/klasora-logo-horizontal.png" alt="Klasora" className="h-9 w-auto max-w-full object-contain" />
           </Link>
           <div className="hidden items-center gap-7 text-sm text-muted-foreground md:flex">
             <a href="#features" className="transition-colors hover:text-foreground">Features</a>
             <a href="#community" className="transition-colors hover:text-foreground">Our community</a>
             <a href="#how-it-works" className="transition-colors hover:text-foreground">Getting started</a>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             <ThemeToggle />
             <Button asChild variant="ghost" className="hidden sm:inline-flex">
               <Link to="/login">Sign in</Link>
@@ -220,19 +220,23 @@ function HomePage() {
       </section>
 
       <footer className="border-t border-border/70 bg-[var(--brand-deep)] text-primary-foreground">
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
-          <Link to="/" className="flex items-center" aria-label="Klasora home">
-            <img src="/brand/klasora-logo-reversed.png" alt="Klasora" className="h-8 w-auto object-contain" />
-          </Link>
-          <p className="text-xs text-primary-foreground/65">A clearer workspace for school communities.</p>
-          <div className="flex items-center gap-4 text-sm">
-            <Link to="/login" className="text-primary-foreground/75 hover:text-primary-foreground">Sign in</Link>
-            <Link to="/signup" className="text-primary-foreground/75 hover:text-primary-foreground">Register your school</Link>
+        <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:grid-cols-2 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-start lg:gap-10 lg:px-8">
+          <div className="min-w-0">
+            <Link to="/" className="flex w-fit items-center" aria-label="Klasora home">
+              <img src="/brand/klasora-logo-reversed.png" alt="Klasora" className="h-8 w-auto max-w-full object-contain" />
+            </Link>
+            <p className="mt-3 text-xs leading-6 text-primary-foreground/65">A clearer workspace for school communities.</p>
           </div>
-          <div className="flex flex-col gap-1 text-xs text-primary-foreground/75 md:text-right">
-            <a href="mailto:akwasiJulian515@gmail.com" className="hover:text-primary-foreground">akwasiJulian515@gmail.com</a>
-            <a href="tel:+233551587723" className="hover:text-primary-foreground">0551587723</a>
-            <a href="tel:+233596466723" className="hover:text-primary-foreground">0596466723</a>
+          <div className="grid min-w-0 grid-cols-2 gap-3 text-sm sm:grid-cols-1 sm:justify-self-end lg:justify-self-start">
+            <Link to="/login" className="flex min-h-11 items-center text-primary-foreground/75 hover:text-primary-foreground">Sign in</Link>
+            <Link to="/signup" className="flex min-h-11 items-center text-primary-foreground/75 hover:text-primary-foreground">Register your school</Link>
+          </div>
+          <div className="grid min-w-0 gap-1 border-t border-primary-foreground/15 pt-4 text-sm text-primary-foreground/75 sm:col-span-2 lg:col-span-1 lg:border-t-0 lg:pt-0 lg:text-right">
+            <a href="mailto:akwasiJulian515@gmail.com" className="flex min-h-11 min-w-0 items-center break-all hover:text-primary-foreground lg:justify-end">akwasiJulian515@gmail.com</a>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-1 lg:gap-1">
+              <a href="tel:+233551587723" className="flex min-h-11 items-center hover:text-primary-foreground lg:justify-end">0551587723</a>
+              <a href="tel:+233596466723" className="flex min-h-11 items-center hover:text-primary-foreground lg:justify-end">0596466723</a>
+            </div>
           </div>
         </div>
       </footer>
