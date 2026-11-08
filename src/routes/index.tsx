@@ -3,16 +3,18 @@ import {
   ArrowRight,
   BookOpenCheck,
   CalendarDays,
-  ChartNoAxesCombined,
   CircleCheck,
   CreditCard,
   GraduationCap,
-  ShieldCheck,
   UsersRound,
+  Palette,
+  Plus,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import schoolCourtyard from "@/assets/school-courtyard.jpg";
+import classroomLearning from "@/assets/classroom-learning.jpg";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -70,7 +72,8 @@ function HomePage() {
           </Link>
           <div className="hidden items-center gap-7 text-sm text-muted-foreground md:flex">
             <a href="#features" className="transition-colors hover:text-foreground">Features</a>
-            <a href="#how-it-works" className="transition-colors hover:text-foreground">How it works</a>
+            <a href="#community" className="transition-colors hover:text-foreground">Our community</a>
+            <a href="#how-it-works" className="transition-colors hover:text-foreground">Getting started</a>
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
@@ -88,71 +91,24 @@ function HomePage() {
         </nav>
       </header>
 
-      <section className="relative isolate">
-        <div className="pointer-events-none absolute inset-0 -z-10 ambient-wash" />
-        <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 sm:py-24 lg:grid-cols-[1.05fr_0.95fr] lg:px-8 lg:py-28">
-          <div className="rise">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary">
-              <span className="size-1.5 rounded-full bg-primary" />
-              A calmer way to run your school
-            </div>
-            <h1 className="mt-6 max-w-2xl font-display text-4xl font-bold leading-[1.12] tracking-tight sm:text-5xl lg:text-6xl">
-              More time for
-              <span className="text-primary"> learning.</span>
-              <br />
-              Less time lost to admin.
-            </h1>
-            <p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg">
-              Klasora brings the everyday work of your school into one clear workspace—from
-              student records and attendance to teaching and finance.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button asChild size="lg">
-                <Link to="/signup">Create your school workspace<ArrowRight /></Link>
+      <section className="homepage-cover relative isolate flex items-center overflow-hidden">
+        <img src={schoolCourtyard} alt="A teacher and pupils walking together through a school courtyard" width={1536} height={1024} fetchPriority="high" className="absolute inset-0 -z-20 h-full w-full object-cover object-[65%_center]" />
+        <div className="homepage-cover-shade absolute inset-0 -z-10" />
+        <div className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6 sm:py-20 lg:px-8">
+          <div className="rise max-w-xl">
+            <p className="text-sm font-medium text-highlight">For the people who make school happen</p>
+            <h1 className="mt-4 font-display text-5xl font-bold leading-tight sm:text-6xl">Klasora</h1>
+            <p className="mt-4 text-2xl font-medium leading-snug sm:text-3xl">More time for learning.<br />Less time lost to admin.</p>
+            <p className="mt-5 max-w-md text-base leading-7 opacity-90">Bring your school’s everyday work together—from the morning register to the end-of-term report.</p>
+            <div className="mt-7 flex flex-wrap gap-3">
+              <Button asChild size="lg" className="h-auto min-h-11 whitespace-normal bg-highlight px-5 text-highlight-foreground hover:bg-highlight/90">
+                <Link to="/signup">Register your school<ArrowRight /></Link>
               </Button>
-              <Button asChild size="lg" variant="outline">
-                <Link to="/login">Sign in to Klasora</Link>
+              <Button asChild size="lg" variant="outline" className="h-auto min-h-11 border-sidebar-foreground/40 bg-transparent px-5 text-sidebar-foreground hover:bg-sidebar-foreground/10 hover:text-sidebar-foreground">
+                <Link to="/login">Sign in</Link>
               </Button>
             </div>
-            <div className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
-              {["Your school, your workspace", "Built for everyday school teams"].map((item) => (
-                <span key={item} className="inline-flex items-center gap-1.5">
-                  <CircleCheck className="size-3.5 text-primary" />
-                  {item}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="rise relative mx-auto w-full max-w-xl lg:ml-auto">
-            <div className="absolute -inset-5 -z-10 rounded-[2rem] bg-primary/5 blur-2xl" />
-            <div className="glass-panel overflow-hidden rounded-xl shadow-2xl shadow-primary/10">
-              <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="grid size-9 place-items-center rounded-md bg-primary text-sm font-bold text-primary-foreground">K</div>
-                  <div>
-                    <p className="text-sm font-semibold">School workspace</p>
-                    <p className="text-xs text-muted-foreground">Everything in its place</p>
-                  </div>
-                </div>
-                <span className="rounded-full bg-secondary px-2.5 py-1 text-[11px] font-medium text-secondary-foreground">Overview</span>
-              </div>
-              <div className="grid gap-3 p-5 sm:grid-cols-2">
-                <PreviewCard icon={GraduationCap} label="Student records" detail="A clearer view of your learners" />
-                <PreviewCard icon={ChartNoAxesCombined} label="Attendance" detail="Daily registers for your team" />
-                <PreviewCard icon={CreditCard} label="Finance" detail="Fees and collections together" />
-                <PreviewCard icon={UsersRound} label="Teaching teams" detail="Classes, teachers, and subjects" />
-              </div>
-              <div className="mx-5 mb-5 flex items-center gap-3 rounded-lg border border-primary/10 bg-primary/5 p-4">
-                <div className="grid size-9 shrink-0 place-items-center rounded-md bg-background text-primary shadow-sm">
-                  <ShieldCheck className="size-4" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold">A workspace for your school</p>
-                  <p className="mt-0.5 text-xs leading-5 text-muted-foreground">Your people and daily processes, organized around your school.</p>
-                </div>
-              </div>
-            </div>
+            <p className="mt-7 flex items-center gap-2 text-xs opacity-90"><CircleCheck className="size-4 shrink-0" />Your school’s name, crest, and colours. Your own space.</p>
           </div>
         </div>
       </section>
@@ -160,8 +116,8 @@ function HomePage() {
       <section id="features" className="scroll-mt-20 border-y border-border/70 bg-muted/25">
         <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8">
           <div className="max-w-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">One connected workspace</p>
-            <h2 className="mt-3 font-display text-3xl font-bold tracking-tight sm:text-4xl">
+            <p className="text-xs font-semibold uppercase tracking-normal text-primary">One connected workspace</p>
+            <h2 className="mt-3 font-display text-3xl font-bold sm:text-4xl">
               The essentials, working together.
             </h2>
             <p className="mt-4 text-sm leading-6 text-muted-foreground sm:text-base">
@@ -182,11 +138,43 @@ function HomePage() {
         </div>
       </section>
 
+      <section id="community" className="scroll-mt-20">
+        <div className="mx-auto grid max-w-7xl items-center gap-8 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-2 lg:gap-16 lg:px-8">
+          <figure className="overflow-hidden rounded-lg">
+            <img src={classroomLearning} alt="A teacher helping pupils with their exercise books in the classroom" width={1280} height={1024} loading="lazy" className="aspect-[5/4] w-full object-cover" />
+            <figcaption className="border-b border-border py-3 text-xs text-muted-foreground">Behind every school day are people making a difference.</figcaption>
+          </figure>
+          <div>
+            <p className="text-xs font-semibold uppercase text-primary">A whole school, connected</p>
+            <h2 className="mt-3 font-display text-3xl font-bold leading-tight sm:text-4xl">People first.<br />Paperwork second.</h2>
+            <p className="mt-5 text-base leading-7 text-muted-foreground">School runs better when everyone has a clear view of what matters. Give your team a shared workspace and keep families close to their children’s progress.</p>
+            <div className="mt-7 divide-y divide-border">
+              {[
+                [BookOpenCheck, "For teachers", "Attendance, marks, and reports—without losing sight of the learner."],
+                [UsersRound, "For school teams", "Student records, teaching assignments, and fee collections in one place."],
+                [GraduationCap, "For families & learners", "Stay connected to attendance, learning progress, and school fees."],
+              ].map(([Icon, title, description]) => {
+                const RoleIcon = Icon as typeof GraduationCap;
+                return <div key={String(title)} className="flex gap-4 py-5"><RoleIcon className="mt-1 size-5 shrink-0 text-primary" /><div><h3 className="text-sm font-semibold">{String(title)}</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">{String(description)}</p></div></div>;
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-y border-border bg-secondary/35">
+        <div className="mx-auto grid max-w-7xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-[auto_1fr_auto] md:items-center lg:px-8">
+          <div className="grid size-14 place-items-center rounded-lg border border-border bg-background text-primary"><Palette className="size-7" /></div>
+          <div className="max-w-2xl"><h2 className="font-display text-2xl font-bold">Feels like your school. Because it is.</h2><p className="mt-3 text-sm leading-6 text-muted-foreground">Your name, your crest, your chosen colour. A familiar school identity across a workspace that fits phones, tablets, and desktops—with light and dark themes.</p></div>
+          <Button asChild variant="outline" className="w-fit"><Link to="/signup">Make it yours<ArrowRight /></Link></Button>
+        </div>
+      </section>
+
       <section id="how-it-works" className="scroll-mt-20">
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Getting started</p>
-            <h2 className="mt-3 font-display text-3xl font-bold tracking-tight sm:text-4xl">Your school. Your space.</h2>
+            <p className="text-xs font-semibold uppercase tracking-normal text-primary">Getting started</p>
+            <h2 className="mt-3 font-display text-3xl font-bold sm:text-4xl">Your school. Your space.</h2>
             <p className="mt-4 text-sm leading-6 text-muted-foreground sm:text-base">
               Start with your school’s workspace. Once it’s approved, invite your team and make it your own.
             </p>
@@ -210,6 +198,24 @@ function HomePage() {
         </div>
       </section>
 
+      <section id="questions" className="border-t border-border">
+        <div className="mx-auto grid max-w-7xl gap-8 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
+          <div><p className="text-xs font-semibold uppercase text-primary">Before you get started</p><h2 className="mt-3 font-display text-3xl font-bold">A few common questions.</h2><p className="mt-4 text-sm leading-6 text-muted-foreground">Have something else in mind? Reach us using the contact details below.</p></div>
+          <div className="divide-y divide-border border-y border-border">
+            {[
+              ["How does my school join?", "Register your school and submit your details for review. Once your application is approved, you can sign in to your school’s workspace."],
+              ["Can we use our own school branding?", "Yes. Your school’s name, crest, and dominant colour carry through to its workspace, including light and dark themes."],
+              ["Who is the workspace for?", "School administrators, teachers, finance staff, students, and parents each have their own role in the school workspace."],
+              ["Can I use Klasora on my phone?", "Yes. The school workspace adapts to phones, tablets, and desktop screens, so you can work from the device that suits you."],
+            ].map(([question, answer]) => <details key={question} className="group py-5"><summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-semibold [&::-webkit-details-marker]:hidden">{question}<Plus className="size-4 shrink-0 text-primary transition-transform group-open:rotate-45 motion-reduce:transition-none" /></summary><p className="mt-3 max-w-xl text-sm leading-7 text-muted-foreground">{answer}</p></details>)}
+          </div>
+        </div>
+      </section>
+
+      <section className="border-t border-border bg-secondary/40">
+        <div className="mx-auto flex max-w-7xl flex-col justify-between gap-6 px-4 py-12 sm:px-6 md:flex-row md:items-center lg:px-8"><div><h2 className="font-display text-2xl font-bold sm:text-3xl">Make room for a better school day.</h2><p className="mt-3 text-sm text-muted-foreground">Bring your people, records, and daily routines together.</p></div><Button asChild size="lg" className="h-auto min-h-11 w-fit whitespace-normal px-5"><Link to="/signup">Register your school<ArrowRight /></Link></Button></div>
+      </section>
+
       <footer className="border-t border-border/70 bg-[var(--brand-deep)] text-primary-foreground">
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-8 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
           <Link to="/" className="flex items-center" aria-label="Klasora home">
@@ -231,24 +237,3 @@ function HomePage() {
   );
 }
 
-function PreviewCard({
-  icon: Icon,
-  label,
-  detail,
-}: {
-  icon: typeof GraduationCap;
-  label: string;
-  detail: string;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-background/70 p-4">
-      <div className="flex items-center gap-2.5">
-        <div className="grid size-8 place-items-center rounded-md bg-secondary text-secondary-foreground">
-          <Icon className="size-4" />
-        </div>
-        <p className="text-sm font-semibold">{label}</p>
-      </div>
-      <p className="mt-3 text-xs text-muted-foreground">{detail}</p>
-    </div>
-  );
-}
