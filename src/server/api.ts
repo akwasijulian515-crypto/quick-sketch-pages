@@ -1655,10 +1655,48 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                    where i.school_id = ${school.schoolId}::uuid and i.student_id = lc.id and i.status <> 'void') as balance_due,
                   (select count(*)::int from subject_term_marks m
                    where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
-                     and lc.term_id is not null and m.term_id = lc.term_id) as mark_count,
+                     and lc.term_id is not null and m.term_id = lc.term_id
+                     and exists (
+                       select 1 from terminal_reports published
+                       where published.school_id = m.school_id
+                         and published.student_id = m.student_id
+                         and published.term_id = m.term_id
+                         and published.published_at is not null
+                     )) as mark_count,
                   (select avg(m.total_score)::numeric(5,2) from subject_term_marks m
                    where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
-                     and lc.term_id is not null and m.term_id = lc.term_id) as term_average
+                     and lc.term_id is not null and m.term_id = lc.term_id
+                     and exists (
+                       select 1 from terminal_reports published
+                       where published.school_id = m.school_id
+                         and published.student_id = m.student_id
+                         and published.term_id = m.term_id
+                         and published.published_at is not null
+                     )) as term_average,
+                  (select coalesce(jsonb_agg(jsonb_build_object(
+                    'id', r.id, 'term_name', t.name, 'academic_year_name', ay.name,
+                    'published_at', r.published_at, 'conduct', r.conduct,
+                    'attitude', r.attitude, 'interest', r.interest,
+                    'attendance_present', r.attendance_present,
+                    'attendance_total', r.attendance_total,
+                    'teacher_remark', r.teacher_remark,
+                    'headteacher_remark', r.headteacher_remark,
+                    'items', coalesce((
+                      select jsonb_agg(jsonb_build_object(
+                        'subject_name', s.name, 'total_score', i.total_score,
+                        'performance_level', i.performance_level, 'remark', i.remark
+                      ) order by s.name)
+                      from terminal_report_items i
+                      join subjects s on s.id = i.subject_id and s.school_id = i.school_id
+                      where i.report_id = r.id and i.school_id = r.school_id
+                    ), '[]'::jsonb)
+                  ) order by t.starts_on desc), '[]'::jsonb)
+                   from terminal_reports r
+                   join terms t on t.id = r.term_id and t.school_id = r.school_id
+                   join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+                   where r.school_id = ${school.schoolId}::uuid
+                     and r.student_id = lc.id and r.published_at is not null
+                  ) as published_reports
                 from linked_children lc
               )
               select coalesce(jsonb_agg(to_jsonb(child_data) order by last_name, first_name), '[]'::jsonb) as children,
