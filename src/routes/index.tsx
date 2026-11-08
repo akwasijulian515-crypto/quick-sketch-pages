@@ -13,6 +13,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { SampleTerminalReport } from "@/components/sample-terminal-report";
 import schoolCourtyard from "@/assets/school-courtyard.jpg";
 import classroomLearning from "@/assets/classroom-learning.jpg";
 
@@ -169,6 +170,8 @@ function HomePage() {
           <Button asChild variant="outline" className="w-fit"><Link to="/signup">Make it yours<ArrowRight /></Link></Button>
         </div>
       </section>
+
+      <SampleTerminalReport />
 
       <section id="how-it-works" className="scroll-mt-20">
         <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 sm:py-20 lg:grid-cols-[0.8fr_1.2fr] lg:px-8">
