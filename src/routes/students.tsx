@@ -1469,6 +1469,8 @@ function StudentProfile({
   const [savingStatus, setSavingStatus] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+  const [classToAssign, setClassToAssign] = useState(student.classId);
+  const [savingClass, setSavingClass] = useState(false);
   const [detailsSaveState, setDetailsSaveState] = useState<"idle" | "pending" | "saved" | "error">(
     "idle",
   );
@@ -1489,6 +1491,7 @@ function StudentProfile({
       .then(({ student: record }) => {
         if (!cancelled) {
           setDetails(mapStudent(record));
+          setClassToAssign(record.class_id ?? "");
           setError("");
         }
       })
@@ -1539,6 +1542,39 @@ function StudentProfile({
       setError(cause instanceof Error ? cause.message : "Could not update student status");
     } finally {
       setSavingStatus(false);
+    }
+  }
+
+  async function changeStudentClass() {
+    if (classToAssign === profile.classId) return;
+    const className = classes.find((item) => item.id === classToAssign)?.name ?? "Unassigned";
+    if (
+      !window.confirm(
+        `Change ${profile.name}'s class to ${className} from today? Existing attendance, grades, and fee history will stay with the previous class.`,
+      )
+    )
+      return;
+
+    setSavingClass(true);
+    setError("");
+    setStatusNotice("");
+    try {
+      const result = await schoolApi<{ student: StudentRecord }>(
+        `/api/school/students/${encodeURIComponent(student.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ class_id: classToAssign || null }),
+        },
+      );
+      const updated = mapStudent(result.student);
+      setDetails(updated);
+      setClassToAssign(updated.classId);
+      onStudentUpdated(updated);
+      setStatusNotice(`Class updated to ${updated.className}.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not change the student's class");
+    } finally {
+      setSavingClass(false);
     }
   }
 
@@ -1606,6 +1642,7 @@ function StudentProfile({
           if (job.revision === detailsSaveRevision.current && !pendingDetailsSave.current) {
             const updated = mapStudent(result.student);
             setDetails(updated);
+            setClassToAssign(updated.classId);
             onStudentUpdated(updated);
             setDetailsSaveState("saved");
           }
@@ -1977,6 +2014,11 @@ function StudentProfile({
               <>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <InfoCard
+                    icon={GraduationCap}
+                    label="Class"
+                    value={profile.className || "Unassigned"}
+                  />
+                  <InfoCard
                     icon={CalendarDays}
                     label="Date of Birth"
                     value={profile.dob || "Not recorded"}
@@ -2014,7 +2056,50 @@ function StudentProfile({
                   />
                 </div>
                 {canManageStudents && (
-                  <div className="mt-5">
+                  <div className="mt-5 flex flex-col gap-3">
+                    <form
+                      className="flex flex-col gap-2 rounded-md border border-border p-3 sm:flex-row sm:items-end"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void changeStudentClass();
+                      }}
+                    >
+                      <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs font-semibold text-foreground">
+                        Change class
+                        <select
+                          value={classToAssign}
+                          onChange={(event) => setClassToAssign(event.target.value)}
+                          disabled={savingClass || loadingClasses}
+                          className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                        >
+                          <option value="">Unassigned</option>
+                          {profile.classId &&
+                            !classes.some((item) => item.id === profile.classId) && (
+                              <option value={profile.classId}>{profile.className}</option>
+                            )}
+                          {classes.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name}
+                              {item.academic_year_name ? ` · ${item.academic_year_name}` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="submit"
+                        disabled={
+                          savingClass || loadingClasses || classToAssign === profile.classId
+                        }
+                        className="admin-btn-secondary w-full sm:w-auto"
+                      >
+                        {savingClass ? "Changing class…" : "Change class"}
+                      </button>
+                    </form>
+                    {classError && (
+                      <p role="alert" className="text-xs text-destructive">
+                        Could not load classes: {classError}
+                      </p>
+                    )}
                     <button
                       type="button"
                       onClick={() => {

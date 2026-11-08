@@ -1,9 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { CreditCard, GraduationCap, ReceiptText, UserRoundCheck } from "lucide-react";
+import { createFileRoute, useRouterState } from "@tanstack/react-router";
+import { CreditCard, Download, GraduationCap, ReceiptText, ScrollText, UserRoundCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { fetchWithNeonAuth } from "../auth/client";
 import { SchoolShell } from "@/components/school-shell";
+import { useTenantBranding } from "@/components/tenant-branding-provider";
 
 export const Route = createFileRoute("/parent")({
   head: () => ({ meta: [{ title: "Parent Portal — Klasora" }, { name: "description", content: "Follow your children’s learning, attendance, and fees." }] }),
@@ -72,10 +74,14 @@ async function portalApi<T>(path: string): Promise<T> {
 }
 
 function ParentPortal() {
+  const { schoolName, primaryColor, crestUrl } = useTenantBranding();
+  const locationHash = useRouterState({ select: (state) => state.location.hash });
   const [children, setChildren] = useState<Child[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -92,11 +98,63 @@ function ParentPortal() {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => {
+    if (locationHash.replace(/^#/, "") !== "published-results" || loading) return;
+    const frame = window.requestAnimationFrame(() =>
+      document.getElementById("published-results")?.scrollIntoView({ behavior: "smooth" }),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [locationHash, loading]);
+
   const outstandingBalance = useMemo(
     () => children.reduce((sum, child) => sum + Number(child.balance_due), 0),
     [children],
   );
   const currency = children[0]?.currency ?? "GHS";
+  const publishedReports = children.flatMap((child) =>
+    (child.published_reports ?? []).map((report) => ({ child, report })),
+  );
+
+  async function downloadReport(child: Child, report: PublishedReport) {
+    setDownloadingReportId(report.id);
+    setDownloadError("");
+    try {
+      const { downloadTerminalReports } = await import("@/lib/terminal-report-pdf");
+      await downloadTerminalReports([
+        {
+          schoolName,
+          primaryColor,
+          crestUrl,
+          student: `${child.first_name} ${child.last_name}`,
+          admission: child.admission_number,
+          className: child.class_name ?? "Unassigned",
+          term: `${report.academic_year_name} · ${report.term_name}`,
+          attendance: `${report.attendance_present ?? 0} / ${report.attendance_total ?? 0} days`,
+          conduct: report.conduct ?? "",
+          attitude: report.attitude ?? "",
+          interest: report.interest ?? "",
+          teacherRemark: [
+            report.teacher_remark ? `Teacher: ${report.teacher_remark}` : "",
+            report.headteacher_remark ? `Headteacher: ${report.headteacher_remark}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          results: report.items.map((item) => ({
+            subject: item.subject_name,
+            score: Number(item.total_score ?? 0),
+            teacher: "",
+            remark: item.remark ?? item.performance_level ?? "",
+          })),
+        },
+      ]);
+    } catch (cause) {
+      setDownloadError(
+        cause instanceof Error ? cause.message : "Could not download this published report",
+      );
+    } finally {
+      setDownloadingReportId(null);
+    }
+  }
 
   return (
     <SchoolShell title="My children" parentPortal>
@@ -144,41 +202,111 @@ function ParentPortal() {
                     <SmallStat icon={GraduationCap} label="Term average" value={child.term_average === null ? "No grades" : `${Number(child.term_average).toFixed(1)}%`} />
                   </div>
                   {child.academic_year_name && <p className="mt-4 text-xs text-muted-foreground">Academic year: {child.academic_year_name}</p>}
-                  {child.published_reports?.length > 0 && (
-                    <section className="mt-5 border-t border-border pt-4">
-                      <h3 className="font-display font-semibold">Published results</h3>
-                      <div className="mt-3 space-y-3">
-                        {child.published_reports.map((report) => (
-                          <article key={report.id} className="rounded-md border border-border p-3">
-                            <h4 className="text-sm font-semibold">{report.term_name} · {report.academic_year_name}</h4>
-                            <p className="mt-1 text-xs text-muted-foreground">Published {new Date(report.published_at).toLocaleDateString()}</p>
-                            <p className="mt-2 text-xs text-muted-foreground">Attendance: {report.attendance_present ?? 0}/{report.attendance_total ?? 0} school days</p>
-                            {report.items.length > 0 && (
-                              <ul className="mt-3 divide-y divide-border/70">
-                                {report.items.map((item) => (
-                                  <li key={item.subject_name} className="flex items-center justify-between gap-3 py-2 text-sm">
-                                    <span>{item.subject_name}</span>
-                                    <span className="text-right font-medium">{item.total_score === null ? "—" : `${Number(item.total_score).toFixed(1)}%`}{item.performance_level ? ` · ${item.performance_level}` : ""}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {(report.teacher_remark || report.headteacher_remark) && (
-                              <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-                                {report.teacher_remark && <p><span className="font-medium">Teacher:</span> {report.teacher_remark}</p>}
-                                {report.headteacher_remark && <p><span className="font-medium">Headteacher:</span> {report.headteacher_remark}</p>}
-                              </div>
-                            )}
-                          </article>
-                        ))}
-                      </div>
-                    </section>
-                  )}
                 </article>
               );
             })}
           </section>
         )}
+
+        <section
+          id="published-results"
+          className="glass-panel mt-4 scroll-mt-6 overflow-hidden rounded-lg"
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div className="flex items-center gap-3">
+              <ScrollText className="size-5 shrink-0 text-primary" />
+              <div>
+                <h2 className="font-display text-lg font-bold">Published results</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Download reports the school has published for your linked children.
+                </p>
+              </div>
+            </div>
+          </div>
+          {downloadError && (
+            <p role="alert" className="mx-5 mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">
+              {downloadError}
+            </p>
+          )}
+          {loading ? (
+            <p className="px-5 py-8 text-center text-sm text-muted-foreground">
+              Loading published results...
+            </p>
+          ) : publishedReports.length === 0 ? (
+            <p className="px-5 py-8 text-center text-sm text-muted-foreground">
+              No results have been published for your linked children yet.
+            </p>
+          ) : (
+            <div className="grid gap-3 p-4 sm:grid-cols-2">
+              {publishedReports.map(({ child, report }) => (
+                <article key={report.id} className="min-w-0 rounded-md border border-border p-4">
+                  <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                    <div className="min-w-0">
+                      <h3 className="break-words font-display font-semibold">
+                        {child.first_name} {child.last_name}
+                      </h3>
+                      <p className="mt-1 break-words text-sm">
+                        {report.term_name} · {report.academic_year_name}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {child.class_name ?? "No active class"} · Published{" "}
+                        {new Date(report.published_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      disabled={downloadingReportId !== null}
+                      onClick={() => void downloadReport(child, report)}
+                    >
+                      <Download className="size-4" />
+                      {downloadingReportId === report.id ? "Preparing..." : "Download PDF"}
+                    </Button>
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Attendance: {report.attendance_present ?? 0}/{report.attendance_total ?? 0}{" "}
+                    school days
+                  </p>
+                  {report.items.length > 0 && (
+                    <ul className="mt-2 divide-y divide-border/70">
+                      {report.items.map((item) => (
+                        <li
+                          key={item.subject_name}
+                          className="flex items-start justify-between gap-3 py-2 text-sm"
+                        >
+                          <span className="min-w-0 break-words">{item.subject_name}</span>
+                          <span className="shrink-0 text-right font-medium">
+                            {item.total_score === null
+                              ? "—"
+                              : `${Number(item.total_score).toFixed(1)}%`}
+                            {item.performance_level ? ` · ${item.performance_level}` : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {(report.teacher_remark || report.headteacher_remark) && (
+                    <div className="mt-3 space-y-1 break-words text-sm text-muted-foreground">
+                      {report.teacher_remark && (
+                        <p>
+                          <span className="font-medium">Teacher:</span> {report.teacher_remark}
+                        </p>
+                      )}
+                      {report.headteacher_remark && (
+                        <p>
+                          <span className="font-medium">Headteacher:</span>{" "}
+                          {report.headteacher_remark}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="glass-panel mt-4 overflow-hidden rounded-lg">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">

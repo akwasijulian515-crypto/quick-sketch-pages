@@ -962,6 +962,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   const termAttendanceRegisterCloseMatch = url.pathname.match(
     /^\/api\/school\/terms\/([0-9a-f-]+)\/close-attendance-register$/i,
   );
+  const termLifecycleMatch = url.pathname.match(/^\/api\/school\/terms\/([0-9a-f-]+)$/i);
   const studentProfileMatch = url.pathname.match(/^\/api\/school\/students\/([0-9a-f-]+)$/i);
   const guardianLifecycleMatch = url.pathname.match(/^\/api\/school\/guardians\/([0-9a-f-]+)$/i);
   const teacherLifecycleMatch = url.pathname.match(
@@ -1030,6 +1031,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     (studentProfileMatch && request.method === "DELETE" ? ["school_admin"] : undefined) ??
     (studentHistoryMatch && request.method === "GET" ? ["school_admin"] : undefined) ??
     (feeRuleMatch && ["PATCH", "DELETE"].includes(request.method) ? ["school_admin"] : undefined) ??
+    (termLifecycleMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
     (paymentReviewMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
     (classRosterMatch && request.method === "GET" ? ["school_admin", "teacher"] : undefined) ??
     (classLifecycleMatch && request.method === "PATCH" ? ["school_admin"] : undefined) ??
@@ -1768,12 +1770,26 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                      from payments p where p.school_id = i.school_id and p.invoice_id = i.id
                    ) paid on true
                    where i.school_id = ${school.schoolId}::uuid and i.student_id = lc.id and i.status <> 'void') as balance_due,
-                  (select count(*)::int from subject_term_marks m
-                   where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
-                     and lc.term_id is not null and m.term_id = lc.term_id) as mark_count,
-                  (select avg(m.total_score)::numeric(5,2) from subject_term_marks m
-                   where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
-                     and lc.term_id is not null and m.term_id = lc.term_id) as term_average,
+                  case when exists (
+                    select 1 from terminal_reports published
+                    where published.school_id = ${school.schoolId}::uuid
+                      and published.student_id = lc.id and published.term_id = lc.term_id
+                      and published.published_at is not null
+                  ) then (
+                    select count(*)::int from subject_term_marks m
+                    where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
+                      and lc.term_id is not null and m.term_id = lc.term_id
+                  ) else 0 end as mark_count,
+                  case when exists (
+                    select 1 from terminal_reports published
+                    where published.school_id = ${school.schoolId}::uuid
+                      and published.student_id = lc.id and published.term_id = lc.term_id
+                      and published.published_at is not null
+                  ) then (
+                    select avg(m.total_score)::numeric(5,2) from subject_term_marks m
+                    where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
+                      and lc.term_id is not null and m.term_id = lc.term_id
+                  ) else null end as term_average,
                   (select coalesce(jsonb_agg(jsonb_build_object(
                     'id', r.id, 'term_name', t.name, 'academic_year_name', ay.name,
                     'published_at', r.published_at, 'conduct', r.conduct,
@@ -2067,6 +2083,96 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           return badRequest("A JSON request body is required");
         }
         const body = payload as Record<string, unknown>;
+        if (
+          Object.prototype.hasOwnProperty.call(body, "class_id") &&
+          Object.keys(body).length === 1
+        ) {
+          const classId =
+            body["class_id"] == null || body["class_id"] === "" ? null : body["class_id"];
+          if (!uuidOrNull(classId)) return badRequest("Choose a valid class");
+          if (classId) {
+            const classRows = await withDatabaseContext(
+              sql,
+              { schoolId: school.schoolId },
+              (tx) =>
+                tx`
+                select id from classes
+                where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
+                limit 1
+              `,
+            );
+            if (!classRows[0])
+              return badRequest("The selected class does not exist in this school");
+          }
+
+          const rows = await withDatabaseContext(
+            sql,
+            { schoolId: school.schoolId },
+            (tx) =>
+              tx`
+              with current_student as materialized (
+                select st.id, st.school_id,
+                       enrollment.id as enrollment_id, enrollment.class_id
+                from students st
+                left join lateral (
+                  select e.id, e.class_id
+                  from class_enrollments e
+                  where e.school_id = st.school_id
+                    and e.student_id = st.id
+                    and e.ends_on is null
+                  order by e.starts_on desc
+                  limit 1
+                ) enrollment on true
+                where st.id = ${studentProfileMatch[1]}::uuid
+                  and st.school_id = ${school.schoolId}::uuid
+                for update of st
+              ),
+              closed_enrollment as (
+                update class_enrollments enrollment
+                set ends_on = greatest(current_date, enrollment.starts_on)
+                from current_student current
+                where enrollment.id = current.enrollment_id
+                  and current.class_id is distinct from ${classId}::uuid
+                returning enrollment.id
+              ),
+              added_enrollment as (
+                insert into class_enrollments (school_id, class_id, student_id)
+                select current.school_id, ${classId}::uuid, current.id
+                from current_student current
+                cross join (select count(*) from closed_enrollment) close_dependency
+                where ${classId}::uuid is not null
+                  and current.class_id is distinct from ${classId}::uuid
+                returning id
+              )
+              select st.id, st.first_name, st.last_name,
+                     st.admission_number as student_id_number,
+                     case when st.active then 'active' else 'inactive' end as status,
+                     st.joined_on, st.date_of_birth, st.gender, st.address,
+                     st.emergency_contact, st.medical_notes,
+                     ${classId}::uuid as class_id, class.name as class_name,
+                     guardian.full_name as guardian_name, guardian.phone as guardian_phone,
+                     guardian.email as guardian_email,
+                     guardian.relationship as guardian_relationship
+              from current_student current
+              join students st on st.id = current.id and st.school_id = current.school_id
+              left join classes class
+                on class.id = ${classId}::uuid and class.school_id = st.school_id
+              left join lateral (
+                select g.full_name, g.phone, g.email, sg.relationship
+                from student_guardians sg
+                join guardians g on g.id = sg.guardian_id and g.school_id = sg.school_id
+                where sg.school_id = st.school_id
+                  and sg.student_id = st.id
+                  and sg.is_primary
+                limit 1
+              ) guardian on true
+              cross join (select count(*) from added_enrollment) insert_dependency
+              limit 1
+            `,
+          );
+          if (!rows[0]) return json({ error: "Student not found" }, 404);
+          return json({ student: rows[0] });
+        }
         if (typeof body["active"] === "boolean" && Object.keys(body).length === 1) {
           const rows = await withDatabaseContext(
             sql,
@@ -4738,13 +4844,21 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                       where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
                     )
                     and ar.status in ('present', 'late')),
-                 (select count(*)::int
-                  from generate_series(t.starts_on, t.ends_on, interval '1 day') school_day(day)
-                  where extract(isodow from school_day.day) < 6
-                    and not exists (
-                      select 1 from school_holidays h
-                      where h.school_id = rs.school_id and h.holiday_date = school_day.day::date
-                    )),
+                 greatest(
+                   0,
+                   coalesce(
+                     t.school_days_override,
+                     (select count(*)::int
+                      from generate_series(t.starts_on, t.ends_on, interval '1 day') school_day(day)
+                      where extract(isodow from school_day.day) < 6)
+                   ) - (
+                     select count(*)::int
+                     from school_holidays h
+                     where h.school_id = rs.school_id
+                       and h.holiday_date between t.starts_on and t.ends_on
+                       and extract(isodow from h.holiday_date) < 6
+                   )
+                 ),
                  case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.teacher_remark else null end,
                  case when ${school.role === "school_admin"} then ip.headteacher_remark else null end,
                  case when ${school.role === "school_admin"} or rs.is_class_teacher
@@ -5185,13 +5299,27 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             t.name as term_name,
             t.starts_on as term_starts_on,
             t.ends_on as term_ends_on,
-            (select count(*)::int
-             from generate_series(t.starts_on, t.ends_on, interval '1 day') school_day(day)
-             where extract(isodow from school_day.day) < 6
-               and not exists (
-                 select 1 from school_holidays h
-                 where h.school_id = t.school_id and h.holiday_date = school_day.day::date
-               )) as term_school_days,
+            coalesce(
+              t.school_days_override,
+              (select count(*)::int
+               from generate_series(t.starts_on, t.ends_on, interval '1 day') school_day(day)
+               where extract(isodow from school_day.day) < 6)
+            ) as term_scheduled_school_days,
+            greatest(
+              0,
+              coalesce(
+                t.school_days_override,
+                (select count(*)::int
+                 from generate_series(t.starts_on, t.ends_on, interval '1 day') school_day(day)
+                 where extract(isodow from school_day.day) < 6)
+              ) - (
+                select count(*)::int
+                from school_holidays h
+                where h.school_id = t.school_id
+                  and h.holiday_date between t.starts_on and t.ends_on
+                  and extract(isodow from h.holiday_date) < 6
+              )
+            ) as term_school_days,
             (current_date between t.starts_on and t.ends_on) as term_is_current,
             t.is_closed as term_is_closed,
             t.attendance_register_closed_at,
@@ -5215,6 +5343,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             starts_on: string;
             ends_on: string;
             school_days: number;
+            scheduled_school_days: number;
             is_current: boolean;
             is_closed: boolean;
             attendance_register_closed_at: string | null;
@@ -5242,6 +5371,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             starts_on: String(row["term_starts_on"]),
             ends_on: String(row["term_ends_on"]),
             school_days: Number(row["term_school_days"] ?? 0),
+            scheduled_school_days: Number(row["term_scheduled_school_days"] ?? 0),
             is_current: row["term_is_current"] === true,
             is_closed: row["term_is_closed"] === true,
             attendance_register_closed_at:
@@ -5256,6 +5386,116 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         }
       }
       return json({ academic_years: [...years.values()] });
+    }
+
+    if (termLifecycleMatch && request.method === "PATCH") {
+      const termId = termLifecycleMatch[1];
+      if (!uuidOrNull(termId)) return badRequest("Invalid term ID");
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const startsOn = typeof body["starts_on"] === "string" ? body["starts_on"] : "";
+      const endsOn = typeof body["ends_on"] === "string" ? body["ends_on"] : "";
+      const schoolDays = Number(body["school_days"]);
+      if (!validIsoDate(startsOn) || !validIsoDate(endsOn) || startsOn >= endsOn)
+        return badRequest("Enter valid term start and end dates");
+      if (!Number.isInteger(schoolDays) || schoolDays < 1 || schoolDays > 366)
+        return badRequest("Scheduled school days must be between 1 and 366");
+
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) =>
+          tx`
+          with selected_term as materialized (
+            select t.id, t.school_id, t.academic_year_id, t.starts_on as old_starts_on,
+                   t.ends_on as old_ends_on, ay.starts_on as year_starts_on,
+                   ay.ends_on as year_ends_on
+            from terms t
+            join academic_years ay
+              on ay.id = t.academic_year_id and ay.school_id = t.school_id
+            where t.id = ${termId}::uuid and t.school_id = ${school.schoolId}::uuid
+              and not t.is_closed
+              and t.attendance_register_closed_at is null
+              and t.arrears_processed_at is null
+            for update of t
+          ),
+          valid_term as materialized (
+            select selected.*
+            from selected_term selected
+            where ${startsOn}::date >= selected.year_starts_on
+              and ${endsOn}::date <= selected.year_ends_on
+              and not exists (
+                select 1 from terms other
+                where other.school_id = selected.school_id
+                  and other.academic_year_id = selected.academic_year_id
+                  and other.id <> selected.id
+                  and other.starts_on < ${endsOn}::date
+                  and other.ends_on > ${startsOn}::date
+              )
+              and not exists (
+                select 1
+                from attendance_sessions session
+                join classes c
+                  on c.id = session.class_id and c.school_id = session.school_id
+                where session.school_id = selected.school_id
+                  and c.academic_year_id = selected.academic_year_id
+                  and session.attendance_date between selected.old_starts_on and selected.old_ends_on
+                  and session.attendance_date not between ${startsOn}::date and ${endsOn}::date
+              )
+              and ${schoolDays} >= (
+                select count(*)::int
+                from school_holidays holiday
+                where holiday.school_id = selected.school_id
+                  and holiday.holiday_date between ${startsOn}::date and ${endsOn}::date
+                  and extract(isodow from holiday.holiday_date) < 6
+              )
+          )
+          update terms t
+          set starts_on = ${startsOn}::date,
+              ends_on = ${endsOn}::date,
+              school_days_override = ${schoolDays}
+          from valid_term valid
+          where t.id = valid.id and t.school_id = valid.school_id
+          returning t.id, t.name, t.starts_on, t.ends_on, t.school_days_override
+        `,
+      );
+      if (!rows[0]) {
+        const statusRows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
+            select t.is_closed, t.attendance_register_closed_at, t.arrears_processed_at,
+                   ay.starts_on as year_starts_on, ay.ends_on as year_ends_on
+            from terms t
+            join academic_years ay
+              on ay.id = t.academic_year_id and ay.school_id = t.school_id
+            where t.id = ${termId}::uuid and t.school_id = ${school.schoolId}::uuid
+          `,
+        );
+        if (!statusRows[0]) return json({ error: "Term not found" }, 404);
+        const status = statusRows[0];
+        if (
+          status["is_closed"] === true ||
+          status["attendance_register_closed_at"] != null ||
+          status["arrears_processed_at"] != null
+        )
+          return json(
+            { error: "This term can no longer be edited because it has been closed or processed." },
+            409,
+          );
+        if (startsOn < String(status["year_starts_on"]) || endsOn > String(status["year_ends_on"]))
+          return badRequest("Term dates must stay within the academic year");
+        return json(
+          {
+            error:
+              "Term dates cannot overlap another term or exclude saved attendance, and scheduled school days cannot be fewer than weekday holidays.",
+          },
+          409,
+        );
+      }
+      return json({ term: rows[0] });
     }
 
     if (url.pathname === "/api/school/terms" && request.method === "POST") {
