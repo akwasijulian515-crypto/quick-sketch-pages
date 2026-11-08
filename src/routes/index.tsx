@@ -231,8 +231,8 @@ function HomePage() {
           </div>
           <div className="flex flex-col gap-1 text-xs text-primary-foreground/75 md:text-right">
             <a href="mailto:akwasiJulian515@gmail.com" className="hover:text-primary-foreground">akwasiJulian515@gmail.com</a>
-            <a href="tel:+233542184131" className="hover:text-primary-foreground">+233 54 218 4131</a>
-            <a href="tel:+233241203364" className="hover:text-primary-foreground">+233 24 120 3364</a>
+            <a href="tel:+233551587723" className="hover:text-primary-foreground">0551587723</a>
+            <a href="tel:+233596466723" className="hover:text-primary-foreground">0596466723</a>
           </div>
         </div>
       </footer>
