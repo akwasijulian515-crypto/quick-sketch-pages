@@ -487,3 +487,20 @@
   .attendance-print-page:nth-child(n + 2) th,
   .attendance-print-page:nth-child(n + 2) td { padding: 3px 4px; font-size: 8pt; }
 }
+
+/* Public homepage photography keeps a consistent, readable overlay in either theme. */
+:root {
+  --homepage-cover-ink: oklch(0.97 0.012 88);
+  --homepage-cover-shade: oklch(0.19 0.035 160);
+}
+.homepage-cover {
+  min-height: min(660px, 78svh);
+  color: var(--homepage-cover-ink);
+}
+.homepage-cover-shade {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--homepage-cover-shade) 94%, transparent), color-mix(in oklab, var(--homepage-cover-shade) 72%, transparent) 42%, color-mix(in oklab, var(--homepage-cover-shade) 8%, transparent));
+}
+@media (max-width: 639px) {
+  .homepage-cover { min-height: min(620px, 85svh); }
+  .homepage-cover-shade { background: color-mix(in oklab, var(--homepage-cover-shade) 76%, transparent); }
+}
