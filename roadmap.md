@@ -1,6 +1,6 @@
 # Roadmap
 
-- [ ] Enrich the public homepage with school imagery, community and branding sections, and common questions; verify phone, tablet, desktop.
+- [x] Enrich the public homepage with school imagery, community and branding sections, and common questions; verified images, FAQ, registration link, and no horizontal overflow at phone, tablet, desktop widths.
 
 - [x] Refine admin, teaching team, teaching assignments, and school accounts for mobile (UI only; sample-data layout checks at phone, tablet, desktop)
 
