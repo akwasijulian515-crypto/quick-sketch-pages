@@ -7,7 +7,7 @@ import {
   ScrollText,
   UserRoundCheck,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { fetchWithNeonAuth } from "../auth/client";
@@ -100,36 +100,54 @@ function ParentPortal() {
   const [error, setError] = useState("");
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState("");
+  const isMounted = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
-    void portalApi<{ children: Child[]; recent_payments: Payment[] }>("/api/school/portal-data")
-      .then((result) => {
-        if (cancelled) return;
-        setChildren(result.children);
-        setPayments(result.recent_payments);
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled)
-          setError(
-            loadError instanceof Error ? loadError.message : "Could not load family records",
-          );
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    isMounted.current = true;
     return () => {
-      cancelled = true;
+      isMounted.current = false;
     };
   }, []);
 
+  const refreshPortalData = useCallback(async () => {
+    setError("");
+    try {
+      const result = await portalApi<{ children: Child[]; recent_payments: Payment[] }>(
+        "/api/school/portal-data",
+      );
+      if (!isMounted.current) return;
+      setChildren(result.children);
+      setPayments(result.recent_payments);
+    } catch (loadError) {
+      if (!isMounted.current) return;
+      setError(
+        loadError instanceof Error ? loadError.message : "Could not load family records",
+      );
+    } finally {
+      if (isMounted.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshPortalData();
+  }, [refreshPortalData]);
+
   useEffect(() => {
     if (locationHash.replace(/^#/, "") !== "published-results" || loading) return;
+    void refreshPortalData();
     const frame = window.requestAnimationFrame(() =>
       document.getElementById("published-results")?.scrollIntoView({ behavior: "smooth" }),
     );
     return () => window.cancelAnimationFrame(frame);
-  }, [locationHash, loading]);
+  }, [locationHash, loading, refreshPortalData]);
+
+  useEffect(() => {
+    const refreshWhenFocused = () => {
+      void refreshPortalData();
+    };
+    window.addEventListener("focus", refreshWhenFocused);
+    return () => window.removeEventListener("focus", refreshWhenFocused);
+  }, [refreshPortalData]);
 
   const outstandingBalance = useMemo(
     () => children.reduce((sum, child) => sum + Number(child.balance_due), 0),
