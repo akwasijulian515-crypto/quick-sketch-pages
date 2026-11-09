@@ -382,7 +382,7 @@ export function SchoolShell({
           </div>
         </header>
         <main className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6">
-          <UserOnboardingChecklist />
+          {!platform && <UserOnboardingChecklist />}
           {children}
         </main>
       </div>
@@ -516,7 +516,7 @@ export function SchoolShell({
           </div>
         </header>
         <main className="mx-auto w-full max-w-[1600px] px-3 py-5 sm:px-6 lg:px-8 lg:py-7">
-          <UserOnboardingChecklist />
+          {!platform && <UserOnboardingChecklist />}
           {children}
         </main>
       </div>
