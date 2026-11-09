@@ -936,8 +936,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (!requestedSubdomain) return json({ school: null });
 
     const sql = database(env);
-    const rows =
-      await sql`select id, name, subdomain, status, coalesce(primary_color, '#1f5c3b') as primary_color, crest_url from schools where subdomain = ${requestedSubdomain} limit 1`;
+    const matches =
+      await sql`select id from schools where subdomain = ${requestedSubdomain} limit 1`;
+    const schoolId = matches[0]?.["id"];
+    if (!schoolId) return json({ school: null });
+    const rows = await withDatabaseContext(
+      sql,
+      { schoolId: String(schoolId) },
+      (tx) =>
+        tx`select id, name, subdomain, status, coalesce(primary_color, '#1f5c3b') as primary_color,
+                crest_url, report_template
+         from schools where id = ${String(schoolId)}::uuid limit 1`,
+    );
     const school = rows[0];
     return json({
       school: school
@@ -948,9 +958,38 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             status: school["status"],
             primaryColor: String(school["primary_color"]),
             crestUrl: school["crest_url"] ? String(school["crest_url"]) : null,
+            reportTemplate: String(school["report_template"] ?? "bento"),
           }
         : null,
     });
+  }
+
+  if (url.pathname === "/api/school/report-template") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    const school = await requireSchoolAdminContext(request, env);
+    if (school instanceof Response) return school;
+
+    const payload: unknown = await request.json().catch(() => null);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+      return badRequest("A JSON request body is required");
+    const template = (payload as Record<string, unknown>)["template"];
+    if (template !== "bento" && template !== "gazette" && template !== "ledger")
+      return badRequest("Template must be bento, gazette, or ledger");
+
+    const sql = database(env);
+    const rows = await withDatabaseContext(
+      sql,
+      { schoolId: school.schoolId },
+      (tx) =>
+        tx`update schools
+         set report_template = ${template}
+         where id = ${school.schoolId}::uuid
+         returning report_template`,
+    );
+    const savedTemplate = rows[0]?.["report_template"];
+    if (savedTemplate !== "bento" && savedTemplate !== "gazette" && savedTemplate !== "ledger")
+      return json({ error: "Could not save the school report template" }, 500);
+    return json({ ok: true, reportTemplate: savedTemplate });
   }
 
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
@@ -6851,7 +6890,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       (tx) =>
         tx`
         select u.display_name, m.role, m.school_id, s.name as school_name, s.subdomain, s.status as school_status,
-               coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url
+               coalesce(s.primary_color, '#1f5c3b') as primary_color, s.crest_url,
+               s.report_template
         from users u
         join memberships m on m.user_id = u.id
         join schools s on s.id = m.school_id
@@ -6879,6 +6919,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           status: tenantMembership["school_status"],
           primaryColor: String(tenantMembership["primary_color"]),
           crestUrl: tenantMembership["crest_url"] ? String(tenantMembership["crest_url"]) : null,
+          reportTemplate: String(tenantMembership["report_template"] ?? "bento"),
         },
       },
       200,

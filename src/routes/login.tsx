@@ -202,7 +202,11 @@ function LoginPage() {
       });
       if (result.error) {
         const authErrorMessage = result.error.message ?? "";
-        if (/^(unauthorized|invalid email or password|invalid credentials)$/i.test(authErrorMessage.trim())) {
+        if (
+          /^(unauthorized|invalid email or password|invalid credentials)$/i.test(
+            authErrorMessage.trim(),
+          )
+        ) {
           throw new Error(
             "We couldn't sign you in. Check your email and password. If you already activated this account, use Forgot password? to reset it. First-time users should choose Activate your account.",
           );
@@ -226,6 +230,7 @@ function LoginPage() {
           subdomain?: string | null;
           primaryColor?: string;
           crestUrl?: string | null;
+          reportTemplate?: "bento" | "gazette" | "ledger";
         };
       } | null;
       if (!response.ok || !payload?.membership?.role) {
@@ -260,6 +265,7 @@ function LoginPage() {
             ? membership.primaryColor
             : primaryColor,
         crestUrl: membership.crestUrl ?? null,
+        reportTemplate: membership.reportTemplate ?? "bento",
       });
       if (membership.role === "school_admin") navigate({ to: "/school-admin" });
       else if (membership.role === "teacher") navigate({ to: "/teacher" });
