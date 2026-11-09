@@ -1,13 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { FileDown, FileText, Files, ShieldCheck } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SchoolShell } from "@/components/school-shell";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
-import { downloadTerminalReports, type TerminalReportPdfData } from "@/lib/terminal-report-pdf";
+import type { TerminalReportPdfData } from "@/lib/terminal-report-pdf";
 
 export const Route = createFileRoute("/terminal-reports")({
   head: () => ({
@@ -66,6 +66,8 @@ type Profile = {
   headteacher_remark: string;
   promotion_status: string;
 };
+type AttendanceDraft = { present: string; total: string };
+type AttendanceSaveStatus = "saving" | "saved" | "error" | "invalid";
 
 async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
   const token = await getNeonAccessToken();
@@ -100,12 +102,27 @@ function TerminalReportsPage() {
   const [termId, setTermId] = useState("");
   const [reports, setReports] = useState<LearnerReport[]>([]);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
+  const [attendanceValues, setAttendanceValues] = useState<Record<string, AttendanceDraft>>({});
+  const [attendanceSaveStatus, setAttendanceSaveStatus] = useState<
+    Record<string, AttendanceSaveStatus>
+  >({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [canPublish, setCanPublish] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const attendanceSaveTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const attendanceSaveVersions = useRef(new Map<string, number>());
+  const attendanceSaveRequests = useRef(new Map<string, Promise<void>>());
+
+  useEffect(
+    () => () => {
+      attendanceSaveTimers.current.forEach(clearTimeout);
+      attendanceSaveTimers.current.clear();
+    },
+    [],
+  );
 
   const loadSetup = useCallback(async () => {
     setLoading(true);
@@ -147,6 +164,18 @@ function TerminalReportsPage() {
         `/api/school/terminal-reports?class_id=${encodeURIComponent(classId)}&term_id=${encodeURIComponent(termId)}`,
       );
       setReports(result.reports);
+      setAttendanceValues(
+        Object.fromEntries(
+          result.reports.map((report) => [
+            report.student_id,
+            {
+              present: String(report.attendance_present ?? 0),
+              total: String(report.attendance_total ?? 0),
+            },
+          ]),
+        ),
+      );
+      setAttendanceSaveStatus({});
       setProfiles(
         Object.fromEntries(
           result.reports.map((report) => [
@@ -193,6 +222,75 @@ function TerminalReportsPage() {
     }));
   }
 
+  function updateAttendance(studentId: string, field: keyof AttendanceDraft, value: string) {
+    const current = attendanceValues[studentId] ?? { present: "0", total: "0" };
+    const next = { ...current, [field]: value };
+    setAttendanceValues((values) => ({ ...values, [studentId]: next }));
+    const timer = attendanceSaveTimers.current.get(studentId);
+    if (timer) {
+      clearTimeout(timer);
+      attendanceSaveTimers.current.delete(studentId);
+    }
+    const version = (attendanceSaveVersions.current.get(studentId) ?? 0) + 1;
+    attendanceSaveVersions.current.set(studentId, version);
+
+    const present = Number(next.present);
+    const total = Number(next.total);
+    if (
+      next.present.trim() === "" ||
+      next.total.trim() === "" ||
+      !Number.isInteger(present) ||
+      !Number.isInteger(total) ||
+      present < 0 ||
+      total < 0 ||
+      present > 366 ||
+      total > 366 ||
+      present > total
+    ) {
+      setAttendanceSaveStatus((statuses) => ({ ...statuses, [studentId]: "invalid" }));
+      return;
+    }
+
+    setAttendanceSaveStatus((statuses) => ({ ...statuses, [studentId]: "saving" }));
+    const timerId = setTimeout(() => {
+      attendanceSaveTimers.current.delete(studentId);
+      const previousRequest = attendanceSaveRequests.current.get(studentId) ?? Promise.resolve();
+      const saveRequest = previousRequest
+        .catch(() => undefined)
+        .then(async () => {
+          if (attendanceSaveVersions.current.get(studentId) !== version) return;
+          await schoolApi<{ saved: boolean }>("/api/school/terminal-reports", {
+            method: "PATCH",
+            body: JSON.stringify({
+              class_id: classId,
+              term_id: termId,
+              student_id: studentId,
+              attendance_present: present,
+              attendance_total: total,
+            }),
+          });
+          if (attendanceSaveVersions.current.get(studentId) === version)
+            setAttendanceSaveStatus((statuses) => ({ ...statuses, [studentId]: "saved" }));
+        })
+        .catch((saveError: unknown) => {
+          if (attendanceSaveVersions.current.get(studentId) === version) {
+            setAttendanceSaveStatus((statuses) => ({ ...statuses, [studentId]: "error" }));
+            setError(
+              saveError instanceof Error
+                ? saveError.message
+                : "Attendance could not be saved. Check your connection and try again.",
+            );
+          }
+        });
+      attendanceSaveRequests.current.set(studentId, saveRequest);
+      void saveRequest.finally(() => {
+        if (attendanceSaveRequests.current.get(studentId) === saveRequest)
+          attendanceSaveRequests.current.delete(studentId);
+      });
+    }, 700);
+    attendanceSaveTimers.current.set(studentId, timerId);
+  }
+
   async function save(publish: boolean) {
     setSaving(true);
     setError("");
@@ -212,6 +310,8 @@ function TerminalReportsPage() {
           profiles: reports.map((report) => ({
             student_id: report.student_id,
             ...profiles[report.student_id],
+            attendance_present: Number(attendanceValues[report.student_id]?.present ?? 0),
+            attendance_total: Number(attendanceValues[report.student_id]?.total ?? 0),
           })),
         }),
       });
@@ -232,6 +332,7 @@ function TerminalReportsPage() {
     setDownloading(true);
     setError("");
     try {
+      const { downloadTerminalReports } = await import("@/lib/terminal-report-pdf");
       await downloadTerminalReports(selection);
     } catch (downloadError) {
       setError(
@@ -246,6 +347,9 @@ function TerminalReportsPage() {
 
   const selectedClass = classes.find((item) => item.id === classId);
   const canEditTeacherProfile = canPublish === true || selectedClass?.is_class_teacher === true;
+  const attendancePending = Object.values(attendanceSaveStatus).some(
+    (status) => status === "saving" || status === "invalid",
+  );
   const availableTerms = years.flatMap((year) =>
     year.terms.map((term) => ({ ...term, year_name: year.name })),
   );
@@ -258,7 +362,7 @@ function TerminalReportsPage() {
     admission: report.admission_number,
     className: selectedClass?.name ?? "",
     term: `${selectedTerm?.year_name ?? ""} ${selectedTerm?.name ?? ""}`.trim(),
-    attendance: `${report.attendance_present ?? 0} / ${report.attendance_total ?? 0} days`,
+    attendance: `${attendanceValues[report.student_id]?.present ?? report.attendance_present ?? 0} / ${attendanceValues[report.student_id]?.total ?? report.attendance_total ?? 0} days`,
     conduct: profiles[report.student_id]?.conduct ?? "",
     attitude: profiles[report.student_id]?.attitude ?? "",
     interest: profiles[report.student_id]?.interest ?? "",
@@ -295,13 +399,13 @@ function TerminalReportsPage() {
             </div>
             <h1 className="font-display text-3xl font-bold">Terminal reports</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              Review marks and attendance, add learner profiles and remarks, then save drafts or
-              publish reports.
+              Review marks, edit attendance for offline registers, and add learner profiles and
+              remarks. Attendance changes auto-save to the draft report.
             </p>
             {!canEditTeacherProfile && (
               <p className="mt-2 max-w-2xl text-xs text-muted-foreground">
-                Conduct, attitude, interest, and teacher remarks can only be entered by the assigned
-                class teacher. School Admins can manage all class profiles.
+                Attendance, conduct, attitude, interest, and teacher remarks can only be entered by
+                the assigned class teacher. School Admins can manage all class profiles.
               </p>
             )}
           </div>
@@ -416,8 +520,57 @@ function TerminalReportsPage() {
                       </p>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {report.attendance_present ?? 0} / {report.attendance_total ?? 0} attendance
-                      days
+                      Attendance
+                      {report.published_at ? (
+                        <span className="ml-2 font-normal">
+                          {attendanceValues[report.student_id]?.present ?? 0} /{" "}
+                          {attendanceValues[report.student_id]?.total ?? 0} days
+                        </span>
+                      ) : (
+                        <span className="ml-2 inline-flex flex-wrap items-center gap-2 font-normal">
+                          <label className="inline-flex items-center gap-1">
+                            Present
+                            <Input
+                              type="number"
+                              min={0}
+                              max={366}
+                              step={1}
+                              className="h-8 w-20"
+                              aria-label={`Present attendance days for ${report.first_name} ${report.last_name}`}
+                              value={attendanceValues[report.student_id]?.present ?? "0"}
+                              disabled={!canEditTeacherProfile}
+                              onChange={(event) =>
+                                updateAttendance(report.student_id, "present", event.target.value)
+                              }
+                            />
+                          </label>
+                          <span>/</span>
+                          <label className="inline-flex items-center gap-1">
+                            Total
+                            <Input
+                              type="number"
+                              min={0}
+                              max={366}
+                              step={1}
+                              className="h-8 w-20"
+                              aria-label={`Total attendance days for ${report.first_name} ${report.last_name}`}
+                              value={attendanceValues[report.student_id]?.total ?? "0"}
+                              disabled={!canEditTeacherProfile}
+                              onChange={(event) =>
+                                updateAttendance(report.student_id, "total", event.target.value)
+                              }
+                            />
+                          </label>
+                          <span aria-live="polite">
+                            {attendanceSaveStatus[report.student_id] === "saving" && "Saving..."}
+                            {attendanceSaveStatus[report.student_id] === "saved" && "Saved"}
+                            {attendanceSaveStatus[report.student_id] === "invalid" &&
+                              "Enter whole days (present cannot exceed total)"}
+                            {attendanceSaveStatus[report.student_id] === "error" &&
+                              "Could not save; try again"}
+                          </span>
+                        </span>
+                      )}
                       {report.published_at
                         ? " · Published"
                         : report.report_id
@@ -501,11 +654,15 @@ function TerminalReportsPage() {
               );
             })}
             <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="outline" disabled={saving} onClick={() => void save(false)}>
+              <Button
+                variant="outline"
+                disabled={saving || attendancePending}
+                onClick={() => void save(false)}
+              >
                 {saving ? "Saving..." : "Save drafts"}
               </Button>
               {canPublish && (
-                <Button disabled={saving} onClick={() => void save(true)}>
+                <Button disabled={saving || attendancePending} onClick={() => void save(true)}>
                   {saving ? "Publishing..." : "Publish reports"}
                 </Button>
               )}

@@ -1006,6 +1006,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/terminal-reports": {
       GET: ["school_admin", "teacher"],
       POST: ["school_admin", "teacher"],
+      PATCH: ["school_admin", "teacher"],
     },
     "/api/school/promotions": {
       GET: ["school_admin", "teacher"],
@@ -4691,7 +4692,35 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             select st.id as student_id, st.first_name, st.last_name, st.admission_number,
                    (select name from schools where id = st.school_id) as school_name,
                    r.id as report_id, r.conduct, r.attitude, r.interest,
-                   r.attendance_present, r.attendance_total, r.teacher_remark,
+                   coalesce(r.attendance_present, (
+                     select count(*)::int
+                     from attendance_records ar
+                     join attendance_sessions ase on ase.id = ar.attendance_session_id
+                       and ase.school_id = ar.school_id
+                     where ar.school_id = st.school_id and ar.student_id = st.id
+                       and ase.class_id = c.id
+                       and ase.attendance_date between t.starts_on and t.ends_on
+                       and ar.status in ('present', 'late')
+                       and not exists (
+                         select 1 from school_holidays h
+                         where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
+                       )
+                   )) as attendance_present,
+                   coalesce(r.attendance_total, greatest(
+                     0,
+                     coalesce(t.school_days_override, (
+                       select count(*)::int
+                       from generate_series(t.starts_on, t.ends_on, interval '1 day') school_day(day)
+                       where extract(isodow from school_day.day) < 6
+                     )) - (
+                       select count(*)::int
+                       from school_holidays h
+                       where h.school_id = st.school_id
+                         and h.holiday_date between t.starts_on and t.ends_on
+                         and extract(isodow from h.holiday_date) < 6
+                     )
+                   )) as attendance_total,
+                   r.teacher_remark,
                    r.headteacher_remark, r.promotion_status, r.published_at,
                    case when r.published_at is not null then coalesce((
                      select jsonb_agg(jsonb_build_object(
@@ -4722,11 +4751,11 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             from class_enrollments e
             join students st on st.id = e.student_id and st.school_id = e.school_id
             join classes c on c.id = e.class_id and c.school_id = e.school_id
+            join terms t on t.id = ${termId}::uuid and t.school_id = c.school_id
+              and t.academic_year_id = c.academic_year_id
             left join terminal_reports r on r.student_id = st.id and r.term_id = ${termId}::uuid and r.school_id = st.school_id
             where e.school_id = ${school.schoolId}::uuid and c.id = ${classId}::uuid
               and e.ends_on is null
-              and exists (select 1 from terms t where t.id = ${termId}::uuid
-                and t.school_id = c.school_id and t.academic_year_id = c.academic_year_id)
               and (
                 ${school.role === "school_admin"}
                 or c.class_teacher_id in (select id from staff_profiles where school_id = c.school_id and user_id = ${school.userId}::uuid)
@@ -4742,6 +4771,90 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           `,
         );
         return json({ reports: rows });
+      }
+
+      if (request.method === "PATCH") {
+        const payload: unknown = await request.json().catch(() => null);
+        if (!payload || typeof payload !== "object")
+          return badRequest("A JSON request body is required");
+        const body = payload as Record<string, unknown>;
+        const classId = body["class_id"];
+        const termId = body["term_id"];
+        const studentId = body["student_id"];
+        const attendancePresent = body["attendance_present"];
+        const attendanceTotal = body["attendance_total"];
+        if (
+          !uuidOrNull(classId) ||
+          !classId ||
+          !uuidOrNull(termId) ||
+          !termId ||
+          !uuidOrNull(studentId) ||
+          !studentId
+        )
+          return badRequest("Choose a valid class, term, and student");
+        if (
+          !Number.isInteger(attendancePresent) ||
+          !Number.isInteger(attendanceTotal) ||
+          Number(attendancePresent) < 0 ||
+          Number(attendancePresent) > 366 ||
+          Number(attendanceTotal) < 0 ||
+          Number(attendanceTotal) > 366 ||
+          Number(attendancePresent) > Number(attendanceTotal)
+        )
+          return badRequest(
+            "Attendance must be whole days from 0 to 366, with present days no greater than total days",
+          );
+
+        const rows = await withDatabaseContext(
+          sql,
+          { schoolId: school.schoolId },
+          (tx) => tx`
+          with authorized_class as (
+            select c.id, c.school_id, c.academic_year_id
+            from classes c
+            join terms t on t.id = ${termId}::uuid and t.school_id = c.school_id
+              and t.academic_year_id = c.academic_year_id
+            where c.id = ${classId}::uuid and c.school_id = ${school.schoolId}::uuid
+              and (
+                ${school.role === "school_admin"}
+                or c.class_teacher_id in (
+                  select id from staff_profiles
+                  where school_id = c.school_id and user_id = ${school.userId}::uuid
+                )
+              )
+          ),
+          eligible_student as (
+            select st.id, ac.school_id
+            from authorized_class ac
+            join class_enrollments e on e.class_id = ac.id and e.school_id = ac.school_id
+              and e.student_id = ${studentId}::uuid and e.ends_on is null
+            join students st on st.id = e.student_id and st.school_id = e.school_id and st.active
+          )
+          insert into terminal_reports
+            (school_id, student_id, term_id, generated_by_staff_id,
+             attendance_present, attendance_total)
+          select es.school_id, es.id, ${termId}::uuid,
+                 (select id from staff_profiles
+                  where school_id = es.school_id and user_id = ${school.userId}::uuid limit 1),
+                 ${attendancePresent}::int, ${attendanceTotal}::int
+          from eligible_student es
+          on conflict (student_id, term_id) do update
+            set attendance_present = excluded.attendance_present,
+                attendance_total = excluded.attendance_total
+            where terminal_reports.school_id = excluded.school_id
+              and terminal_reports.published_at is null
+          returning id
+        `,
+        );
+        if (!rows[0])
+          return json(
+            {
+              error:
+                "Attendance was not saved. Check your class access and ensure the report has not been published.",
+            },
+            409,
+          );
+        return json({ saved: true });
       }
 
       const payload: unknown = await request.json().catch(() => null);
@@ -4770,6 +4883,23 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         )
           return badRequest("Each report must have a valid, unique student ID");
         seenStudents.add(profile["student_id"]);
+        const attendancePresent = profile["attendance_present"];
+        const attendanceTotal = profile["attendance_total"];
+        if (attendancePresent !== undefined || attendanceTotal !== undefined) {
+          if (
+            !Number.isInteger(attendancePresent) ||
+            !Number.isInteger(attendanceTotal) ||
+            Number(attendancePresent) < 0 ||
+            Number(attendancePresent) > 366 ||
+            Number(attendanceTotal) < 0 ||
+            Number(attendanceTotal) > 366 ||
+            Number(attendancePresent) > Number(attendanceTotal)
+          ) {
+            return badRequest(
+              "Attendance must be whole days from 0 to 366, with present days no greater than total days",
+            );
+          }
+        }
         for (const field of [
           "conduct",
           "attitude",
@@ -4824,7 +4954,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           input_profiles as (
             select * from jsonb_to_recordset(${JSON.stringify(profiles)}::jsonb) as x(
               student_id uuid, conduct text, attitude text, interest text,
-              teacher_remark text, headteacher_remark text, promotion_status text
+              teacher_remark text, headteacher_remark text, promotion_status text,
+              attendance_present integer, attendance_total integer
             )
           )
           insert into terminal_reports
@@ -4835,7 +4966,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                  case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.conduct else null end,
                  case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.attitude else null end,
                  case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.interest else null end,
-                 (select count(*)::int from attendance_records ar
+                 case when ${school.role === "school_admin"} or rs.is_class_teacher then
+                 coalesce(ip.attendance_present, (select count(*)::int from attendance_records ar
                   join attendance_sessions ase on ase.id = ar.attendance_session_id and ase.school_id = ar.school_id
                   where ar.school_id = rs.school_id and ar.student_id = rs.student_id
                     and ase.class_id = rs.class_id and ase.attendance_date between t.starts_on and t.ends_on
@@ -4843,8 +4975,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                       select 1 from school_holidays h
                       where h.school_id = ase.school_id and h.holiday_date = ase.attendance_date
                     )
-                    and ar.status in ('present', 'late')),
-                 greatest(
+                    and ar.status in ('present', 'late')))
+                 end,
+                 case when ${school.role === "school_admin"} or rs.is_class_teacher then
+                 coalesce(ip.attendance_total, greatest(
                    0,
                    coalesce(
                      t.school_days_override,
@@ -4858,7 +4992,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                        and h.holiday_date between t.starts_on and t.ends_on
                        and extract(isodow from h.holiday_date) < 6
                    )
-                 ),
+                 ))
+                 end,
                  case when ${school.role === "school_admin"} or rs.is_class_teacher then ip.teacher_remark else null end,
                  case when ${school.role === "school_admin"} then ip.headteacher_remark else null end,
                  case when ${school.role === "school_admin"} or rs.is_class_teacher
@@ -4871,8 +5006,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             set conduct = coalesce(excluded.conduct, terminal_reports.conduct),
                 attitude = coalesce(excluded.attitude, terminal_reports.attitude),
                 interest = coalesce(excluded.interest, terminal_reports.interest),
-                attendance_present = excluded.attendance_present,
-                attendance_total = excluded.attendance_total,
+                attendance_present = coalesce(excluded.attendance_present, terminal_reports.attendance_present),
+                attendance_total = coalesce(excluded.attendance_total, terminal_reports.attendance_total),
                 teacher_remark = coalesce(excluded.teacher_remark, terminal_reports.teacher_remark),
                 headteacher_remark = coalesce(excluded.headteacher_remark, terminal_reports.headteacher_remark),
                 promotion_status = coalesce(excluded.promotion_status, terminal_reports.promotion_status),

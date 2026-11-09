@@ -11,6 +11,7 @@ import {
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+import { BackToTopButton } from "../components/back-to-top-button";
 import { TenantBrandingProvider } from "../components/tenant-branding-provider";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
@@ -40,7 +41,11 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
   useEffect(() => {
-    if (/Failed to fetch dynamically imported module|Importing a module script failed/i.test(error instanceof Error ? error.message : String(error ?? ""))) {
+    if (
+      /Failed to fetch dynamically imported module|Importing a module script failed/i.test(
+        error instanceof Error ? error.message : String(error ?? ""),
+      )
+    ) {
       const last = Number(sessionStorage.getItem("chunk-reload-at") ?? 0);
       if (Date.now() - last > 10_000) {
         sessionStorage.setItem("chunk-reload-at", String(Date.now()));
@@ -89,23 +94,38 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Klasora | School operations" },
       { name: "theme-color", content: "#0F3629" },
-      { name: "description", content: "School attendance, payments, grades, classes, and student operations." },
+      {
+        name: "description",
+        content: "School attendance, payments, grades, classes, and student operations.",
+      },
       { name: "author", content: "Klasora" },
       { property: "og:title", content: "Klasora | School operations" },
       { property: "og:description", content: "A clear workspace for daily school operations." },
       { property: "og:type", content: "website" },
       { property: "og:site_name", content: "Klasora" },
       { property: "og:url", content: "https://klasora-tenant-portal.vercel.app/" },
-      { property: "og:image", content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png" },
-      { property: "og:image:secure_url", content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png" },
+      {
+        property: "og:image",
+        content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png",
+      },
+      {
+        property: "og:image:secure_url",
+        content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png",
+      },
       { property: "og:image:type", content: "image/png" },
       { property: "og:image:width", content: "1200" },
       { property: "og:image:height", content: "630" },
-      { property: "og:image:alt", content: "Klasora — a clear workspace for daily school operations" },
+      {
+        property: "og:image:alt",
+        content: "Klasora — a clear workspace for daily school operations",
+      },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: "Klasora | School operations" },
       { name: "twitter:description", content: "A clear workspace for daily school operations." },
-      { name: "twitter:image", content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png" },
+      {
+        name: "twitter:image",
+        content: "https://klasora-tenant-portal.vercel.app/brand/klasora-social-preview.png",
+      },
     ],
     links: [
       {
@@ -115,8 +135,20 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "icon", href: "/favicon-32.png", type: "image/png", sizes: "32x32" },
       { rel: "icon", href: "/favicon.ico", sizes: "any" },
       { rel: "apple-touch-icon", href: "/brand/klasora-icon-192.png" },
-      { rel: "preload", href: "/fonts/inter-latin.woff2", as: "font", type: "font/woff2", crossOrigin: "anonymous" },
-      { rel: "preload", href: "/fonts/sora-latin.woff2", as: "font", type: "font/woff2", crossOrigin: "anonymous" },
+      {
+        rel: "preload",
+        href: "/fonts/inter-latin.woff2",
+        as: "font",
+        type: "font/woff2",
+        crossOrigin: "anonymous",
+      },
+      {
+        rel: "preload",
+        href: "/fonts/sora-latin.woff2",
+        as: "font",
+        type: "font/woff2",
+        crossOrigin: "anonymous",
+      },
     ],
   }),
   shellComponent: RootShell,
@@ -160,7 +192,12 @@ function RootComponent() {
     };
     const onRejection = (event: PromiseRejectionEvent) => {
       const message = String((event.reason as Error | undefined)?.message ?? event.reason ?? "");
-      if (/Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(message)) reloadOnce();
+      if (
+        /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(
+          message,
+        )
+      )
+        reloadOnce();
     };
     window.addEventListener("vite:preloadError", reloadOnce);
     window.addEventListener("unhandledrejection", onRejection);
@@ -175,6 +212,7 @@ function RootComponent() {
       <TenantBrandingProvider>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />
+        <BackToTopButton />
       </TenantBrandingProvider>
     </QueryClientProvider>
   );
