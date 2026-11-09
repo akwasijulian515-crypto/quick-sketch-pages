@@ -1,10 +1,16 @@
 import { jsPDF } from "jspdf";
+import { resolveReportTemplate, type ReportTemplate } from "./report-design";
 
 export type TerminalReportSubject = {
   subject: string;
   score: number;
   teacher: string;
   remark: string;
+  classTest?: number | null;
+  project?: number | null;
+  groupWork?: number | null;
+  homework?: number | null;
+  exam?: number | null;
 };
 export type TerminalReportPdfData = {
   schoolName: string;
@@ -19,6 +25,9 @@ export type TerminalReportPdfData = {
   attitude: string;
   interest: string;
   teacherRemark: string;
+  headteacherRemark?: string;
+  template?: ReportTemplate;
+  fictional?: boolean;
   promotionStatus?: string;
   results: TerminalReportSubject[];
 };
@@ -41,8 +50,8 @@ function reportPalette(primaryColor: string): {
   pale: [number, number, number];
 } {
   const match = /^#([0-9a-f]{6})$/i.exec(primaryColor);
-  const selected = match
-    ? (match[1]!.match(/.{2}/g)!.map((channel) => Number.parseInt(channel, 16)) as [
+  const selected = match?.[1]
+    ? ((match[1].match(/.{2}/g) ?? []).map((channel) => Number.parseInt(channel, 16)) as [
         number,
         number,
         number,
@@ -95,17 +104,18 @@ async function loadCrestImage(crestUrl: string | null | undefined) {
 }
 
 export async function downloadTerminalReports(reports: TerminalReportPdfData[]) {
-  if (!reports.length) return;
-  const crestImage = await loadCrestImage(reports[0]?.crestUrl);
+  const first = reports[0];
+  if (!first) return;
   const doc = new jsPDF({ unit: "mm", format: "a4" });
-  reports.forEach((report, index) => {
+  for (const [index, report] of reports.entries()) {
+    const crestImage = await loadCrestImage(report.crestUrl);
     if (index > 0) doc.addPage();
     drawReport(doc, report, crestImage);
-  });
+  }
   const filename =
     reports.length === 1
-      ? `${reports[0]!.student.replaceAll(" ", "-")}-terminal-report.pdf`
-      : `${reports[0]!.className.replaceAll(" ", "-")}-terminal-reports.pdf`;
+      ? `${first.student.replaceAll(" ", "-")}-${resolveReportTemplate(first.template)}-terminal-report.pdf`
+      : `${first.className.replaceAll(" ", "-")}-terminal-reports.pdf`;
   doc.save(filename);
 }
 
