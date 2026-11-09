@@ -16,6 +16,7 @@ import { fetchWithNeonAuth, invalidateNeonAccessToken, neonAuthClient } from "..
 import { Button } from "@/components/ui/button";
 import { DailyPaymentControls } from "@/components/daily-payment-controls";
 import { LearnerProfileEntry } from "@/components/learner-profile-entry";
+import { UserOnboardingChecklist } from "@/components/user-onboarding-checklist";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useOnlineStatus } from "@/hooks/use-online-status";
@@ -113,6 +114,7 @@ function TeacherPortal() {
         </div>
       </header>
       <main className="relative mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        <UserOnboardingChecklist />
         <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
           <div>
             <h1 className="font-display text-2xl font-bold sm:text-3xl">Teacher workspace</h1>

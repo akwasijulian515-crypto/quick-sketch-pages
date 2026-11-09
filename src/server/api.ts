@@ -992,6 +992,112 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     return json({ ok: true, reportTemplate: savedTemplate });
   }
 
+  if (url.pathname === "/api/school/students/bulk-class") {
+    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    const school = await requireSchoolAdminContext(request, env);
+    if (school instanceof Response) return school;
+
+    const payload: unknown = await request.json().catch(() => null);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+      return badRequest("A JSON request body is required");
+    const body = payload as Record<string, unknown>;
+    const studentIds = body["student_ids"];
+    const classId = body["class_id"];
+    if (
+      !Array.isArray(studentIds) ||
+      studentIds.length === 0 ||
+      studentIds.length > 200 ||
+      !studentIds.every((id) => typeof id === "string" && uuidOrNull(id)) ||
+      new Set(studentIds.map((id) => (typeof id === "string" ? id.toLowerCase() : ""))).size !==
+        studentIds.length
+    )
+      return badRequest("Select between 1 and 200 unique students");
+    if (typeof classId !== "string" || !uuidOrNull(classId))
+      return badRequest("Choose a valid destination class");
+
+    const sql = database(env);
+    const rows = await withDatabaseContext(
+      sql,
+      { schoolId: school.schoolId },
+      (tx) =>
+        tx`
+        with requested as materialized (
+          select distinct id
+          from unnest(${studentIds}::uuid[]) as selected(id)
+        ),
+        target_class as materialized (
+          select id
+          from classes
+          where id = ${classId}::uuid and school_id = ${school.schoolId}::uuid
+        ),
+        locked_students as materialized (
+          select st.id, st.school_id, enrollment.id as enrollment_id,
+                 enrollment.class_id as current_class_id
+          from students st
+          join requested on requested.id = st.id
+          left join lateral (
+            select e.id, e.class_id
+            from class_enrollments e
+            where e.school_id = st.school_id
+              and e.student_id = st.id
+              and e.ends_on is null
+            order by e.starts_on desc
+            limit 1
+          ) enrollment on true
+          where st.school_id = ${school.schoolId}::uuid
+          for update of st
+        ),
+        eligibility as materialized (
+          select
+            (select count(*) from locked_students)::int as matched_count,
+            (select count(*) from requested)::int as requested_count,
+            (select count(*) from target_class)::int as target_class_count,
+            (select count(*) from locked_students) = (select count(*) from requested)
+              and (select count(*) from target_class) = 1 as can_move
+        ),
+        closed_enrollments as (
+          update class_enrollments enrollment
+          set ends_on = greatest(current_date, enrollment.starts_on)
+          from locked_students selected, target_class, eligibility
+          where eligibility.can_move
+            and enrollment.id = selected.enrollment_id
+            and selected.current_class_id is distinct from target_class.id
+          returning enrollment.id
+        ),
+        added_enrollments as (
+          insert into class_enrollments (school_id, class_id, student_id)
+          select selected.school_id, target_class.id, selected.id
+          from locked_students selected
+          cross join target_class
+          cross join eligibility
+          cross join (select count(*) from closed_enrollments) close_dependency
+          where eligibility.can_move
+            and selected.current_class_id is distinct from target_class.id
+          returning id
+        )
+        select
+          eligibility.can_move,
+          eligibility.matched_count,
+          eligibility.requested_count,
+          eligibility.target_class_count,
+          (select count(*)::int from added_enrollments) as moved_count
+        from eligibility
+      `,
+    );
+    const result = rows[0];
+    if (!result || Number(result["target_class_count"]) !== 1)
+      return badRequest("The selected class does not exist in this school");
+    if (result["can_move"] !== true)
+      return json(
+        {
+          error:
+            "One or more selected students could not be found in this school; no students were moved",
+        },
+        404,
+      );
+    return json({ moved: true, studentCount: Number(result["matched_count"]) });
+  }
+
   const classRosterMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)\/roster$/i);
   const classLifecycleMatch = url.pathname.match(/^\/api\/school\/classes\/([0-9a-f-]+)$/i);
   const teachingAssignmentLifecycleMatch = url.pathname.match(

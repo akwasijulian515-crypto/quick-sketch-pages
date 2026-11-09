@@ -21,6 +21,7 @@ import {
   ChevronRight,
   Download,
   Upload,
+  ArrowRightLeft,
 } from "lucide-react";
 
 type StudentStatus = "Active" | "Inactive";
@@ -276,6 +277,7 @@ function parseBulkAdmissionRows(text: string): { rows: BulkAdmissionRow[]; error
 }
 
 const tabs = ["All Students", "By Class", "Attendance", "Admissions"] as const;
+const maxBulkMoveStudents = 200;
 
 export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([]);
@@ -287,6 +289,10 @@ export default function StudentsPage() {
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [listError, setListError] = useState("");
   const [classError, setClassError] = useState("");
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(() => new Set());
+  const [bulkClassId, setBulkClassId] = useState("");
+  const [bulkMoveError, setBulkMoveError] = useState("");
+  const [movingStudents, setMovingStudents] = useState(false);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [reloadCount, setReloadCount] = useState(0);
@@ -360,6 +366,16 @@ export default function StudentsPage() {
       window.clearTimeout(timer);
     };
   }, [filterClassId, page, query, reloadCount]);
+
+  useEffect(() => {
+    setSelectedStudentIds(new Set());
+    setBulkMoveError("");
+  }, [filterClassId, query]);
+  const selectableStudents = students.slice(0, maxBulkMoveStudents);
+  const allSelectableStudentsSelected =
+    selectableStudents.length > 0 &&
+    selectedStudentIds.size === selectableStudents.length &&
+    selectableStudents.every((student) => selectedStudentIds.has(student.id));
 
   useEffect(() => {
     if (activeTab !== "Attendance") return;
@@ -449,6 +465,72 @@ export default function StudentsPage() {
     setPage(1);
     setReloadCount((count) => count + 1);
     return outcomes;
+  }
+
+  function toggleStudentSelection(studentId: string) {
+    if (!selectedStudentIds.has(studentId) && selectedStudentIds.size >= maxBulkMoveStudents) {
+      setBulkMoveError(`Move up to ${maxBulkMoveStudents} students at a time.`);
+      return;
+    }
+    setSelectedStudentIds((current) => {
+      const next = new Set(current);
+      if (next.has(studentId)) next.delete(studentId);
+      else next.add(studentId);
+      return next;
+    });
+    setBulkMoveError("");
+  }
+
+  function toggleAllLoadedStudents() {
+    setSelectedStudentIds(
+      allSelectableStudentsSelected
+        ? new Set()
+        : new Set(selectableStudents.map((student) => student.id)),
+    );
+    setBulkMoveError("");
+  }
+
+  async function moveSelectedStudents() {
+    if (!selectedStudentIds.size || !bulkClassId) return;
+    const destination = classes.find((item) => item.id === bulkClassId);
+    if (!destination) {
+      setBulkMoveError("The selected destination class is no longer available.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Move ${selectedStudentIds.size} selected students to ${destination.name} from today? Existing attendance, grades, reports, and fee history will stay with their previous class.`,
+      )
+    )
+      return;
+
+    setMovingStudents(true);
+    setBulkMoveError("");
+    try {
+      const result = await schoolApi<{ moved: boolean; studentCount: number }>(
+        "/api/school/students/bulk-class",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            student_ids: Array.from(selectedStudentIds),
+            class_id: bulkClassId,
+          }),
+        },
+      );
+      setNotice(
+        `${result.studentCount} student${result.studentCount === 1 ? "" : "s"} moved to ${destination.name}.`,
+      );
+      setSelectedStudentIds(new Set());
+      setBulkClassId("");
+      setPage(1);
+      setReloadCount((count) => count + 1);
+    } catch (cause) {
+      setBulkMoveError(
+        cause instanceof Error ? cause.message : "Could not move selected students.",
+      );
+    } finally {
+      setMovingStudents(false);
+    }
   }
 
   return (
@@ -567,6 +649,61 @@ export default function StudentsPage() {
 
         {activeTab === "All Students" || activeTab === "By Class" ? (
           <div className="admin-card overflow-hidden">
+            {canManageStudents && (
+              <div className="flex flex-col gap-3 border-b border-border bg-muted/10 p-4 sm:flex-row sm:items-end sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select the first ${maxBulkMoveStudents} loaded students`}
+                    checked={allSelectableStudentsSelected}
+                    disabled={students.length === 0 || movingStudents}
+                    onChange={toggleAllLoadedStudents}
+                    className="size-4 accent-primary"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    {selectedStudentIds.size
+                      ? `${selectedStudentIds.size} selected`
+                      : `Select students to move · ${students.length} loaded · up to ${maxBulkMoveStudents} per move`}
+                  </p>
+                </div>
+                {selectedStudentIds.size > 0 && (
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <label className="sr-only" htmlFor="bulk-destination-class">
+                      Destination class
+                    </label>
+                    <select
+                      id="bulk-destination-class"
+                      value={bulkClassId}
+                      onChange={(event) => setBulkClassId(event.target.value)}
+                      disabled={loadingClasses || movingStudents}
+                      className="h-10 min-w-48 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                    >
+                      <option value="">Choose destination class</option>
+                      {classes.map((classItem) => (
+                        <option key={classItem.id} value={classItem.id}>
+                          {classItem.name}
+                          {classItem.academic_year_name ? ` · ${classItem.academic_year_name}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!bulkClassId || movingStudents || loadingClasses}
+                      onClick={() => void moveSelectedStudents()}
+                      className="admin-btn-primary inline-flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      <ArrowRightLeft className="size-4" />
+                      {movingStudents ? "Moving students…" : "Move selected"}
+                    </button>
+                  </div>
+                )}
+                {bulkMoveError && (
+                  <p role="alert" className="text-sm text-destructive sm:basis-full">
+                    {bulkMoveError}
+                  </p>
+                )}
+              </div>
+            )}
             {listError ? (
               <div role="alert" className="p-8 text-center">
                 <p className="text-sm text-destructive">{listError}</p>
@@ -589,6 +726,20 @@ export default function StudentsPage() {
                       className="rounded-xl border border-border bg-card p-4 shadow-sm"
                     >
                       <div className="flex min-w-0 items-start gap-3">
+                        {canManageStudents && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${student.name}`}
+                            checked={selectedStudentIds.has(student.id)}
+                            disabled={
+                              movingStudents ||
+                              (!selectedStudentIds.has(student.id) &&
+                                selectedStudentIds.size >= maxBulkMoveStudents)
+                            }
+                            onChange={() => toggleStudentSelection(student.id)}
+                            className="mt-1 size-4 shrink-0 accent-primary"
+                          />
+                        )}
                         <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
                           {student.name
                             .split(" ")
@@ -667,6 +818,18 @@ export default function StudentsPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-border bg-muted/30">
+                        {canManageStudents && (
+                          <th className="w-12 px-4 py-3">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select the first ${maxBulkMoveStudents} loaded students`}
+                              checked={allSelectableStudentsSelected}
+                              disabled={students.length === 0 || movingStudents}
+                              onChange={toggleAllLoadedStudents}
+                              className="size-4 accent-primary"
+                            />
+                          </th>
+                        )}
                         <th className="text-left px-5 py-3 font-medium text-muted-foreground">
                           Student
                         </th>
@@ -695,6 +858,25 @@ export default function StudentsPage() {
                             setSelectedStudent(student);
                           }}
                         >
+                          {canManageStudents && (
+                            <td
+                              className="px-4 py-3.5"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${student.name}`}
+                                checked={selectedStudentIds.has(student.id)}
+                                disabled={
+                                  movingStudents ||
+                                  (!selectedStudentIds.has(student.id) &&
+                                    selectedStudentIds.size >= maxBulkMoveStudents)
+                                }
+                                onChange={() => toggleStudentSelection(student.id)}
+                                className="size-4 accent-primary"
+                              />
+                            </td>
+                          )}
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
@@ -746,7 +928,10 @@ export default function StudentsPage() {
                       ))}
                       {!loading && students.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">
+                          <td
+                            colSpan={canManageStudents ? 7 : 6}
+                            className="px-5 py-12 text-center text-muted-foreground"
+                          >
                             {query.trim() || filterClassId
                               ? "No students match these filters."
                               : "No student records yet. Admit a student to get started."}
@@ -755,7 +940,10 @@ export default function StudentsPage() {
                       )}
                       {loading && students.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground">
+                          <td
+                            colSpan={canManageStudents ? 7 : 6}
+                            className="px-5 py-12 text-center text-muted-foreground"
+                          >
                             Loading student records…
                           </td>
                         </tr>
