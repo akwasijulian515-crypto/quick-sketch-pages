@@ -268,7 +268,8 @@ function Sidebar({
             invalidateNeonAccessToken();
             await neonAuthClient?.signOut().catch(() => undefined);
             onNavigate?.();
-            navigate({ to: platform ? "/" : "/login" });
+            if (platform) window.location.assign("/admin");
+            else navigate({ to: "/login" });
           }}
           className="mt-3 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-primary-foreground/60 transition-colors hover:bg-primary-foreground/10 hover:text-primary-foreground"
         >
@@ -476,7 +477,8 @@ export function SchoolShell({
                 await fetch("/api/auth/session", { method: "DELETE" });
                 invalidateNeonAccessToken();
                 await neonAuthClient?.signOut().catch(() => undefined);
-                navigate({ to: platform ? "/" : "/login" });
+                if (platform) window.location.assign("/admin");
+                else navigate({ to: "/login" });
               }}
             >
               <LogOut />

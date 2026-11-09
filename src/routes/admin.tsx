@@ -282,11 +282,10 @@ function Directory({ schools, query, setStatus, onDeleted, rootDomain, session }
       </div>
     ) : (
       <div className="border-b border-border px-5 py-4">
-        <p className="mb-3 text-sm text-muted-foreground">Sign in with your Super Admin account. The platform token remains available for initial setup.</p>
+        <p className="mb-3 text-sm text-muted-foreground">Enter the Super Admin token to access platform controls.</p>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <Button onClick={() => navigate({ to: "/login" })}>Sign in with account</Button>
           <form onSubmit={signInWithPlatformToken} className="flex min-w-0 flex-1 gap-2">
-            <input required type="password" autoComplete="current-password" aria-label="Platform admin token" placeholder="Platform admin token" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input min-w-0 flex-1" />
+            <input required type="password" autoComplete="off" aria-label="Super Admin token" placeholder="Super Admin token" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input min-w-0 flex-1" />
             <Button type="submit" variant="outline">Use token</Button>
           </form>
         </div>
@@ -431,7 +430,6 @@ function DeleteSchoolDialog({ school, confirmation, setConfirmation, deleting, o
   </div>;
 }
 function Onboarding({ applications, approve, openSignup, rootDomain, session }: { applications: Application[]; approve: (application: Application) => void; openSignup: () => void; rootDomain: string | null; session: ReturnType<typeof usePlatformSession> }) {
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [platformToken, setPlatformToken] = useState("");
   const [approvingId, setApprovingId] = useState<string | null>(null);
@@ -519,11 +517,10 @@ function Onboarding({ applications, approve, openSignup, rootDomain, session }: 
       </div>
     ) : (
       <div className="border-b border-border px-5 py-4">
-        <p className="mb-3 text-sm text-muted-foreground">Sign in with your Super Admin account. The platform token remains available for initial setup.</p>
+        <p className="mb-3 text-sm text-muted-foreground">Enter the Super Admin token to access platform controls.</p>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <Button onClick={() => navigate({ to: "/login" })}>Sign in with account</Button>
           <form onSubmit={signInWithPlatformToken} className="flex min-w-0 flex-1 gap-2">
-            <input required type="password" autoComplete="current-password" aria-label="Platform admin token" placeholder="Platform admin token" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input min-w-0 flex-1" />
+            <input required type="password" autoComplete="off" aria-label="Super Admin token" placeholder="Super Admin token" value={platformToken} onChange={(event) => setPlatformToken(event.target.value)} className="input min-w-0 flex-1" />
             <Button type="submit" variant="outline">Use token</Button>
           </form>
         </div>

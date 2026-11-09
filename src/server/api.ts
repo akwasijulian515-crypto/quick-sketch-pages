@@ -258,47 +258,50 @@ function platformSessionFromRequest(request: Request) {
   return cookieSession;
 }
 
-function platformTokenFromRequest(request: Request) {
+function platformTokensFromRequest(request: Request) {
   const session = platformSessionFromRequest(request);
-  return session && !session.expired ? session.token : null;
+  const tokens = session && !session.expired ? [session.token] : [];
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
+  if (bearer && !tokens.includes(bearer)) tokens.push(bearer);
+  return tokens;
 }
 
 async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
-  const token = platformTokenFromRequest(request);
-  if (!token) return false;
-  if (env.PLATFORM_ADMIN_TOKEN && token === env.PLATFORM_ADMIN_TOKEN) return true;
-  if (!env.DATABASE_URL || !hasAuthConfig(env)) return false;
+  for (const token of platformTokensFromRequest(request)) {
+    if (env.PLATFORM_ADMIN_TOKEN && token === env.PLATFORM_ADMIN_TOKEN) return true;
+    if (!env.DATABASE_URL || !hasAuthConfig(env)) continue;
 
-  try {
-    const identity = await authenticateNeonToken(token, env);
-    if (!identity) return false;
-    const { userId, email } = identity;
+    try {
+      const identity = await authenticateNeonToken(token, env);
+      if (!identity) continue;
+      const { userId, email } = identity;
 
-    const sql = database(env);
-    const users =
-      await sql`select email, "emailVerified" as email_verified from neon_auth.user where id = ${userId} limit 1`;
-    const authUser = users[0];
-    if (
-      !authUser ||
-      authUser["email_verified"] !== true ||
-      String(authUser["email"]).trim().toLowerCase() !== email
-    )
-      return false;
-    const memberships = await withDatabaseContext(
-      sql,
-      { userEmail: email },
-      (tx) =>
-        tx`
-        select 1 from users u join memberships m on m.user_id = u.id
-        where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null and m.active
-        limit 1
-      `,
-    );
-    return memberships.length > 0;
-  } catch (error) {
-    logTokenVerificationFailure(error, token);
-    return false;
+      const sql = database(env);
+      const users =
+        await sql`select email, "emailVerified" as email_verified from neon_auth.user where id = ${userId} limit 1`;
+      const authUser = users[0];
+      if (
+        !authUser ||
+        authUser["email_verified"] !== true ||
+        String(authUser["email"]).trim().toLowerCase() !== email
+      )
+        continue;
+      const memberships = await withDatabaseContext(
+        sql,
+        { userEmail: email },
+        (tx) =>
+          tx`
+          select 1 from users u join memberships m on m.user_id = u.id
+          where lower(u.email) = ${email} and m.role = 'super_admin' and m.school_id is null and m.active
+          limit 1
+        `,
+      );
+      if (memberships.length > 0) return true;
+    } catch (error) {
+      logTokenVerificationFailure(error, token);
+    }
   }
+  return false;
 }
 
 function platformSessionCookie(
