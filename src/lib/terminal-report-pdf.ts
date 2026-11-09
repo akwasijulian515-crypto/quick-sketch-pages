@@ -1,10 +1,16 @@
 import { jsPDF } from "jspdf";
+import { resolveReportTemplate, type ReportTemplate } from "./report-design";
 
 export type TerminalReportSubject = {
   subject: string;
   score: number;
   teacher: string;
   remark: string;
+  classTest?: number | null;
+  project?: number | null;
+  groupWork?: number | null;
+  homework?: number | null;
+  exam?: number | null;
 };
 export type TerminalReportPdfData = {
   schoolName: string;
@@ -19,6 +25,9 @@ export type TerminalReportPdfData = {
   attitude: string;
   interest: string;
   teacherRemark: string;
+  headteacherRemark?: string;
+  template?: ReportTemplate;
+  fictional?: boolean;
   promotionStatus?: string;
   results: TerminalReportSubject[];
 };
@@ -41,8 +50,8 @@ function reportPalette(primaryColor: string): {
   pale: [number, number, number];
 } {
   const match = /^#([0-9a-f]{6})$/i.exec(primaryColor);
-  const selected = match
-    ? (match[1]!.match(/.{2}/g)!.map((channel) => Number.parseInt(channel, 16)) as [
+  const selected = match?.[1]
+    ? ((match[1].match(/.{2}/g) ?? []).map((channel) => Number.parseInt(channel, 16)) as [
         number,
         number,
         number,
@@ -95,138 +104,112 @@ async function loadCrestImage(crestUrl: string | null | undefined) {
 }
 
 export async function downloadTerminalReports(reports: TerminalReportPdfData[]) {
-  if (!reports.length) return;
-  const crestImage = await loadCrestImage(reports[0]?.crestUrl);
+  const first = reports[0];
+  if (!first) return;
   const doc = new jsPDF({ unit: "mm", format: "a4" });
-  reports.forEach((report, index) => {
+  for (const [index, report] of reports.entries()) {
+    const crestImage = await loadCrestImage(report.crestUrl);
     if (index > 0) doc.addPage();
     drawReport(doc, report, crestImage);
-  });
+  }
   const filename =
     reports.length === 1
-      ? `${reports[0]!.student.replaceAll(" ", "-")}-terminal-report.pdf`
-      : `${reports[0]!.className.replaceAll(" ", "-")}-terminal-reports.pdf`;
+      ? `${first.student.replaceAll(" ", "-")}-${resolveReportTemplate(first.template)}-terminal-report.pdf`
+      : `${first.className.replaceAll(" ", "-")}-terminal-reports.pdf`;
   doc.save(filename);
 }
 
 function drawReport(doc: jsPDF, report: TerminalReportPdfData, crestImage: string | null) {
-  const { primary, deep, pale } = reportPalette(report.primaryColor);
+  const template = resolveReportTemplate(report.template);
+  const { deep, pale } = reportPalette(report.primaryColor);
   const ink: [number, number, number] = [28, 42, 35];
-  doc.setFillColor(...deep);
-  doc.rect(0, 0, 210, 35, "F");
+  const rule: [number, number, number] = [211, 218, 213];
+  const gazette = template === "gazette";
+  const ledger = template === "ledger";
+  const font = gazette ? "times" : "helvetica";
+  let y = gazette ? 58 : 42;
+  doc.setFont(font, "normal");
+  if (gazette) {
+    doc.setDrawColor(156, 130, 72);
+    doc.rect(8, 8, 194, 281); doc.rect(10, 10, 190, 277);
+  } else if (!ledger) {
+    doc.setFillColor(...pale); doc.rect(0, 0, 210, 33, "F");
+  }
   if (crestImage) {
     const dimensions = doc.getImageProperties(crestImage);
-    const boxSize = 18;
-    const scale = Math.min(boxSize / dimensions.width, boxSize / dimensions.height);
-    const width = dimensions.width * scale;
-    const height = dimensions.height * scale;
-    doc.addImage(
-      crestImage,
-      "PNG",
-      15 + (boxSize - width) / 2,
-      8 + (boxSize - height) / 2,
-      width,
-      height,
-    );
-  } else {
-    doc.setFillColor(...primary);
-    doc.roundedRect(15, 10, 14, 14, 2, 2, "F");
-    doc.setTextColor(...deep);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.text("S", 19.5, 19.5);
+    const scale = Math.min(16 / dimensions.width, 16 / dimensions.height);
+    const width = dimensions.width * scale; const height = dimensions.height * scale;
+    doc.addImage(crestImage, "PNG", gazette ? 105 - width / 2 : 15, gazette ? 14 : 9, width, height);
   }
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(17);
-  doc.text(report.schoolName, 35, 17);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.text(`Terminal report - ${report.term}`, 35, 24);
-  doc.setFillColor(...primary);
-  doc.rect(0, 35, 210, 1.5, "F");
-  doc.setTextColor(...ink);
-  doc.setFontSize(9);
-  doc.text("Standards-based learner report", 15, 44);
-  doc.setFillColor(...pale);
-  doc.roundedRect(15, 49, 180, 27, 2, 2, "F");
-  doc.setFontSize(8);
-  doc.setTextColor(95, 108, 100);
-  doc.text("LEARNER", 20, 57);
-  doc.text("CLASS", 85, 57);
-  doc.text("ADMISSION NO.", 140, 57);
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text(report.student, 20, 64);
-  doc.text(report.className, 85, 64);
-  doc.text(report.admission, 140, 64);
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(...deep);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Academic performance", 15, 88);
-  doc.setFillColor(...deep);
-  doc.rect(15, 92, 180, 8, "F");
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(8);
-  doc.text("SUBJECT", 18, 97);
-  doc.text("SCORE", 71, 97);
-  doc.text("LEVEL", 91, 97);
-  doc.text("TEACHER", 132, 97);
-  doc.text("REMARK", 158, 97);
-  let y = 106;
-  doc.setTextColor(...ink);
-  doc.setFont("helvetica", "normal");
-  report.results.forEach((result, row) => {
-    const remarkLines = doc.splitTextToSize(result.remark, 35) as string[];
-    const height = Math.max(8, remarkLines.length * 3.8 + 3);
-    if (row % 2 === 0) {
-      doc.setFillColor(247, 249, 247);
-      doc.rect(15, y - 4, 180, height, "F");
-    }
-    doc.setFontSize(8);
-    doc.text(result.subject, 18, y);
-    doc.text(`${result.score}%`, 71, y);
-    doc.text(level(result.score), 91, y);
-    doc.text(result.teacher, 132, y);
-    doc.text(remarkLines, 158, y);
-    y += height;
+  doc.setTextColor(...deep); doc.setFont(font, "bold"); doc.setFontSize(16);
+  const nameX = gazette ? 105 : crestImage ? 36 : 15;
+  const nameY = gazette ? 38 : 17;
+  const nameLines = doc.splitTextToSize(report.schoolName, gazette ? 170 : 155) as string[];
+  doc.text(nameLines.slice(0, 2), nameX, nameY, gazette ? { align: "center" } : {});
+  doc.setFont(font, "normal"); doc.setFontSize(9);
+  doc.text(`Terminal report - ${report.term}`, gazette ? 105 : 15, gazette ? 49 : 29, gazette ? { align: "center" } : {});
+  doc.setDrawColor(...deep); doc.line(15, y - 4, 195, y - 4);
+  if (report.fictional) {
+    doc.setFontSize(8); doc.setTextColor(100, 105, 100);
+    doc.text("FICTIONAL SAMPLE - NOT AN OFFICIAL REPORT", 105, y, { align: "center" }); y += 7;
+  }
+  const freshPage = () => {
+    doc.addPage(); doc.setFont(font, "bold"); doc.setFontSize(10); doc.setTextColor(...deep);
+    doc.text(`${report.student} - Terminal report (continued)`, 15, 16); y = 26;
+  };
+  const ensure = (height: number) => { if (y + height > 266) freshPage(); };
+  const textBlock = (label: string, value: string) => {
+    doc.setFont(font, "bold"); doc.setFontSize(9);
+    const lines = doc.splitTextToSize(value || "-", 176) as string[];
+    ensure(12); doc.setTextColor(...deep); doc.text(label, 15, y); y += 6;
+    doc.setFont(font, "normal"); doc.setTextColor(...ink);
+    for (const line of lines) { ensure(5); doc.text(line, 15, y); y += 4.5; }
+    y += 5;
+  };
+  const identities = [["LEARNER", report.student], ["CLASS", report.className], ["ADMISSION", report.admission]];
+  const identityLines = identities.map(([, value]) => doc.splitTextToSize(value || "-", 54) as string[]);
+  const identityHeight = Math.max(...identityLines.map((lines) => lines.length)) * 4 + 13;
+  if (!ledger) { doc.setFillColor(...pale); doc.roundedRect(15, y, 180, identityHeight, 2, 2, "F"); }
+  identities.forEach(([label], index) => {
+    doc.setFontSize(7); doc.setTextColor(...deep); doc.text(label ?? "", 19 + index * 60, y + 6);
+    doc.setFontSize(9); doc.setTextColor(...ink); doc.text(identityLines[index] ?? [], 19 + index * 60, y + 12);
   });
-  y += 8;
-  doc.setDrawColor(218, 225, 219);
-  doc.line(15, y, 195, y);
-  y += 10;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Learner profile", 15, y);
-  doc.text("Attendance & recommendation", 110, y);
-  y += 7;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(95, 108, 100);
-  doc.text("Conduct", 15, y);
-  doc.text("Attitude", 15, y + 7);
-  doc.text("Interest", 15, y + 14);
-  doc.setTextColor(...ink);
-  doc.text(report.conduct, 48, y);
-  doc.text(report.attitude, 48, y + 7);
-  doc.text(report.interest, 48, y + 14);
-  doc.setTextColor(95, 108, 100);
-  doc.text("Attendance", 110, y);
-  doc.text("Promotion", 110, y + 7);
-  doc.setTextColor(...ink);
-  doc.text(report.attendance, 145, y);
-  doc.text(report.promotionStatus ?? "—", 145, y + 7);
-  doc.setTextColor(95, 108, 100);
-  doc.text("Class teacher's remark", 15, y + 25);
-  doc.setTextColor(...ink);
-  doc.setFontSize(8);
-  writeWrapped(doc, report.teacherRemark, 15, y + 31, 180);
-  doc.setDrawColor(120, 133, 124);
-  doc.line(20, 274, 85, 274);
-  doc.line(125, 274, 190, 274);
-  doc.setFontSize(8);
-  doc.setTextColor(95, 108, 100);
-  doc.text("Class teacher's signature", 30, 279);
-  doc.text("School Administrator's signature", 130, 279);
+  y += identityHeight + 10;
+  doc.setFont(font, "bold"); doc.setFontSize(11); doc.setTextColor(...deep); doc.text("Academic performance", 15, y); y += 6;
+  const columns = ledger ? [15, 62, 79, 99, 116, 133, 151, 169, 184, 195] : [15, 112, 137, 161, 180, 195];
+  const labels = ledger ? ["Subject", "Test /10", "Project /20", "Group /10", "HW /10", "Class /50", "Exam /50", "Total", "Level"] : ["Subject", "Class /50", "Exam /50", "Total", "Level"];
+  const tableHead = () => {
+    doc.setFillColor(...pale); doc.rect(15, y, 180, 9, "F"); doc.setFont(font, "bold"); doc.setFontSize(ledger ? 6 : 8); doc.setTextColor(...deep);
+    labels.forEach((label, index) => doc.text(label, (columns[index] ?? 15) + 2, y + 6)); y += 14;
+  };
+  tableHead();
+  for (const result of report.results) {
+    const subjectLines = doc.splitTextToSize(result.subject, ledger ? 43 : 90) as string[];
+    const height = Math.max(10, subjectLines.length * 4 + 4);
+    if (y + height > 266) { freshPage(); tableHead(); }
+    doc.setFont(font, "normal"); doc.setFontSize(8); doc.setTextColor(...ink);
+    doc.text(subjectLines, 17, y);
+    const parts = [result.classTest, result.project, result.groupWork, result.homework];
+    const classScore = parts.every((part) => typeof part === "number") ? parts.reduce<number>((sum, part) => sum + (part ?? 0), 0) : null;
+    const exam = typeof result.exam === "number" ? result.exam / 2 : null;
+    const format = (value: number | null | undefined) => value == null ? "-" : Number(value.toFixed(1)).toString();
+    const values = ledger ? [...parts, classScore, exam, result.score].map(format) : [classScore, exam, result.score].map(format);
+    values.push(level(result.score).split(" - ")[0] ?? "-");
+    values.forEach((value, index) => doc.text(value, (columns[index + 1] ?? 15) + 2, y));
+    doc.setDrawColor(...rule); doc.line(15, y + height - 5, 195, y + height - 5); y += height;
+  }
+  y += 5;
+  const average = report.results.length ? (report.results.reduce((sum, item) => sum + item.score, 0) / report.results.length).toFixed(1) + "%" : "-";
+  textBlock("Overall average", average);
+  textBlock("Proficiency key", "HP: Highly Proficient | P: Proficient | AP: Approaching Proficiency | D: Developing | E: Emerging");
+  textBlock("Attendance", report.attendance);
+  textBlock("Learner profile", `Conduct: ${report.conduct || "-"}\nAttitude: ${report.attitude || "-"}\nInterest: ${report.interest || "-"}`);
+  textBlock("Class teacher's remarks", report.teacherRemark);
+  if (report.headteacherRemark) textBlock("Headteacher's remarks", report.headteacherRemark);
+  textBlock("Recommendation", report.promotionStatus ?? "-");
+  if (report.results.some((result) => result.remark || result.teacher)) {
+    textBlock("Subject notes", report.results.map((result) => `${result.subject}${result.teacher ? ` (${result.teacher})` : ""}: ${result.remark || "-"}`).join("\n"));
+  }
+  ensure(24); y += 12; doc.setDrawColor(...rule); doc.line(18, y, 87, y); doc.line(120, y, 192, y);
+  doc.setFontSize(8); doc.setTextColor(...ink); doc.text("Class teacher's signature", 22, y + 5); doc.text("Headteacher's signature", 125, y + 5);
 }

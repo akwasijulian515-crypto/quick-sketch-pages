@@ -1771,26 +1771,26 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                      from payments p where p.school_id = i.school_id and p.invoice_id = i.id
                    ) paid on true
                    where i.school_id = ${school.schoolId}::uuid and i.student_id = lc.id and i.status <> 'void') as balance_due,
-                  case when exists (
-                    select 1 from terminal_reports published
-                    where published.school_id = ${school.schoolId}::uuid
-                      and published.student_id = lc.id and published.term_id = lc.term_id
-                      and published.published_at is not null
-                  ) then (
-                    select count(*)::int from subject_term_marks m
-                    where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
-                      and lc.term_id is not null and m.term_id = lc.term_id
-                  ) else 0 end as mark_count,
-                  case when exists (
-                    select 1 from terminal_reports published
-                    where published.school_id = ${school.schoolId}::uuid
-                      and published.student_id = lc.id and published.term_id = lc.term_id
-                      and published.published_at is not null
-                  ) then (
-                    select avg(m.total_score)::numeric(5,2) from subject_term_marks m
-                    where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
-                      and lc.term_id is not null and m.term_id = lc.term_id
-                  ) else null end as term_average,
+                  (select count(*)::int from subject_term_marks m
+                   where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
+                     and lc.term_id is not null and m.term_id = lc.term_id
+                     and exists (
+                       select 1 from terminal_reports published
+                       where published.school_id = m.school_id
+                         and published.student_id = m.student_id
+                         and published.term_id = m.term_id
+                         and published.published_at is not null
+                     )) as mark_count,
+                  (select avg(m.total_score)::numeric(5,2) from subject_term_marks m
+                   where m.school_id = ${school.schoolId}::uuid and m.student_id = lc.id
+                     and lc.term_id is not null and m.term_id = lc.term_id
+                     and exists (
+                       select 1 from terminal_reports published
+                       where published.school_id = m.school_id
+                         and published.student_id = m.student_id
+                         and published.term_id = m.term_id
+                         and published.published_at is not null
+                     )) as term_average,
                   (select coalesce(jsonb_agg(jsonb_build_object(
                     'id', r.id, 'term_name', t.name, 'academic_year_name', ay.name,
                     'published_at', r.published_at, 'conduct', r.conduct,

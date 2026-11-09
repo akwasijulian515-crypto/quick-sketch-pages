@@ -26,6 +26,13 @@ export const Route = createFileRoute("/teachers")({
     meta: [
       { title: "Teachers — Klasora" },
       { name: "description", content: "Manage teachers, subjects, and teaching assignments." },
+      { property: "og:title", content: "Teachers — Klasora" },
+      {
+        property: "og:description",
+        content: "Manage your school's teaching team, subjects, and class assignments.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: TeachersPage,
@@ -257,8 +264,8 @@ function TeachersPage() {
 
   return (
     <SchoolShell title="Teachers & subjects">
-      <div className="mx-auto max-w-6xl rise">
-        <section className="relative isolate overflow-hidden rounded-2xl bg-gradient-to-br from-primary via-primary to-emerald-950 px-6 py-7 text-primary-foreground shadow-xl sm:px-8 sm:py-9">
+      <div className="mobile-cards mx-auto min-w-0 max-w-6xl rise">
+        <section className="hero-gloss relative isolate overflow-hidden rounded-lg px-4 py-6 sm:px-8 sm:py-9">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute -right-20 -top-24 -z-10 size-72 rounded-full border-[32px] border-primary-foreground/5"
@@ -281,9 +288,11 @@ function TeachersPage() {
                     schoolName.slice(0, 1)
                   )}
                 </span>
-                <span className="max-w-[15rem] truncate text-xs font-semibold">{schoolName}</span>
+                <span className="min-w-0 max-w-[15rem] truncate text-xs font-semibold">
+                  {schoolName}
+                </span>
                 <span className="size-1 rounded-full bg-emerald-300" />
-                <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-primary-foreground/65">
+                <span className="hidden text-[10px] font-medium uppercase tracking-[0.12em] text-primary-foreground/65 sm:inline">
                   Workspace
                 </span>
               </div>
@@ -378,7 +387,7 @@ function TeachersPage() {
           <SchoolTeamSetup onDataChanged={() => void load()} />
         )}
 
-        <section className="glass-panel mt-5 overflow-hidden rounded-2xl">
+        <section className="glass-panel mt-5 min-w-0 overflow-hidden rounded-lg">
           <div className="flex flex-col gap-4 border-b border-border/70 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div>
               <div className="flex items-center gap-2">
@@ -395,11 +404,11 @@ function TeachersPage() {
                   : "Explore the subjects and see how they’re connected to classes."}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <div
                 role="tablist"
                 aria-label="Teachers and subjects"
-                className="inline-flex rounded-xl border border-border bg-muted/50 p-1"
+                className="grid grid-cols-2 rounded-md border border-border bg-muted/50 p-1"
               >
                 <button
                   type="button"
@@ -457,7 +466,7 @@ function TeachersPage() {
           </div>
 
           <div className="mobile-cards overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left text-sm">
+            <table className="staff-mobile-list w-full min-w-[680px] text-left text-sm">
               <thead className="bg-muted/40 text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
                 <tr>
                   {(view === "teachers"
@@ -509,7 +518,7 @@ function TeachersPage() {
                             {row.assignments.map((assignment) => (
                               <div
                                 key={assignment.assignment_id}
-                                className="flex flex-wrap items-center gap-2 rounded-md border border-border/70 p-2"
+                                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border border-border/70 p-2 sm:flex sm:flex-wrap"
                               >
                                 <select
                                   aria-label={`Change class or subject for ${row.teacher}`}
@@ -528,7 +537,7 @@ function TeachersPage() {
                                       );
                                     }
                                   }}
-                                  className="h-8 min-w-36 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                                  className="col-span-2 h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground sm:h-8 sm:min-w-36"
                                 >
                                   {assignments
                                     .filter(
@@ -571,7 +580,7 @@ function TeachersPage() {
                                       );
                                     }
                                   }}
-                                  className="h-8 max-w-48 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                                  className="h-10 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground sm:h-8 sm:max-w-48"
                                 >
                                   {teachers.map((item) => (
                                     <option key={item.user_id} value={item.user_id}>
@@ -890,7 +899,12 @@ function Dialog({
 }) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/30 p-4 backdrop-blur-sm">
-      <div className="glass-panel w-full max-w-md rounded-lg p-6 shadow-2xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="glass-panel max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-lg p-4 shadow-2xl sm:p-6"
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="font-display text-xl font-bold">{title}</h2>
@@ -924,7 +938,7 @@ function DialogActions({
   disabled?: boolean;
 }) {
   return (
-    <div className="mt-6 flex justify-end gap-2">
+    <div className="mt-6 grid grid-cols-2 gap-2 sm:flex sm:justify-end">
       <Button type="button" variant="outline" onClick={onClose} disabled={disabled}>
         Cancel
       </Button>

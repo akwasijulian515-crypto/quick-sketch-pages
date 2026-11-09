@@ -30,6 +30,7 @@ import { Switch } from "@/components/ui/switch";
 import { SchoolFeeRules } from "@/components/school-fee-rules";
 import { SchoolPromotionReview } from "@/components/school-promotion-review";
 import { PortalAccountSetup } from "@/components/portal-account-setup";
+import { ReportDesignPicker } from "@/components/report-design-picker";
 
 export const Route = createFileRoute("/school-admin")({
   head: () => ({
@@ -39,6 +40,10 @@ export const Route = createFileRoute("/school-admin")({
         name: "description",
         content: "Manage school records, portal access, and terminal reports.",
       },
+      { property: "og:title", content: "School Administration — Klasora" },
+      { property: "og:description", content: "Manage your school's classes, accounts, and academic settings." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: SchoolAdminPage,
@@ -121,7 +126,7 @@ function SchoolAdminPage() {
 
   return (
     <SchoolShell title="School Admin" schoolAdmin>
-      <div className="mx-auto max-w-6xl rise">
+      <div className="mobile-cards staff-setup mx-auto min-w-0 max-w-6xl rise">
         <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
             <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">
@@ -164,6 +169,7 @@ function SchoolAdminPage() {
           />
         </section>
         <SchoolWorkflowSettings />
+        <ReportDesignPicker />
         <DirectoryManager />
         <PortalAccountSetup />
         <SchoolHolidays />
@@ -973,7 +979,7 @@ function DirectoryManager() {
           </p>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
+            <table className="staff-mobile-list w-full min-w-[640px] text-left text-sm">
               <thead className="border-b text-xs text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 font-medium">Class</th>
@@ -996,7 +1002,7 @@ function DirectoryManager() {
                     <td className="px-3 py-3 text-right tabular-nums">
                       {Number(item.student_count)}
                     </td>
-                    <td className="px-3 py-3 text-right">
+                    <td data-label="Actions" className="px-3 py-3 text-right">
                       <div className="flex justify-end gap-2">
                         <Button
                           size="sm"

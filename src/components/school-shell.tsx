@@ -183,7 +183,9 @@ function Sidebar({
                 ) : null}
                 <Link
                   to={item.to}
-                  hash={parentPortal && item.to === "/parent" ? itemHash : undefined}
+                  {...(parentPortal && item.to === "/parent" && itemHash !== undefined
+                    ? { hash: itemHash }
+                    : {})}
                   onClick={onNavigate}
                   className={cn(
                     "flex min-h-10 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-highlight/70",
@@ -433,9 +435,17 @@ export function SchoolShell({
             </Button>
             <div className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-md bg-primary font-display text-sm font-bold text-primary-foreground">
               {platform ? (
-                <img src="/brand/klasora-icon.png" alt="Klasora" className="size-full object-contain" />
+                <img
+                  src="/brand/klasora-icon.png"
+                  alt="Klasora"
+                  className="size-full object-contain"
+                />
               ) : crestUrl ? (
-                <img src={crestUrl} alt={`${schoolName} badge`} className="size-full object-cover" />
+                <img
+                  src={crestUrl}
+                  alt={`${schoolName} badge`}
+                  className="size-full object-cover"
+                />
               ) : (
                 (schoolName[0] ?? "S")
               )}
