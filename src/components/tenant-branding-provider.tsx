@@ -15,6 +15,7 @@ export type TenantBranding = {
   subdomain: string;
   primaryColor: string;
   crestUrl: string | null;
+  reportTemplate?: "bento" | "gazette" | "ledger";
 };
 
 const defaultBranding: TenantBranding = {
@@ -156,6 +157,7 @@ export function TenantBrandingProvider({ children }: { children: ReactNode }) {
           subdomain: school.subdomain,
           primaryColor,
           crestUrl: school.crestUrl ?? null,
+          ...(school.reportTemplate ? { reportTemplate: school.reportTemplate } : {}),
         };
 
         activeContext.current = context;
