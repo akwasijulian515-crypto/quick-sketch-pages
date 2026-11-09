@@ -183,7 +183,7 @@ function Sidebar({
                 ) : null}
                 <Link
                   to={item.to}
-                  hash={parentPortal && item.to === "/parent" ? itemHash : undefined}
+                  {...(parentPortal && item.to === "/parent" && itemHash !== undefined ? { hash: itemHash } : {})}
                   onClick={onNavigate}
                   className={cn(
                     "flex min-h-10 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-highlight/70",

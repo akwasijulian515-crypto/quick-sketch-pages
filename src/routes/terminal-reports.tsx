@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { FileDown, FileText, Files, ShieldCheck } from "lucide-react";
+import { FileDown, FileText, Files, ShieldCheck, Eye } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { getNeonAccessToken } from "../auth/client";
@@ -8,12 +8,19 @@ import { Input } from "@/components/ui/input";
 import { SchoolShell } from "@/components/school-shell";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
 import { downloadTerminalReports, type TerminalReportPdfData } from "@/lib/terminal-report-pdf";
+import { useReportDesign } from "@/lib/report-design";
+import { TerminalReportView } from "@/components/terminal-report-view";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/terminal-reports")({
   head: () => ({
     meta: [
       { title: "Terminal Reports — Klasora" },
       { name: "description", content: "Generate standards-based terminal reports." },
+      { property: "og:title", content: "Terminal Reports — Klasora" },
+      { property: "og:description", content: "Review school-branded learner reports and download academic results." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: TerminalReportsPage,
@@ -94,6 +101,8 @@ async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
 
 function TerminalReportsPage() {
   const { primaryColor, crestUrl } = useTenantBranding();
+  const { template } = useReportDesign();
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [years, setYears] = useState<AcademicYear[]>([]);
   const [classId, setClassId] = useState("");
@@ -262,12 +271,19 @@ function TerminalReportsPage() {
     attitude: profiles[report.student_id]?.attitude ?? "",
     interest: profiles[report.student_id]?.interest ?? "",
     teacherRemark: profiles[report.student_id]?.teacher_remark ?? "",
+    headteacherRemark: profiles[report.student_id]?.headteacher_remark ?? "",
+    template,
     promotionStatus: profiles[report.student_id]?.promotion_status ?? "",
     results: report.items.map((item) => ({
       subject: item.subject_name,
       score: Number(item.total_score ?? 0),
       teacher: "",
       remark: item.remark ?? "",
+      classTest: item.class_test_score === null ? null : Number(item.class_test_score),
+      project: item.project_score === null ? null : Number(item.project_score),
+      groupWork: item.group_work_score === null ? null : Number(item.group_work_score),
+      homework: item.homework_score === null ? null : Number(item.homework_score),
+      exam: item.exam_score === null ? null : Number(item.exam_score),
     })),
   }));
 
@@ -414,7 +430,7 @@ function TerminalReportsPage() {
                         {report.admission_number}
                       </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-3"><Button variant="outline" size="sm" onClick={() => setPreviewId(report.student_id)}><Eye />Preview</Button><p className="text-xs text-muted-foreground">
                       {report.attendance_present ?? 0} / {report.attendance_total ?? 0} attendance
                       days
                       {report.published_at
@@ -422,7 +438,7 @@ function TerminalReportsPage() {
                         : report.report_id
                           ? " · Draft saved"
                           : ""}
-                    </p>
+                    </p></div>
                   </div>
                   <div className="mt-4 grid gap-3 sm:grid-cols-3">
                     {(["conduct", "attitude", "interest"] as const).map((field) => (
@@ -516,6 +532,7 @@ function TerminalReportsPage() {
           <p className="font-medium text-secondary-foreground">NaCCA performance levels</p>
           <p className="mt-1">HP: 80%+ · P: 68–79% · AP: 54–67% · D: 40–53% · E: 39% and below.</p>
         </section>
+        <Dialog open={previewId !== null} onOpenChange={(open) => { if (!open) setPreviewId(null); }}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-5xl"><DialogHeader><DialogTitle>Terminal report preview</DialogTitle><DialogDescription>{selectedClass?.name} · {selectedTerm?.name}</DialogDescription></DialogHeader>{(() => { const index = reports.findIndex((report) => report.student_id === previewId); const report = exportReports[index]; return report ? <><Button variant="outline" disabled={downloading} onClick={() => void downloadReports([report])}><FileDown />Download PDF</Button><TerminalReportView report={report} template={template} /></> : null; })()}</DialogContent></Dialog>
       </div>
     </SchoolShell>
   );

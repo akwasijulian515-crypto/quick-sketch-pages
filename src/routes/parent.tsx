@@ -6,6 +6,7 @@ import {
   ReceiptText,
   ScrollText,
   UserRoundCheck,
+  Eye,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -13,12 +14,20 @@ import { Button } from "@/components/ui/button";
 import { fetchWithNeonAuth } from "../auth/client";
 import { SchoolShell } from "@/components/school-shell";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
+import { useReportDesign } from "@/lib/report-design";
+import type { TerminalReportPdfData } from "@/lib/terminal-report-pdf";
+import { TerminalReportView } from "@/components/terminal-report-view";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/parent")({
   head: () => ({
     meta: [
       { title: "Parent Portal — Klasora" },
       { name: "description", content: "Follow your children’s learning, attendance, and fees." },
+      { property: "og:title", content: "Family Reports & Learning — Klasora" },
+      { property: "og:description", content: "Follow linked learners' progress and view published school reports." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: ParentPortal,
@@ -57,6 +66,11 @@ type PublishedReport = {
     total_score: number | string | null;
     performance_level: string | null;
     remark: string | null;
+    class_test_score?: number | string | null;
+    project_score?: number | string | null;
+    group_work_score?: number | string | null;
+    homework_score?: number | string | null;
+    exam_score?: number | string | null;
   }[];
 };
 type Payment = {
@@ -93,6 +107,8 @@ async function portalApi<T>(path: string): Promise<T> {
 
 function ParentPortal() {
   const { schoolName, primaryColor, crestUrl } = useTenantBranding();
+  const { template } = useReportDesign();
+  const [preview, setPreview] = useState<TerminalReportPdfData | null>(null);
   const locationHash = useRouterState({ select: (state) => state.location.hash });
   const [children, setChildren] = useState<Child[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -158,38 +174,26 @@ function ParentPortal() {
     (child.published_reports ?? []).map((report) => ({ child, report })),
   );
 
+  function reportData(child: Child, report: PublishedReport): TerminalReportPdfData {
+    const numeric = (value: number | string | null | undefined) => value == null ? null : Number(value);
+    return { schoolName, primaryColor, crestUrl, template,
+      student: `${child.first_name} ${child.last_name}`, admission: child.admission_number,
+      className: child.class_name ?? "Unassigned", term: `${report.academic_year_name} · ${report.term_name}`,
+      attendance: `${report.attendance_present ?? 0} / ${report.attendance_total ?? 0} days`,
+      conduct: report.conduct ?? "", attitude: report.attitude ?? "", interest: report.interest ?? "",
+      teacherRemark: report.teacher_remark ?? "", headteacherRemark: report.headteacher_remark ?? "",
+      results: report.items.map((item) => ({ subject: item.subject_name, score: Number(item.total_score ?? 0), teacher: "", remark: item.remark ?? item.performance_level ?? "",
+        classTest: numeric(item.class_test_score), project: numeric(item.project_score), groupWork: numeric(item.group_work_score), homework: numeric(item.homework_score), exam: numeric(item.exam_score),
+      })),
+    };
+  }
+
   async function downloadReport(child: Child, report: PublishedReport) {
     setDownloadingReportId(report.id);
     setDownloadError("");
     try {
       const { downloadTerminalReports } = await import("@/lib/terminal-report-pdf");
-      await downloadTerminalReports([
-        {
-          schoolName,
-          primaryColor,
-          crestUrl,
-          student: `${child.first_name} ${child.last_name}`,
-          admission: child.admission_number,
-          className: child.class_name ?? "Unassigned",
-          term: `${report.academic_year_name} · ${report.term_name}`,
-          attendance: `${report.attendance_present ?? 0} / ${report.attendance_total ?? 0} days`,
-          conduct: report.conduct ?? "",
-          attitude: report.attitude ?? "",
-          interest: report.interest ?? "",
-          teacherRemark: [
-            report.teacher_remark ? `Teacher: ${report.teacher_remark}` : "",
-            report.headteacher_remark ? `Headteacher: ${report.headteacher_remark}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n"),
-          results: report.items.map((item) => ({
-            subject: item.subject_name,
-            score: Number(item.total_score ?? 0),
-            teacher: "",
-            remark: item.remark ?? item.performance_level ?? "",
-          })),
-        },
-      ]);
+      await downloadTerminalReports([reportData(child, report)]);
     } catch (cause) {
       setDownloadError(
         cause instanceof Error ? cause.message : "Could not download this published report",
@@ -357,7 +361,7 @@ function ParentPortal() {
                         {new Date(report.published_at).toLocaleDateString()}
                       </p>
                     </div>
-                    <Button
+                    <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => setPreview(reportData(child, report))}><Eye />View</Button><Button
                       type="button"
                       size="sm"
                       variant="outline"
@@ -367,7 +371,7 @@ function ParentPortal() {
                     >
                       <Download className="size-4" />
                       {downloadingReportId === report.id ? "Preparing..." : "Download PDF"}
-                    </Button>
+                    </Button></div>
                   </div>
                   <p className="mt-3 text-xs text-muted-foreground">
                     Attendance: {report.attendance_present ?? 0}/{report.attendance_total ?? 0}{" "}
@@ -463,6 +467,7 @@ function ParentPortal() {
             </div>
           )}
         </section>
+        <Dialog open={preview !== null} onOpenChange={(open) => { if (!open) setPreview(null); }}><DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-5xl"><DialogHeader><DialogTitle>Published terminal report</DialogTitle><DialogDescription>{preview?.student} · {preview?.term}</DialogDescription></DialogHeader>{preview && <TerminalReportView report={preview} template={template} />}</DialogContent></Dialog>
       </div>
     </SchoolShell>
   );

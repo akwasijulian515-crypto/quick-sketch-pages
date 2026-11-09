@@ -1,5 +1,8 @@
 # Roadmap
 
+- [ ] Build three tenant-branded terminal-report layouts, admin design picker, live report previews, and matching PDFs (frontend only).
+- [ ] Verify all layouts on phone, tablet, desktop, and dark mode; provide Codex persistence handover.
+
 - [x] Add a glossy fictional terminal report to the homepage; checked mobile, tablet, desktop, dark mode, and no horizontal overflow.
 
 - [x] Enrich the public homepage with school imagery, community and branding sections, and common questions; verified images, FAQ, registration link, and no horizontal overflow at phone, tablet, desktop widths.

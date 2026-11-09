@@ -30,6 +30,7 @@ import { Switch } from "@/components/ui/switch";
 import { SchoolFeeRules } from "@/components/school-fee-rules";
 import { SchoolPromotionReview } from "@/components/school-promotion-review";
 import { PortalAccountSetup } from "@/components/portal-account-setup";
+import { ReportDesignPicker } from "@/components/report-design-picker";
 
 export const Route = createFileRoute("/school-admin")({
   head: () => ({
@@ -168,6 +169,7 @@ function SchoolAdminPage() {
           />
         </section>
         <SchoolWorkflowSettings />
+        <ReportDesignPicker />
         <DirectoryManager />
         <PortalAccountSetup />
         <SchoolHolidays />
