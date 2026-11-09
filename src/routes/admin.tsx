@@ -61,16 +61,22 @@ function downloadSchoolDirectoryCsv(schools: School[], rootDomain: string | null
   URL.revokeObjectURL(objectUrl);
 }
 
-async function platformAuthHeaders() {
+async function platformApiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
   try {
-    return { authorization: `Bearer ${await getNeonAccessToken()}` };
+    headers.set("authorization", `Bearer ${await getNeonAccessToken()}`);
   } catch {
-    return {};
+    // The HttpOnly platform-token session cookie can still authorize this request.
   }
+  const response = await fetch(input, { ...init, headers });
+  if (response.status === 401)
+    window.dispatchEvent(new Event("platform-session-expired"));
+  return response;
 }
 
 function SuperAdminPage() {
   const navigate = useNavigate();
+  const session = usePlatformSession();
   const [tab, setTab] = useState<"schools" | "onboarding" | "platform">("schools");
   const [schools, setSchools] = useState<School[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
@@ -82,6 +88,14 @@ function SuperAdminPage() {
   const [rootDomain, setRootDomain] = useState<string | null>(null);
   const pending = applications.filter((application) => application.status === "Pending");
   const studentsAvailable = schools.every((school) => school.students !== null);
+  useEffect(() => {
+    function showTokenPrompt() {
+      setTab("schools");
+      setCreating(false);
+    }
+    window.addEventListener("platform-session-expired", showTokenPrompt);
+    return () => window.removeEventListener("platform-session-expired", showTokenPrompt);
+  }, []);
   useEffect(() => {
     void fetch("/api/auth/config")
       .then(async (response) => {
@@ -96,12 +110,13 @@ function SuperAdminPage() {
     const slug = slugify(subdomain);
     if (!name.trim() || !slug) return;
     try {
-      const response = await fetch("/api/platform/schools", {
+      const response = await platformApiFetch("/api/platform/schools", {
         method: "POST",
-        headers: { "content-type": "application/json", ...await platformAuthHeaders() },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: name.trim(), subdomain: slug, primaryColor: color }),
       });
       const payload = await response.json().catch(() => null) as { error?: string; school?: { id: string; name: string; subdomain: string; status: string; primaryColor: string } } | null;
+      if (response.status === 401) return;
       if (!response.ok || !payload?.school) throw new Error(payload?.error ?? "Could not create school");
       setSchools((current) => [...current, { id: payload.school!.id, name: payload.school!.name, subdomain: payload.school!.subdomain, students: 0, admins: 0, status: "Trial", color: payload.school!.primaryColor }]);
       setName("");
@@ -135,10 +150,10 @@ function SuperAdminPage() {
     setSchools((current) => current.filter((item) => item.id !== school.id));
     setApplications((current) => current.filter((application) => application.subdomain !== school.subdomain));
   }
-  return <SchoolShell title="Super Admin" platform><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><ShieldCheck className="size-5" /></div><h1 className="font-display text-3xl font-bold">Klasora Platform</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Control school tenants, approve onboarding, and oversee platform health without entering a school&apos;s operational workspace.</p></div><Button onClick={() => setCreating(true)}><Plus />Create school</Button></div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Active schools" value={String(schools.filter((school) => school.status === "Active").length)} note={`${schools.length} total tenant workspaces`} /><Metric label="Pending onboarding" value={String(pending.length)} note="Requires Super Admin approval" /><Metric label="Platform students" value={schools.reduce((total, school) => total + (school.students ?? 0), 0).toLocaleString()} note="Across active and trial schools" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={tab === "schools"} set={() => setTab("schools")} label="School directory" /><Tab active={tab === "onboarding"} set={() => setTab("onboarding")} label={`Onboarding (${pending.length})`} /><Tab active={tab === "platform"} set={() => setTab("platform")} label="Platform health" /></div>{tab === "schools" && <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schools or subdomains" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>}</div>  {tab === "schools" && <Directory schools={schools} query={query} setStatus={updateStatus} onDeleted={removeSchool} rootDomain={rootDomain} />}{tab === "onboarding" && <Onboarding applications={applications} approve={approve} openSignup={() => navigate({ to: "/signup" })} rootDomain={rootDomain} />}{tab === "platform" && <Health schools={schools} />}</section></div>{creating && <CreateDialog name={name} subdomain={subdomain} color={color} setName={(value) => { setName(value); setSubdomain(slugify(value)); }} setSubdomain={(value) => setSubdomain(slugify(value))} setColor={setColor} close={() => setCreating(false)} submit={createSchool} />}</SchoolShell>;
+  return <SchoolShell title="Super Admin" platform><div className="mx-auto max-w-6xl rise"><div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end"><div><div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border"><ShieldCheck className="size-5" /></div><h1 className="font-display text-3xl font-bold">Klasora Platform</h1><p className="mt-2 max-w-2xl text-sm text-muted-foreground">Control school tenants, approve onboarding, and oversee platform health without entering a school&apos;s operational workspace.</p></div>{session.authenticated && <Button onClick={() => setCreating(true)}><Plus />Create school</Button>}</div><section className="mt-7 grid gap-3 sm:grid-cols-3"><Metric label="Active schools" value={String(schools.filter((school) => school.status === "Active").length)} note={`${schools.length} total tenant workspaces`} /><Metric label="Pending onboarding" value={String(pending.length)} note="Requires Super Admin approval" /><Metric label="Platform students" value={schools.reduce((total, school) => total + (school.students ?? 0), 0).toLocaleString()} note="Across active and trial schools" /></section><section className="glass-panel mt-4 overflow-hidden rounded-lg"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div className="flex rounded-md border border-input bg-background/70 p-1"><Tab active={tab === "schools"} set={() => setTab("schools")} label="School directory" /><Tab active={tab === "onboarding"} set={() => setTab("onboarding")} label={`Onboarding (${pending.length})`} /><Tab active={tab === "platform"} set={() => setTab("platform")} label="Platform health" /></div>{tab === "schools" && <div className="flex h-9 max-w-sm flex-1 items-center gap-2 rounded-md border border-input bg-background/70 px-3"><Search className="size-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search schools or subdomains" className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" /></div>}</div>  {tab === "schools" && <Directory schools={schools} query={query} setStatus={updateStatus} onDeleted={removeSchool} rootDomain={rootDomain} session={session} />}{tab === "onboarding" && <Onboarding applications={applications} approve={approve} openSignup={() => navigate({ to: "/signup" })} rootDomain={rootDomain} session={session} />}{tab === "platform" && <Health schools={schools} />}</section></div>{creating && <CreateDialog name={name} subdomain={subdomain} color={color} setName={(value) => { setName(value); setSubdomain(slugify(value)); }} setSubdomain={(value) => setSubdomain(slugify(value))} setColor={setColor} close={() => setCreating(false)} submit={createSchool} />}</SchoolShell>;
 }
 
-function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schools: School[]; query: string; setStatus: (id: string, status: SchoolStatus, loadedSchool?: School) => void; onDeleted: (school: School) => void; rootDomain: string | null }) {
+function Directory({ schools, query, setStatus, onDeleted, rootDomain, session }: { schools: School[]; query: string; setStatus: (id: string, status: SchoolStatus, loadedSchool?: School) => void; onDeleted: (school: School) => void; rootDomain: string | null; session: ReturnType<typeof usePlatformSession> }) {
   const navigate = useNavigate();
   const [directorySchools, setDirectorySchools] = useState(schools);
   const [platformToken, setPlatformToken] = useState("");
@@ -150,7 +165,6 @@ function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schoo
   const [deleteTarget, setDeleteTarget] = useState<School | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
-  const session = usePlatformSession();
   const visibleSchools = directorySchools.filter(
     (school) =>
       (statusFilter === "All" || school.status === statusFilter) &&
@@ -161,7 +175,7 @@ function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schoo
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/platform/schools", { headers: await platformAuthHeaders() });
+      const response = await platformApiFetch("/api/platform/schools");
       const payload = await response.json().catch(() => null) as { error?: string; schools?: Array<{ id: string; name: string; subdomain: string; status: string; primaryColor: string; students: number; admins: number }> } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not load schools");
       const savedSchools = (payload?.schools ?? []).map((school) => ({
@@ -190,9 +204,9 @@ function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schoo
 
   async function updateDirectoryStatus(id: string, status: SchoolStatus) {
     try {
-      const response = await fetch(`/api/platform/schools/${encodeURIComponent(id)}/status`, {
+      const response = await platformApiFetch(`/api/platform/schools/${encodeURIComponent(id)}/status`, {
         method: "PATCH",
-        headers: { "content-type": "application/json", ...await platformAuthHeaders() },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({ status: status.toLowerCase() }),
       });
       const payload = await response.json().catch(() => null) as { error?: string } | null;
@@ -220,9 +234,8 @@ function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schoo
     setDeleting(true);
     setError("");
     try {
-      const response = await fetch(`/api/platform/schools/${encodeURIComponent(deleteTarget.id)}`, {
+      const response = await platformApiFetch(`/api/platform/schools/${encodeURIComponent(deleteTarget.id)}`, {
         method: "DELETE",
-        headers: await platformAuthHeaders(),
       });
       const payload = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not delete school");
@@ -279,7 +292,7 @@ function Directory({ schools, query, setStatus, onDeleted, rootDomain }: { schoo
         </div>
       </div>
     )}
-    {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
+    {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{session.sessionError || error}</p>}
     {session.authenticated && <DirectoryTable schools={visibleSchools} setStatus={updateDirectoryStatus} rootDomain={rootDomain} copiedSchoolId={copiedSchoolId} copyTenantLink={copyTenantLink} onDelete={setDeleteTarget} />}
     {!session.authenticated && !session.checkingSession && <p className="px-5 py-10 text-center text-sm text-muted-foreground">Sign in to load schools saved in Neon.</p>}
     {deleteTarget && <DeleteSchoolDialog school={deleteTarget} confirmation={deleteConfirmation} setConfirmation={setDeleteConfirmation} deleting={deleting} onClose={() => { if (!deleting) { setDeleteTarget(null); setDeleteConfirmation(""); } }} onConfirm={() => void deleteSchool()} />}
@@ -417,7 +430,7 @@ function DeleteSchoolDialog({ school, confirmation, setConfirmation, deleting, o
     </form>
   </div>;
 }
-function Onboarding({ applications, approve, openSignup, rootDomain }: { applications: Application[]; approve: (application: Application) => void; openSignup: () => void; rootDomain: string | null }) {
+function Onboarding({ applications, approve, openSignup, rootDomain, session }: { applications: Application[]; approve: (application: Application) => void; openSignup: () => void; rootDomain: string | null; session: ReturnType<typeof usePlatformSession> }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [platformToken, setPlatformToken] = useState("");
@@ -428,13 +441,12 @@ function Onboarding({ applications, approve, openSignup, rootDomain }: { applica
   const [invitationNotice, setInvitationNotice] = useState("");
   const [invitationSent, setInvitationSent] = useState(false);
   const [copiedLoginUrl, setCopiedLoginUrl] = useState(false);
-  const session = usePlatformSession();
 
   const loadApplications = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/platform/applications", { headers: await platformAuthHeaders() });
+      const response = await platformApiFetch("/api/platform/applications");
       const payload = await response.json().catch(() => null) as { error?: string; applications?: Array<{ id: string; schoolName: string; subdomain: string; applicant: string; email: string; phone: string | null; submitted: string; reviewedAt: string | null; color: string; status: "pending" | "approved" | "rejected" | "cancelled" }> } | null;
       if (!response.ok) throw new Error(payload?.error ?? "Could not load applications");
       for (const item of payload?.applications ?? []) {
@@ -462,9 +474,8 @@ function Onboarding({ applications, approve, openSignup, rootDomain }: { applica
     setApprovingId(application.id);
     setError("");
     try {
-      const response = await fetch(`/api/platform/applications/${encodeURIComponent(application.id)}/approve`, {
+      const response = await platformApiFetch(`/api/platform/applications/${encodeURIComponent(application.id)}/approve`, {
         method: "POST",
-        headers: await platformAuthHeaders(),
       });
       const payload = await response.json().catch(() => null) as {
         error?: string;
@@ -518,7 +529,7 @@ function Onboarding({ applications, approve, openSignup, rootDomain }: { applica
         </div>
       </div>
     )}
-    {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{error || session.sessionError}</p>}
+    {(error || session.sessionError) && <p role="alert" className="border-b border-destructive/20 bg-destructive/5 px-5 py-3 text-sm text-destructive">{session.sessionError || error}</p>}
     {invitationNotice && <div role="status" className={cn("flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between", invitationSent ? "border-emerald-500/20 bg-emerald-500/5" : "border-amber-500/20 bg-amber-500/5")}><div><p className={cn("text-sm font-medium", invitationSent ? "text-emerald-800" : "text-amber-800")}>{invitationNotice}</p>{approvedLoginUrl && <a href={approvedLoginUrl} className="mt-1 block break-all text-sm text-secondary-foreground underline">{approvedLoginUrl}</a>}</div>{approvedLoginUrl && <Button size="sm" variant="outline" onClick={() => void copyApprovedLoginUrl()}>{copiedLoginUrl ? <Check /> : <Copy />}{copiedLoginUrl ? "Copied" : "Copy link"}</Button>}</div>}
     <div className="divide-y divide-border/70">
       {session.authenticated && applications.map((application) => <article key={application.id} className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-md text-white" style={{ backgroundColor: application.color }}><Building2 className="size-4" /></div><div><p className="font-medium">{application.schoolName} <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{application.status}</span></p><p className="mt-0.5 text-xs text-muted-foreground"><a href={tenantLoginUrl(application.subdomain, rootDomain)} target="_blank" rel="noreferrer" className="underline">{application.subdomain}</a> · Submitted {application.submitted}{application.reviewedAt && ` · Reviewed ${new Date(application.reviewedAt).toLocaleString()}`}</p><p className="mt-1 text-xs text-secondary-foreground">Contact: {application.applicant} · <a href={`mailto:${application.email}`} className="underline">{application.email}</a>{application.phone && <> · <a href={`tel:${application.phone}`} className="underline">{application.phone}</a></>}</p></div></div>{application.status === "Pending" ? <Button size="sm" disabled={approvingId === application.id} onClick={() => void approveApplication(application)}><CheckCircle2 />{approvingId === application.id ? "Approving..." : "Approve tenant"}</Button> : application.status === "Approved" ? <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700"><CheckCircle2 className="size-4" />Tenant created</span> : null}</article>)}

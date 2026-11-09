@@ -228,20 +228,39 @@ async function ensureTermFeeArrears(sql: ReturnType<typeof database>, schoolId: 
   }
 }
 
-function platformTokenFromRequest(request: Request) {
-  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (bearer) return bearer;
+function platformSessionFromRequest(request: Request) {
   const cookie = request.headers
     .get("cookie")
     ?.split(";")
     .map((part) => part.trim())
     .find((part) => part.startsWith("platform_admin_session="));
-  if (!cookie) return null;
-  try {
-    return decodeURIComponent(cookie.slice("platform_admin_session=".length));
-  } catch {
-    return null;
+  let cookieSession: { token: string; expiresAt: number | null; expired: boolean } | null = null;
+  if (cookie) {
+    try {
+      const value = decodeURIComponent(cookie.slice("platform_admin_session=".length));
+      const expiringSession = /^v1:(\d+):(.*)$/.exec(value);
+      if (!expiringSession) {
+        cookieSession = { token: value, expiresAt: null, expired: false };
+      } else {
+        const expiresAt = Number(expiringSession[1]);
+        const encodedToken = expiringSession[2];
+        const token = encodedToken ? decodeURIComponent(encodedToken) : "";
+        if (Number.isFinite(expiresAt) && token)
+          cookieSession = { token, expiresAt, expired: expiresAt <= Date.now() };
+      }
+    } catch {
+      cookieSession = null;
+    }
   }
+  if (cookieSession && !cookieSession.expired) return cookieSession;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (bearer) return { token: bearer, expiresAt: null, expired: false };
+  return cookieSession;
+}
+
+function platformTokenFromRequest(request: Request) {
+  const session = platformSessionFromRequest(request);
+  return session && !session.expired ? session.token : null;
 }
 
 async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
@@ -282,9 +301,18 @@ async function isPlatformAdmin(request: Request, env: RuntimeEnv) {
   }
 }
 
-function platformSessionCookie(token: string, request: Request, maxAge: number) {
+function platformSessionCookie(
+  token: string,
+  request: Request,
+  maxAge: number,
+  expiresAt?: number,
+) {
   const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
-  return `platform_admin_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api/platform; Max-Age=${maxAge}${secure}`;
+  const value =
+    token && maxAge > 0
+      ? `v1:${expiresAt ?? Date.now() + maxAge * 1000}:${encodeURIComponent(token)}`
+      : "";
+  return `platform_admin_session=${encodeURIComponent(value)}; HttpOnly; SameSite=Strict; Path=/api/platform; Max-Age=${maxAge}${secure}`;
 }
 
 function validSubdomain(value: string) {
@@ -903,8 +931,21 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       );
     }
     if (request.method === "GET") {
-      return (await isPlatformAdmin(request, env))
-        ? json({ authenticated: true })
+      if (await isPlatformAdmin(request, env)) {
+        return json({
+          authenticated: true,
+          expiresAt: platformSessionFromRequest(request)?.expiresAt ?? null,
+        });
+      }
+      return platformSessionFromRequest(request)?.expired
+        ? json(
+            {
+              error: "Your Super Admin session expired. Enter the platform token again.",
+              code: "PLATFORM_SESSION_EXPIRED",
+            },
+            401,
+            { "set-cookie": platformSessionCookie("", request, 0) },
+          )
         : json({ error: "Unauthorized" }, 401);
     }
     if (request.method === "DELETE") {
@@ -923,8 +964,9 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         ? payload.token
         : "";
     if (!token || token !== env.PLATFORM_ADMIN_TOKEN) return json({ error: "Unauthorized" }, 401);
-    return json({ authenticated: true }, 200, {
-      "set-cookie": platformSessionCookie(token, request, 8 * 60 * 60),
+    const expiresAt = Date.now() + 8 * 60 * 60 * 1000;
+    return json({ authenticated: true, expiresAt }, 200, {
+      "set-cookie": platformSessionCookie(token, request, 8 * 60 * 60, expiresAt),
     });
   }
   if (url.pathname === "/api/school") {
