@@ -46,8 +46,24 @@ export const Route = createFileRoute("/school-admin")({
       { name: "twitter:card", content: "summary" },
     ],
   }),
+  validateSearch: (search: Record<string, unknown>): { section?: AdminSection } =>
+    isAdminSection(search["section"]) ? { section: search["section"] } : {},
   component: SchoolAdminPage,
 });
+
+const adminSections = ["profile", "accounts", "fees", "calendar", "promotions", "reports"] as const;
+export type AdminSection = (typeof adminSections)[number];
+function isAdminSection(value: unknown): value is AdminSection {
+  return typeof value === "string" && (adminSections as readonly string[]).includes(value);
+}
+const sectionCopy: Record<AdminSection, { title: string; note: string }> = {
+  profile: { title: "School administration", note: "Your school at a glance, workflow settings, and class directory." },
+  accounts: { title: "Accounts & access", note: "Create staff, parent, and student sign-ins and share activation links." },
+  fees: { title: "Fee structures", note: "Set term fees and daily fee amounts for each class." },
+  calendar: { title: "School holidays", note: "Mark public holidays and breaks so registers skip them." },
+  promotions: { title: "Promotions", note: "Review end-of-year promotion decisions for each class." },
+  reports: { title: "Report design", note: "Choose how your school's terminal reports look." },
+};
 
 type SchoolClass = {
   id: string;
@@ -100,6 +116,7 @@ async function schoolApi<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function SchoolAdminPage() {
+  const section: AdminSection = Route.useSearch().section ?? "profile";
   const [summary, setSummary] = useState<{
     active_users: number;
     pending_activations: number;
@@ -132,10 +149,9 @@ function SchoolAdminPage() {
             <div className="mb-3 grid size-10 place-items-center rounded-md bg-secondary text-secondary-foreground ring-1 ring-border">
               <UsersRound className="size-5" />
             </div>
-            <h1 className="font-display text-3xl font-bold">School administration</h1>
+            <h1 className="font-display text-3xl font-bold">{sectionCopy[section].title}</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              Manage your school&apos;s people, portal access, and terminal reporting. Attendance
-              remains a teacher responsibility.
+              {sectionCopy[section].note}
             </p>
           </div>
         </div>
@@ -147,6 +163,8 @@ function SchoolAdminPage() {
             {summaryError}
           </p>
         )}
+        {section === "profile" && (
+          <>
         <section className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Card
             label="School accounts"
@@ -169,12 +187,7 @@ function SchoolAdminPage() {
           />
         </section>
         <SchoolWorkflowSettings />
-        <ReportDesignPicker />
         <DirectoryManager />
-        <PortalAccountSetup />
-        <SchoolHolidays />
-        <SchoolFeeRules />
-        <SchoolPromotionReview />
         <section className="mt-4 grid gap-4 lg:grid-cols-3">
           <article className="glass-panel rounded-lg p-5">
             <Link2 className="size-5 text-primary" />
@@ -184,10 +197,10 @@ function SchoolAdminPage() {
               activation link.
             </p>
             <Button className="mt-5" variant="outline" asChild>
-              <a href="#portal-account-setup">
+              <Link to="/school-admin" search={{ section: "accounts" }}>
                 <Link2 />
                 Manage portal accounts
-              </a>
+              </Link>
             </Button>
           </article>
           <article className="glass-panel rounded-lg p-5">
@@ -217,6 +230,13 @@ function SchoolAdminPage() {
             </Button>
           </article>
         </section>
+          </>
+        )}
+        {section === "accounts" && <PortalAccountSetup />}
+        {section === "fees" && <SchoolFeeRules />}
+        {section === "calendar" && <SchoolHolidays />}
+        {section === "promotions" && <SchoolPromotionReview />}
+        {section === "reports" && <ReportDesignPicker />}
       </div>
     </SchoolShell>
   );
