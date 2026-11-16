@@ -915,6 +915,133 @@ function validIsoDate(value: string) {
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
 }
 
+function toOrdinal(n: number) {
+  const remainder = n % 10;
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  if (remainder === 1) return `${n}st`;
+  if (remainder === 2) return `${n}nd`;
+  if (remainder === 3) return `${n}rd`;
+  return `${n}th`;
+}
+
+function buildReportSerialNumber({
+  academicYearName,
+  termName,
+  className,
+  admissionNumber,
+}: {
+  academicYearName: string;
+  termName: string;
+  className: string;
+  admissionNumber: string;
+}) {
+  const year = String(academicYearName ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 12).toUpperCase() || "YEAR";
+  const term = String(termName ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 12).toUpperCase() || "TERM";
+  const classCode = String(className ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 12).toUpperCase() || "CLASS";
+  const admission = String(admissionNumber ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 16).toUpperCase() || "STUDENT";
+  return `KLAS-${year}-${term}-${classCode}-${admission}`;
+}
+
+function generateSecureReportToken(length = 32) {
+  const byteLength = Math.ceil(length / 2);
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, length);
+}
+
+async function upsertReportVerificationRecords(
+  sql: ReturnType<typeof database>,
+  schoolId: string,
+  classId: string,
+  termId: string,
+  publicationTime: Date,
+) {
+  const rows = await withDatabaseContext(
+    sql,
+    { schoolId },
+    (tx) => tx`
+      with class_reports as materialized (
+        select r.id as report_id, r.student_id, r.term_id, r.school_id, r.published_at, r.conduct,
+               r.attitude, r.interest, r.attendance_present, r.attendance_total,
+               r.teacher_remark, r.headteacher_remark, r.promotion_status,
+               st.first_name || ' ' || st.last_name as student_name,
+               st.admission_number, c.name as class_name,
+               ay.name as academic_year_name, t.name as term_name,
+               coalesce(avg(m.total_score), 0) as overall_average,
+               rank() over (
+                 partition by c.id
+                 order by avg(m.total_score) desc nulls last
+               ) as rank_in_class,
+               count(*) over (partition by c.id) as total_students
+        from terminal_reports r
+        join students st on st.id = r.student_id and st.school_id = r.school_id
+        join class_enrollments e on e.school_id = r.school_id and e.student_id = st.id and e.ends_on is null
+        join classes c on c.id = e.class_id and c.school_id = e.school_id and c.id = ${classId}::uuid
+        join terms t on t.id = r.term_id and t.school_id = r.school_id and t.id = ${termId}::uuid
+        join academic_years ay on ay.id = t.academic_year_id and ay.school_id = t.school_id
+        left join subject_term_marks m on m.school_id = r.school_id and m.student_id = r.student_id and m.term_id = r.term_id
+        where r.school_id = ${schoolId}::uuid and r.term_id = ${termId}::uuid
+        group by r.id, r.student_id, r.term_id, r.school_id, r.published_at, r.conduct,
+                 r.attitude, r.interest, r.attendance_present, r.attendance_total,
+                 r.teacher_remark, r.headteacher_remark, r.promotion_status,
+                 st.first_name, st.last_name, st.admission_number, c.name,
+                 ay.name, t.name
+      )
+      select * from class_reports
+    `,
+  );
+
+  for (const report of rows) {
+    const token = generateSecureReportToken(32);
+    const serialNumber = buildReportSerialNumber({
+      academicYearName: String(report["academic_year_name"] ?? ""),
+      termName: String(report["term_name"] ?? ""),
+      className: String(report["class_name"] ?? ""),
+      admissionNumber: String(report["admission_number"] ?? ""),
+    });
+    const rankInClass = Number(report["rank_in_class"] ?? 0);
+    const totalStudents = Number(report["total_students"] ?? 0);
+    const overallAverage = Number(report["overall_average"] ?? 0);
+    const summary = {
+      studentName: String(report["student_name"] ?? ""),
+      admissionNumber: String(report["admission_number"] ?? ""),
+      className: String(report["class_name"] ?? ""),
+      termName: String(report["term_name"] ?? ""),
+      overallAverage: Number.isFinite(overallAverage) ? Number(overallAverage.toFixed(2)) : 0,
+      position:
+        totalStudents > 0 && rankInClass > 0
+          ? `${toOrdinal(rankInClass)} out of ${totalStudents}`
+          : "Unranked",
+      publishedAt: report["published_at"]
+        ? new Date(report["published_at"]).toISOString()
+        : publicationTime.toISOString(),
+    };
+
+    await withDatabaseContext(
+      sql,
+      { schoolId },
+      (tx) => tx`
+        insert into terminal_report_verifications
+          (school_id, student_id, academic_year_id, term_id, class_id, token, serial_number,
+           verified_summary)
+        select ${schoolId}::uuid, ${String(report["student_id"])}::uuid,
+               (select id from academic_years where school_id = ${schoolId}::uuid and id = (
+                 select academic_year_id from terms where id = ${termId}::uuid and school_id = ${schoolId}::uuid
+               ) limit 1),
+               ${termId}::uuid, ${classId}::uuid, ${token}, ${serialNumber}, ${JSON.stringify(summary)}::jsonb
+        on conflict (school_id, student_id, term_id) do update
+          set academic_year_id = excluded.academic_year_id,
+              class_id = excluded.class_id,
+              token = excluded.token,
+              serial_number = excluded.serial_number,
+              verified_summary = excluded.verified_summary,
+              updated_at = now()
+      `,
+    );
+  }
+}
+
 export async function handleApiRequest(request: Request, env: RuntimeEnv): Promise<Response> {
   env = resolveRuntimeEnv(env);
   const url = new URL(request.url);
@@ -1035,6 +1162,293 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (savedTemplate !== "bento" && savedTemplate !== "gazette" && savedTemplate !== "ledger")
       return json({ error: "Could not save the school report template" }, 500);
     return json({ ok: true, reportTemplate: savedTemplate });
+  }
+
+  if (url.pathname === "/api/school/report-settings") {
+    const school = await requireSchoolAdminContext(request, env);
+    if (school instanceof Response) return school;
+    const sql = database(env);
+
+    if (request.method === "GET") {
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) => tx`
+          select
+            report_grading_system,
+            report_show_position,
+            report_show_class_benchmarks,
+            report_bill_mode,
+            report_vacation_date,
+            report_reopening_date,
+            report_institutional_notice,
+            report_enable_qr,
+            report_enable_serial,
+            report_headteacher_signature_url,
+            report_rubber_stamp_url,
+            report_conditional_delivery
+          from schools
+          where id = ${school.schoolId}::uuid
+          limit 1
+        `,
+      );
+      const schoolSettings = rows[0] ?? {};
+      return json({
+        report_grading_system: String(schoolSettings["report_grading_system"] ?? "nacca_50_50"),
+        report_show_position: schoolSettings["report_show_position"] === true,
+        report_show_class_benchmarks: schoolSettings["report_show_class_benchmarks"] === true,
+        report_bill_mode: String(schoolSettings["report_bill_mode"] ?? "embedded_footer"),
+        report_vacation_date: schoolSettings["report_vacation_date"]
+          ? String(schoolSettings["report_vacation_date"])
+          : null,
+        report_reopening_date: schoolSettings["report_reopening_date"]
+          ? String(schoolSettings["report_reopening_date"])
+          : null,
+        report_institutional_notice:
+          schoolSettings["report_institutional_notice"] == null
+            ? null
+            : String(schoolSettings["report_institutional_notice"]),
+        report_enable_qr: schoolSettings["report_enable_qr"] !== false,
+        report_enable_serial: schoolSettings["report_enable_serial"] !== false,
+        report_headteacher_signature_url:
+          schoolSettings["report_headteacher_signature_url"] == null
+            ? null
+            : String(schoolSettings["report_headteacher_signature_url"]),
+        report_rubber_stamp_url:
+          schoolSettings["report_rubber_stamp_url"] == null
+            ? null
+            : String(schoolSettings["report_rubber_stamp_url"]),
+        report_conditional_delivery: schoolSettings["report_conditional_delivery"] === true,
+      });
+    }
+
+    if (request.method !== "PUT") return json({ error: "Method not allowed" }, 405);
+
+    const payload: unknown = await request.json().catch(() => null);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+      return badRequest("A JSON request body is required");
+    const body = payload as Record<string, unknown>;
+    const reportGradingSystem = body["report_grading_system"];
+    const reportShowPosition = body["report_show_position"];
+    const reportShowClassBenchmarks = body["report_show_class_benchmarks"];
+    const reportBillMode = body["report_bill_mode"];
+    const reportVacationDate = body["report_vacation_date"];
+    const reportReopeningDate = body["report_reopening_date"];
+    const reportInstitutionalNotice = body["report_institutional_notice"];
+    const reportEnableQr = body["report_enable_qr"];
+    const reportEnableSerial = body["report_enable_serial"];
+    const reportHeadteacherSignatureUrl = body["report_headteacher_signature_url"];
+    const reportRubberStampUrl = body["report_rubber_stamp_url"];
+    const reportConditionalDelivery = body["report_conditional_delivery"];
+
+    if (
+      reportGradingSystem !== "nacca_50_50" &&
+      reportGradingSystem !== "ges_traditional"
+    )
+      return badRequest("Choose a valid grading system");
+    if (typeof reportShowPosition !== "boolean") return badRequest("Choose whether to show learner position");
+    if (typeof reportShowClassBenchmarks !== "boolean")
+      return badRequest("Choose whether to show class benchmarks");
+    if (reportBillMode !== "embedded_footer" && reportBillMode !== "separate_sheet" && reportBillMode !== "none")
+      return badRequest("Choose a supported report bill mode");
+    if (
+      (reportVacationDate !== null && reportVacationDate !== undefined && typeof reportVacationDate !== "string") ||
+      (reportReopeningDate !== null && reportReopeningDate !== undefined && typeof reportReopeningDate !== "string")
+    )
+      return badRequest("Report dates must be ISO strings or null");
+    if (
+      reportVacationDate && !validIsoDate(String(reportVacationDate))
+    )
+      return badRequest("Enter a valid report vacation date");
+    if (
+      reportReopeningDate && !validIsoDate(String(reportReopeningDate))
+    )
+      return badRequest("Enter a valid report reopening date");
+    if (
+      reportInstitutionalNotice !== undefined &&
+      reportInstitutionalNotice !== null &&
+      (typeof reportInstitutionalNotice !== "string" || reportInstitutionalNotice.length > 3000)
+    )
+      return badRequest("Institutional notice must be a text value up to 3000 characters");
+    if (typeof reportEnableQr !== "boolean") return badRequest("Choose whether QR verification is enabled");
+    if (typeof reportEnableSerial !== "boolean") return badRequest("Choose whether serial numbers are enabled");
+    if (
+      reportHeadteacherSignatureUrl !== undefined &&
+      reportHeadteacherSignatureUrl !== null &&
+      typeof reportHeadteacherSignatureUrl !== "string"
+    )
+      return badRequest("Headteacher signature URL must be a string or null");
+    if (
+      reportRubberStampUrl !== undefined &&
+      reportRubberStampUrl !== null &&
+      typeof reportRubberStampUrl !== "string"
+    )
+      return badRequest("Rubber stamp URL must be a string or null");
+    if (typeof reportConditionalDelivery !== "boolean")
+      return badRequest("Choose whether conditional delivery is enabled");
+
+    const headteacherSignatureUrl =
+      typeof reportHeadteacherSignatureUrl === "string" && reportHeadteacherSignatureUrl.trim() !== ""
+        ? reportHeadteacherSignatureUrl.trim()
+        : null;
+    const rubberStampUrl =
+      typeof reportRubberStampUrl === "string" && reportRubberStampUrl.trim() !== ""
+        ? reportRubberStampUrl.trim()
+        : null;
+
+    if (
+      headteacherSignatureUrl &&
+      !/^https?:\/\//i.test(headteacherSignatureUrl)
+    )
+      return badRequest("Headteacher signature URL must start with http:// or https://");
+    if (
+      rubberStampUrl &&
+      !/^https?:\/\//i.test(rubberStampUrl)
+    )
+      return badRequest("Rubber stamp URL must start with http:// or https://");
+
+    const rows = await withDatabaseContext(
+      sql,
+      { schoolId: school.schoolId },
+      (tx) => tx`
+        update schools
+        set report_grading_system = ${String(reportGradingSystem)},
+            report_show_position = ${Boolean(reportShowPosition)},
+            report_show_class_benchmarks = ${Boolean(reportShowClassBenchmarks)},
+            report_bill_mode = ${String(reportBillMode)},
+            report_vacation_date = ${reportVacationDate ? String(reportVacationDate) : null}::date,
+            report_reopening_date = ${reportReopeningDate ? String(reportReopeningDate) : null}::date,
+            report_institutional_notice = ${
+              reportInstitutionalNotice === undefined || reportInstitutionalNotice === null
+                ? null
+                : String(reportInstitutionalNotice)
+            },
+            report_enable_qr = ${Boolean(reportEnableQr)},
+            report_enable_serial = ${Boolean(reportEnableSerial)},
+            report_headteacher_signature_url = ${headteacherSignatureUrl},
+            report_rubber_stamp_url = ${rubberStampUrl},
+            report_conditional_delivery = ${Boolean(reportConditionalDelivery)}
+        where id = ${school.schoolId}::uuid
+        returning report_grading_system,
+                  report_show_position,
+                  report_show_class_benchmarks,
+                  report_bill_mode,
+                  report_vacation_date,
+                  report_reopening_date,
+                  report_institutional_notice,
+                  report_enable_qr,
+                  report_enable_serial,
+                  report_headteacher_signature_url,
+                  report_rubber_stamp_url,
+                  report_conditional_delivery
+      `,
+    );
+
+    const saved = rows[0];
+    if (!saved) return json({ error: "School report settings were not saved" }, 500);
+    return json({
+      report_grading_system: String(saved["report_grading_system"]),
+      report_show_position: saved["report_show_position"] === true,
+      report_show_class_benchmarks: saved["report_show_class_benchmarks"] === true,
+      report_bill_mode: String(saved["report_bill_mode"]),
+      report_vacation_date: saved["report_vacation_date"] ? String(saved["report_vacation_date"]) : null,
+      report_reopening_date: saved["report_reopening_date"] ? String(saved["report_reopening_date"]) : null,
+      report_institutional_notice:
+        saved["report_institutional_notice"] == null
+          ? null
+          : String(saved["report_institutional_notice"]),
+      report_enable_qr: saved["report_enable_qr"] !== false,
+      report_enable_serial: saved["report_enable_serial"] !== false,
+      report_headteacher_signature_url:
+        saved["report_headteacher_signature_url"] == null
+          ? null
+          : String(saved["report_headteacher_signature_url"]),
+      report_rubber_stamp_url:
+        saved["report_rubber_stamp_url"] == null ? null : String(saved["report_rubber_stamp_url"]),
+      report_conditional_delivery: saved["report_conditional_delivery"] === true,
+    });
+  }
+
+  const publicVerificationMatch = url.pathname.match(/^\/api\/public\/verify\/report\/([^/]+)$/i);
+  if (publicVerificationMatch && request.method === "GET") {
+    const reportToken = publicVerificationMatch[1];
+    if (!reportToken) return badRequest("A report verification token is required");
+    const token = decodeURIComponent(reportToken).trim();
+    if (!token) return badRequest("A report verification token is required");
+
+    const sql = database(env);
+    const results = await sql.transaction((tx) => [
+      tx`select set_config('app.public_report_token', ${token}, true)`,
+      tx`
+        select v.id, v.token, v.serial_number, v.verified_summary,
+               s.name as school_name, s.crest_url,
+               st.first_name || ' ' || st.last_name as student_name,
+               c.name as class_name, t.name as term_name
+        from terminal_report_verifications v
+        join schools s on s.id = v.school_id
+        join students st on st.id = v.student_id and st.school_id = v.school_id
+        join classes c on c.id = v.class_id and c.school_id = v.school_id
+        join terms t on t.id = v.term_id and t.school_id = v.school_id
+        where v.token = ${token}
+        limit 1
+      `,
+    ]);
+    const rows = results[1];
+    if (!rows) throw new Error("Report verification query returned no result");
+
+    const report = rows[0];
+    if (!report) return json({ error: "Report verification token not found" }, 404);
+
+    const summary = report["verified_summary"] && typeof report["verified_summary"] === "object"
+      ? report["verified_summary"]
+      : {};
+    const status = summary && typeof summary === "object" && "status" in summary ? String(summary["status"]) : "valid";
+
+    return json({
+      valid: true,
+      status: status === "withheld" ? "withheld" : "valid",
+      school_name: String(report["school_name"] ?? ""),
+      crest_url: report["crest_url"] ? String(report["crest_url"]) : null,
+      student_name: String(report["student_name"] ?? ""),
+      class_name: String(report["class_name"] ?? ""),
+      term_name: String(report["term_name"] ?? ""),
+      serial_number: String(report["serial_number"] ?? ""),
+      token: String(report["token"] ?? ""),
+      verified_summary: summary,
+    });
+  }
+
+  if (url.pathname.match(/^\/api\/parent\/reports\/([0-9a-f-]+)\/pdf$/i) && request.method === "GET") {
+    const reportId = url.pathname.match(/^\/api\/parent\/reports\/([0-9a-f-]+)\/pdf$/i)?.[1];
+    if (!reportId || !uuidOrNull(reportId)) return badRequest("Invalid report ID");
+
+    const sql = database(env);
+    const reportRows = await withDatabaseContext(
+      sql,
+      { schoolId: "" },
+      (tx) => tx`
+        select tr.id, tr.school_id, tr.student_id, tr.term_id,
+               s.report_conditional_delivery,
+               coalesce(sum(i.amount_due) - coalesce(sum(p.amount), 0), 0)::numeric(12,2) as balance_due
+        from terminal_reports tr
+        join schools s on s.id = tr.school_id
+        left join invoices i on i.school_id = tr.school_id and i.student_id = tr.student_id and i.status <> 'void'
+        left join payments p on p.school_id = tr.school_id and p.invoice_id = i.id and p.status = 'verified'
+        where tr.id = ${reportId}::uuid
+        group by tr.id, tr.school_id, tr.student_id, tr.term_id, s.report_conditional_delivery
+      `,
+    );
+    const report = reportRows[0];
+    if (!report) return json({ error: "Report not found" }, 404);
+
+    if (report["report_conditional_delivery"] === true) {
+      const balanceDue = Number(report["balance_due"] ?? 0);
+      if (balanceDue > 0) {
+        return json({ withheld: true, balanceDue }, 403);
+      }
+    }
+
+    return json({ withheld: false, reportId: String(report["id"]) });
   }
 
   if (url.pathname === "/api/school/students/bulk-class") {
@@ -5286,6 +5700,17 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           { error: "No authorized active students were found for that class and term" },
           400,
         );
+
+      if (publish) {
+        await upsertReportVerificationRecords(
+          sql,
+          school.schoolId,
+          classId,
+          termId,
+          new Date(),
+        );
+      }
+
       let emailSentCount = 0;
       let emailError: string | null = null;
       if (publish) {

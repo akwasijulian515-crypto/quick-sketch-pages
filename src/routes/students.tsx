@@ -3,7 +3,6 @@ import { createFileRoute } from "@tanstack/react-router";
 import { fetchWithNeonAuth } from "@/auth/client";
 import { SchoolShell } from "@/components/school-shell";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
-import { downloadStudentRecordPdf } from "@/lib/student-record-pdf";
 import {
   Users,
   UserPlus,
@@ -1139,6 +1138,8 @@ export default function StudentsPage() {
             initialTab={selectedProfileTab}
             canManageStudents={canManageStudents}
             classes={classes}
+            loadingClasses={loadingClasses}
+            classError={classError}
             onStudentUpdated={(updatedStudent) => {
               setStudents((current) =>
                 current.map((item) => (item.id === updatedStudent.id ? updatedStudent : item)),
@@ -1635,6 +1636,8 @@ function StudentProfile({
   initialTab,
   canManageStudents,
   classes,
+  loadingClasses,
+  classError,
   onStudentUpdated,
   onStatusChange,
   onDelete,
@@ -1644,6 +1647,8 @@ function StudentProfile({
   initialTab: "Overview" | "Fees" | "Attendance";
   canManageStudents: boolean;
   classes: ClassOption[];
+  loadingClasses: boolean;
+  classError: string;
   onStudentUpdated: (student: Student) => void;
   onStatusChange: (studentId: string, status: StudentStatus) => void;
   onDelete: (studentId: string) => void;
@@ -1915,6 +1920,7 @@ function StudentProfile({
           student_id: student.id,
         }),
       ]);
+      const { downloadStudentRecordPdf } = await import("@/lib/student-record-pdf");
       downloadStudentRecordPdf({
         schoolName,
         primaryColor,
