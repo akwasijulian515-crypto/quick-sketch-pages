@@ -58,6 +58,7 @@ const schoolAdminNavigation = [
   { label: "School holidays", to: "/school-admin", section: "calendar", icon: CalendarOff, group: "Calendar" },
   { label: "Daily payments", to: "/daily-payments", icon: Banknote, group: "Finance" },
   { label: "Payments", to: "/payments", icon: ReceiptText, group: "Finance" },
+  { label: "Term billing", to: "/term-billing", icon: WalletCards, group: "Finance" },
   { label: "Financial records", to: "/student-finances", icon: WalletCards, group: "Finance" },
   { label: "Fee structures", to: "/school-admin", section: "fees", icon: Coins, group: "Finance" },
   { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck, group: "Finance" },
@@ -77,6 +78,7 @@ const studentNavigation = [
 
 const financeNavigation = [
   { label: "Finance desk", to: "/finance", icon: LayoutDashboard, group: "Core" },
+  { label: "Term billing", to: "/term-billing", icon: WalletCards, group: "Finance" },
   { label: "Daily payments", to: "/daily-payments", icon: Banknote, group: "Finance" },
   { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck, group: "Finance" },
 ] as const;

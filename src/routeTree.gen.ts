@@ -33,6 +33,7 @@ import { Route as StudentsRouteImport } from './routes/students'
 import { Route as SubjectsRouteImport } from './routes/subjects'
 import { Route as TeacherRouteImport } from './routes/teacher'
 import { Route as TeachersRouteImport } from './routes/teachers'
+import { Route as TermBillingRouteImport } from './routes/term-billing'
 import { Route as TerminalReportsRouteImport } from './routes/terminal-reports'
 import { Route as TeacherPromotionRouteImport } from './routes/teacher/promotion'
 
@@ -156,6 +157,11 @@ const TeachersRoute = TeachersRouteImport.update({
   path: '/teachers',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TermBillingRoute = TermBillingRouteImport.update({
+  id: '/term-billing',
+  path: '/term-billing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TerminalReportsRoute = TerminalReportsRouteImport.update({
   id: '/terminal-reports',
   path: '/terminal-reports',
@@ -192,6 +198,7 @@ export interface FileRoutesByFullPath {
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRouteWithChildren
   '/teachers': typeof TeachersRoute
+  '/term-billing': typeof TermBillingRoute
   '/terminal-reports': typeof TerminalReportsRoute
   '/teacher/promotion': typeof TeacherPromotionRoute
 }
@@ -220,6 +227,7 @@ export interface FileRoutesByTo {
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRouteWithChildren
   '/teachers': typeof TeachersRoute
+  '/term-billing': typeof TermBillingRoute
   '/terminal-reports': typeof TerminalReportsRoute
   '/teacher/promotion': typeof TeacherPromotionRoute
 }
@@ -249,6 +257,7 @@ export interface FileRoutesById {
   '/subjects': typeof SubjectsRoute
   '/teacher': typeof TeacherRouteWithChildren
   '/teachers': typeof TeachersRoute
+  '/term-billing': typeof TermBillingRoute
   '/terminal-reports': typeof TerminalReportsRoute
   '/teacher/promotion': typeof TeacherPromotionRoute
 }
@@ -279,6 +288,7 @@ export interface FileRouteTypes {
     | '/subjects'
     | '/teacher'
     | '/teachers'
+    | '/term-billing'
     | '/terminal-reports'
     | '/teacher/promotion'
   fileRoutesByTo: FileRoutesByTo
@@ -307,6 +317,7 @@ export interface FileRouteTypes {
     | '/subjects'
     | '/teacher'
     | '/teachers'
+    | '/term-billing'
     | '/terminal-reports'
     | '/teacher/promotion'
   id:
@@ -335,6 +346,7 @@ export interface FileRouteTypes {
     | '/subjects'
     | '/teacher'
     | '/teachers'
+    | '/term-billing'
     | '/terminal-reports'
     | '/teacher/promotion'
   fileRoutesById: FileRoutesById
@@ -364,6 +376,7 @@ export interface RootRouteChildren {
   SubjectsRoute: typeof SubjectsRoute
   TeacherRoute: typeof TeacherRouteWithChildren
   TeachersRoute: typeof TeachersRoute
+  TermBillingRoute: typeof TermBillingRoute
   TerminalReportsRoute: typeof TerminalReportsRoute
 }
 
@@ -537,6 +550,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TeachersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/term-billing': {
+      id: '/term-billing'
+      path: '/term-billing'
+      fullPath: '/term-billing'
+      preLoaderRoute: typeof TermBillingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/terminal-reports': {
       id: '/terminal-reports'
       path: '/terminal-reports'
@@ -590,6 +610,7 @@ const rootRouteChildren: RootRouteChildren = {
   SubjectsRoute: SubjectsRoute,
   TeacherRoute: TeacherRouteWithChildren,
   TeachersRoute: TeachersRoute,
+  TermBillingRoute: TermBillingRoute,
   TerminalReportsRoute: TerminalReportsRoute,
 }
 export const routeTree = rootRouteImport

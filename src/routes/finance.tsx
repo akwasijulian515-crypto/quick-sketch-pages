@@ -5,7 +5,6 @@ import { useCallback, useEffect, useState } from "react";
 import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
-import { TermBillingWorkspace } from "@/components/term-billing-workspace";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
 import type { PaymentReceiptData } from "@/lib/payment-receipt-pdf";
 
@@ -275,8 +274,6 @@ function FinancePage() {
       <h1 className="font-display text-3xl font-bold">Finance desk</h1>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record configured fee collections, print numbered receipts, and track remaining balances. School, exam, and other-fee receipts remain pending until a different school admin validates them.</p>
     </div>
-
-    <TermBillingWorkspace />
 
     {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p>}
     {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
