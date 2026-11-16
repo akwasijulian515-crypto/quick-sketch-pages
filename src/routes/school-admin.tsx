@@ -57,9 +57,9 @@ function isAdminSection(value: unknown): value is AdminSection {
   return typeof value === "string" && (adminSections as readonly string[]).includes(value);
 }
 const sectionCopy: Record<AdminSection, { title: string; note: string }> = {
-  profile: { title: "School administration", note: "Your school at a glance, workflow settings, and class directory." },
+  profile: { title: "School profile", note: "Your school's name, badge, brand colour, and official contacts." },
   accounts: { title: "Accounts & access", note: "Create staff, parent, and student sign-ins and share activation links." },
-  fees: { title: "Fee structures", note: "Set term fees and daily fee amounts for each class." },
+  fees: { title: "Fee structures", note: "Set term fees, daily fee amounts, and how fees are collected." },
   calendar: { title: "School holidays", note: "Mark public holidays and breaks so registers skip them." },
   promotions: { title: "Promotions", note: "Review end-of-year promotion decisions for each class." },
   reports: { title: "Report design", note: "Choose how your school's terminal reports look." },
@@ -186,54 +186,16 @@ function SchoolAdminPage() {
             note="Saved report records"
           />
         </section>
-        <SchoolWorkflowSettings />
-        <DirectoryManager />
-        <section className="mt-4 grid gap-4 lg:grid-cols-3">
-          <article className="glass-panel rounded-lg p-5">
-            <Link2 className="size-5 text-primary" />
-            <h2 className="mt-3 font-display text-lg font-bold">Portal account access</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Link parent and student sign-ins to their school records and share the generated
-              activation link.
-            </p>
-            <Button className="mt-5" variant="outline" asChild>
-              <Link to="/school-admin" search={{ section: "accounts" }}>
-                <Link2 />
-                Manage portal accounts
-              </Link>
-            </Button>
-          </article>
-          <article className="glass-panel rounded-lg p-5">
-            <FileText className="size-5 text-primary" />
-            <h2 className="mt-3 font-display text-lg font-bold">Terminal reports</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Generate, review, and publish student terminal reports for the current term.
-            </p>
-            <Button className="mt-5" variant="outline" asChild>
-              <Link to="/terminal-reports">
-                <FileText />
-                Open report centre
-              </Link>
-            </Button>
-          </article>
-          <article className="glass-panel rounded-lg p-5">
-            <ShieldCheck className="size-5 text-primary" />
-            <h2 className="mt-3 font-display text-lg font-bold">Daily reconciliation</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Review gateway-verified payments, attendance exceptions, and close the collection day.
-            </p>
-            <Button className="mt-5" variant="outline" asChild>
-              <Link to="/reconciliation">
-                <ShieldCheck />
-                Open controls
-              </Link>
-            </Button>
-          </article>
-        </section>
+        <SchoolProfileEditor />
           </>
         )}
         {section === "accounts" && <PortalAccountSetup />}
-        {section === "fees" && <SchoolFeeRules />}
+        {section === "fees" && (
+          <>
+            <SchoolFeeRules />
+            <SchoolWorkflowSettings />
+          </>
+        )}
         {section === "calendar" && <SchoolHolidays />}
         {section === "promotions" && <SchoolPromotionReview />}
         {section === "reports" && <ReportDesignPicker />}
@@ -1199,5 +1161,145 @@ function Card({ label, value, note }: { label: string; value: string; note: stri
       <p className="mt-2 font-display text-3xl">{value}</p>
       <p className="mt-1 text-xs text-secondary-foreground">{note}</p>
     </article>
+  );
+}
+
+type SchoolProfile = {
+  name: string;
+  subdomain: string;
+  primaryColor: string;
+  crestUrl: string;
+  contactEmail: string;
+  contactPhone: string;
+};
+
+function SchoolProfileEditor() {
+  const [profile, setProfile] = useState<SchoolProfile | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void schoolApi<{ profile: SchoolProfile }>("/api/school/profile")
+      .then((result) => {
+        if (!cancelled) setProfile(result.profile);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled)
+          setError(loadError instanceof Error ? loadError.message : "Could not load the school profile");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function update<K extends keyof SchoolProfile>(key: K, value: SchoolProfile[K]) {
+    setProfile((current) => (current ? { ...current, [key]: value } : current));
+  }
+
+  function pickBadge(file: File | undefined) {
+    if (!file) return;
+    if (file.size > 1_000_000) {
+      setError("Choose a badge image under 1 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => update("crestUrl", String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profile) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await schoolApi<{ profile: SchoolProfile }>("/api/school/profile", {
+        method: "PUT",
+        body: JSON.stringify(profile),
+      });
+      setProfile(result.profile);
+      setNotice("School profile saved. Refresh to see the new branding everywhere.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Could not save the school profile");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="glass-panel mt-4 rounded-lg p-5">
+      <h2 className="font-display text-xl font-bold">School identity & contacts</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Shown on sign-in pages, receipts, and terminal reports.
+      </p>
+      {error && (
+        <p role="alert" className="mt-4 rounded-md border border-destructive/30 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p role="status" className="mt-4 rounded-md border border-primary/25 bg-primary/5 px-3 py-2 text-sm">
+          {notice}
+        </p>
+      )}
+      {!profile ? (
+        !error && <p className="py-5 text-sm text-muted-foreground">Loading school profile...</p>
+      ) : (
+        <form onSubmit={(event) => void save(event)} className="mt-5 grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-border p-4">
+            <div className="grid size-28 place-items-center overflow-hidden rounded-full bg-secondary ring-2 ring-primary/30">
+              {profile.crestUrl ? (
+                <img src={profile.crestUrl} alt="School badge" className="size-full object-contain" />
+              ) : (
+                <span className="text-xs text-muted-foreground">No badge</span>
+              )}
+            </div>
+            <label className="w-full text-center text-xs font-medium text-muted-foreground">
+              <span className="mb-1 block">Upload new badge</span>
+              <Input type="file" accept="image/*" onChange={(event) => pickBadge(event.target.files?.[0])} />
+            </label>
+            {profile.crestUrl && (
+              <Button type="button" size="sm" variant="ghost" onClick={() => update("crestUrl", "")}>
+                Remove badge
+              </Button>
+            )}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="School name">
+              <Input required minLength={2} maxLength={160} value={profile.name} onChange={(e) => update("name", e.target.value)} />
+            </FormField>
+            <FormField label="School web address">
+              <Input value={profile.subdomain} disabled readOnly />
+            </FormField>
+            <FormField label="Brand colour">
+              <div className="flex gap-2">
+                <input
+                  type="color"
+                  aria-label="Pick brand colour"
+                  value={/^#[0-9a-f]{6}$/i.test(profile.primaryColor) ? profile.primaryColor : "#1f5c3b"}
+                  onChange={(e) => update("primaryColor", e.target.value)}
+                  className="h-9 w-12 cursor-pointer rounded-md border border-input bg-background"
+                />
+                <Input value={profile.primaryColor} maxLength={7} onChange={(e) => update("primaryColor", e.target.value)} />
+              </div>
+            </FormField>
+            <FormField label="Official email">
+              <Input type="email" value={profile.contactEmail} onChange={(e) => update("contactEmail", e.target.value)} placeholder="office@school.edu.gh" />
+            </FormField>
+            <FormField label="Official phone">
+              <Input type="tel" maxLength={40} value={profile.contactPhone} onChange={(e) => update("contactPhone", e.target.value)} />
+            </FormField>
+            <div className="flex items-end sm:col-span-2">
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving..." : "Save profile"}
+              </Button>
+            </div>
+          </div>
+        </form>
+      )}
+    </section>
   );
 }
