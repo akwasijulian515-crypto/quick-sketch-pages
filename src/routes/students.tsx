@@ -2263,7 +2263,7 @@ function StudentProfile({
                         <select
                           value={classToAssign}
                           onChange={(event) => setClassToAssign(event.target.value)}
-                          disabled={savingClass || loadingClasses}
+                          disabled={savingClass}
                           className="h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground shadow-sm outline-none transition focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                         >
                           <option value="">Unassigned</option>
@@ -2282,18 +2282,13 @@ function StudentProfile({
                       <button
                         type="submit"
                         disabled={
-                          savingClass || loadingClasses || classToAssign === profile.classId
+                          savingClass || classToAssign === profile.classId
                         }
                         className="admin-btn-secondary w-full sm:w-auto"
                       >
                         {savingClass ? "Changing class…" : "Change class"}
                       </button>
                     </form>
-                    {classError && (
-                      <p role="alert" className="text-xs text-destructive">
-                        Could not load classes: {classError}
-                      </p>
-                    )}
                     <button
                       type="button"
                       onClick={() => {

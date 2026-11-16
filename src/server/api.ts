@@ -1160,6 +1160,51 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     });
   }
 
+  if (url.pathname === "/api/school/profile") {
+    if (request.method !== "GET" && request.method !== "PUT") return json({ error: "Method not allowed" }, 405);
+    const school = await requireSchoolAdminContext(request, env);
+    if (school instanceof Response) return school;
+    const sql = database(env);
+    const toProfile = (row: Record<string, unknown> | undefined) => ({
+      name: String(row?.["name"] ?? ""),
+      subdomain: String(row?.["subdomain"] ?? ""),
+      primaryColor: String(row?.["primary_color"] ?? "#1f5c3b"),
+      crestUrl: row?.["crest_url"] ? String(row["crest_url"]) : "",
+      contactEmail: row?.["contact_email"] ? String(row["contact_email"]) : "",
+      contactPhone: row?.["contact_phone"] ? String(row["contact_phone"]) : "",
+    });
+    if (request.method === "GET") {
+      const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+        tx`select name, subdomain, primary_color, crest_url, contact_email, contact_phone
+           from schools where id = ${school.schoolId}::uuid`);
+      return json({ profile: toProfile(rows[0] as Record<string, unknown> | undefined) });
+    }
+    const payload: unknown = await request.json().catch(() => null);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+      return badRequest("A JSON request body is required");
+    const body = payload as Record<string, unknown>;
+    const text = (key: string) => (typeof body[key] === "string" ? (body[key] as string).trim() : "");
+    const name = text("name");
+    const primaryColor = text("primaryColor");
+    const crestUrl = text("crestUrl");
+    const contactEmail = text("contactEmail");
+    const contactPhone = text("contactPhone");
+    if (name.length < 2 || name.length > 160) return badRequest("School name must be 2 to 160 characters");
+    if (!/^#[0-9a-f]{6}$/i.test(primaryColor)) return badRequest("Brand colour must be a hex code like #1f5c3b");
+    if (crestUrl && !/^(https:\/\/|data:image\/)/i.test(crestUrl)) return badRequest("Badge must be an https link or uploaded image");
+    if (crestUrl.length > 2_000_000) return badRequest("Badge image is too large");
+    if (contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) return badRequest("Enter a valid contact email");
+    if (contactPhone.length > 40) return badRequest("Contact phone is too long");
+    const rows = await withDatabaseContext(sql, { schoolId: school.schoolId }, (tx) =>
+      tx`update schools set name = ${name}, primary_color = ${primaryColor},
+           crest_url = ${crestUrl || null}, contact_email = ${contactEmail || null},
+           contact_phone = ${contactPhone || null}, updated_at = now()
+         where id = ${school.schoolId}::uuid
+         returning name, subdomain, primary_color, crest_url, contact_email, contact_phone`);
+    if (!rows[0]) return json({ error: "Could not save the school profile" }, 500);
+    return json({ ok: true, profile: toProfile(rows[0] as Record<string, unknown>) });
+  }
+
   if (url.pathname === "/api/school/report-template") {
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
     const school = await requireSchoolAdminContext(request, env);
