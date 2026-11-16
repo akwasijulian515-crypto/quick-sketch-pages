@@ -14,6 +14,12 @@ import {
   UserRoundCheck,
   UsersRound,
   ShieldCheck,
+  TrendingUp,
+  CalendarOff,
+  WalletCards,
+  Coins,
+  KeyRound,
+  Palette,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
@@ -42,17 +48,22 @@ const platformNavigation = [
 const schoolAdminNavigation = [
   { label: "Overview", to: "/dashboard", icon: LayoutDashboard, group: "Core" },
   { label: "Students", to: "/students", icon: GraduationCap, group: "Academics" },
-  { label: "Attendance", to: "/attendance-overview", icon: UserRoundCheck, group: "Academics" },
-  { label: "Grades", to: "/grades", icon: ScrollText, group: "Academics" },
-  { label: "Terminal reports", to: "/terminal-reports", icon: ScrollText, group: "Academics" },
   { label: "Classes", to: "/classes", icon: School, group: "Academics" },
   { label: "Teachers", to: "/teachers", icon: UsersRound, group: "Academics" },
-  { label: "Academic setup", to: "/academic-setup", icon: CalendarDays, group: "Academics" },
-  { label: "Payments", to: "/payments", icon: ReceiptText, group: "Finance" },
+  { label: "Attendance", to: "/attendance-overview", icon: UserRoundCheck, group: "Academics" },
+  { label: "Grades", to: "/grades", icon: ScrollText, group: "Academics" },
+  { label: "Terminal reports", to: "/terminal-reports", icon: FileText, group: "Academics" },
+  { label: "Promotions", to: "/school-admin", section: "promotions", icon: TrendingUp, group: "Academics" },
+  { label: "Academic setup", to: "/academic-setup", icon: CalendarDays, group: "Calendar" },
+  { label: "School holidays", to: "/school-admin", section: "calendar", icon: CalendarOff, group: "Calendar" },
   { label: "Daily payments", to: "/daily-payments", icon: Banknote, group: "Finance" },
-  { label: "Financial records", to: "/student-finances", icon: FileText, group: "Finance" },
+  { label: "Payments", to: "/payments", icon: ReceiptText, group: "Finance" },
+  { label: "Financial records", to: "/student-finances", icon: WalletCards, group: "Finance" },
+  { label: "Fee structures", to: "/school-admin", section: "fees", icon: Coins, group: "Finance" },
   { label: "Daily reconciliation", to: "/reconciliation", icon: ShieldCheck, group: "Finance" },
-  { label: "School administration", to: "/school-admin", icon: School, group: "Administration" },
+  { label: "School profile", to: "/school-admin", section: "profile", icon: Building2, group: "Administration" },
+  { label: "Accounts & access", to: "/school-admin", section: "accounts", icon: KeyRound, group: "Administration" },
+  { label: "Report design", to: "/school-admin", section: "reports", icon: Palette, group: "Administration" },
 ] as const;
 
 const parentNavigation = [
@@ -161,13 +172,20 @@ function Sidebar({
         <div className="flex flex-col gap-0.5">
           {links.map((item, index) => {
             const itemHash = "hash" in item ? item.hash : undefined;
+            const itemSection = "section" in item ? item.section : undefined;
+            const currentSection =
+              "section" in location.search && typeof location.search["section"] === "string"
+                ? location.search["section"]
+                : "profile";
             const active =
               parentPortal && item.to === "/parent"
                 ? pathname === item.to &&
                   (itemHash
                     ? location.hash.replace(/^#/, "") === itemHash
                     : !location.hash.replace(/^#/, ""))
-                : pathname === item.to && !(item.to === "/teachers" && viewingSubjects);
+                : itemSection
+                  ? pathname === item.to && currentSection === itemSection
+                  : pathname === item.to && !(item.to === "/teachers" && viewingSubjects);
             const Icon = item.icon;
             const showGroup = index === 0 || links[index - 1]?.group !== item.group;
             return (
@@ -187,6 +205,7 @@ function Sidebar({
                   {...(parentPortal && item.to === "/parent" && itemHash !== undefined
                     ? { hash: itemHash }
                     : {})}
+                  {...(itemSection ? { search: { section: itemSection } } : {})}
                   onClick={onNavigate}
                   className={cn(
                     "flex min-h-10 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-highlight/70",
