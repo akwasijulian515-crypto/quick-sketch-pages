@@ -11,6 +11,10 @@ import type { TerminalReportPdfData } from "@/lib/terminal-report-pdf";
 import { useReportDesign } from "@/lib/report-design";
 import { TerminalReportView } from "@/components/terminal-report-view";
 import {
+  defaultReportCustomizationSettings,
+  type ReportCustomizationSettings,
+} from "@/lib/report-customization";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -130,6 +134,9 @@ function TerminalReportsPage() {
   const [canPublish, setCanPublish] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [reportCustomization, setReportCustomization] = useState(
+    defaultReportCustomizationSettings,
+  );
   const attendanceSaveTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const attendanceSaveVersions = useRef(new Map<string, number>());
   const attendanceSaveRequests = useRef(new Map<string, Promise<void>>());
@@ -168,6 +175,33 @@ function TerminalReportsPage() {
       setLoading(false);
     }
   }, []);
+
+  const loadReportCustomization = useCallback(async () => {
+    const result = await schoolApi<{
+      report_customization_settings?: Partial<ReportCustomizationSettings>;
+    }>("/api/school/report-settings");
+    setReportCustomization({
+      ...defaultReportCustomizationSettings,
+      ...result.report_customization_settings,
+    });
+  }, []);
+
+  useEffect(() => {
+    void loadReportCustomization().catch((loadError: unknown) => {
+      setError(
+        loadError instanceof Error ? loadError.message : "Could not load report customization",
+      );
+    });
+    const refresh = () => {
+      void loadReportCustomization().catch((loadError: unknown) => {
+        setError(
+          loadError instanceof Error ? loadError.message : "Could not refresh report settings",
+        );
+      });
+    };
+    window.addEventListener("report-customization-settings-updated", refresh);
+    return () => window.removeEventListener("report-customization-settings-updated", refresh);
+  }, [loadReportCustomization]);
 
   const loadReports = useCallback(async () => {
     if (!classId || !termId) {
@@ -387,6 +421,13 @@ function TerminalReportsPage() {
     teacherRemark: profiles[report.student_id]?.teacher_remark ?? "",
     headteacherRemark: profiles[report.student_id]?.headteacher_remark ?? "",
     template,
+    headteacherSignatureUrl: reportCustomization.headteacher_signature_url,
+    officialStampUrl: reportCustomization.official_stamp_url,
+    generalAnnouncement: reportCustomization.general_announcement,
+    resumptionDate: reportCustomization.next_term_resumption_date,
+    vacationDate: reportCustomization.vacation_date,
+    showClassPosition: reportCustomization.show_class_position,
+    showSubjectStatistics: reportCustomization.show_subject_statistics,
     promotionStatus: profiles[report.student_id]?.promotion_status ?? "",
     results: report.items.map((item) => ({
       subject: item.subject_name,

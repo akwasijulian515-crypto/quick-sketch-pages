@@ -390,7 +390,7 @@ export function SchoolShell({
   }
 
   return (
-    <div className="relative flex min-h-screen overflow-x-hidden bg-background font-body text-foreground">
+    <div className="relative flex min-h-screen overflow-x-clip bg-background font-body text-foreground">
       <div className="pointer-events-none fixed inset-0 ambient-wash" />
       <div className="fixed inset-y-0 left-0 z-40 hidden h-dvh lg:block">
         <Sidebar
@@ -427,7 +427,7 @@ export function SchoolShell({
         </div>
       ) : null}
       <div className="relative min-w-0 flex-1 lg:ml-60">
-        <header className="sticky top-0 z-30 grid h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 bg-background/75 px-3 backdrop-blur-xl sm:px-6 lg:px-8">
+        <header className="sticky top-0 z-30 grid h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 bg-background/85 px-3 backdrop-blur-xl sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Button
               variant="ghost"

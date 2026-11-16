@@ -38,7 +38,43 @@ export function TerminalReportView({ report, template = "bento" }: { report: Ter
         <p className="report-legend">HP · Highly Proficient &nbsp; P · Proficient &nbsp; AP · Approaching Proficiency &nbsp; D · Developing &nbsp; E · Emerging</p>
         <dl className="report-profile">{[["Conduct", report.conduct], ["Attitude", report.attitude], ["Interest", report.interest]].map(([label, value]) => <div key={label}><dt className="report-label">{label}</dt><dd className="mt-2 text-sm">{value || "—"}</dd></div>)}</dl>
         <div className="report-remarks"><div><h4>Class teacher’s remarks</h4><p>{report.teacherRemark || "—"}</p></div>{report.headteacherRemark && <div><h4>Headteacher’s remarks</h4><p>{report.headteacherRemark}</p></div>}</div>
-        <footer className="report-signatures"><div>Class teacher’s signature</div><div>Headteacher’s signature</div></footer>
+        {(report.generalAnnouncement || report.vacationDate || report.resumptionDate) && (
+          <div className="report-notice">
+            {report.generalAnnouncement && <p>{report.generalAnnouncement}</p>}
+            {(report.vacationDate || report.resumptionDate) && (
+              <p>
+                {report.vacationDate && `Vacation: ${report.vacationDate}`}
+                {report.vacationDate && report.resumptionDate && " · "}
+                {report.resumptionDate && `Resumes: ${report.resumptionDate}`}
+              </p>
+            )}
+          </div>
+        )}
+        <footer className="report-signatures">
+          <div className="report-signature-block">
+            <span className="report-signature-line" />
+            <span>Class teacher’s signature</span>
+          </div>
+          <div className="report-signature-block report-headteacher-signature">
+            {report.headteacherSignatureUrl ? (
+              <img
+                src={report.headteacherSignatureUrl}
+                alt="Headteacher digital signature"
+                className="report-signature-image"
+              />
+            ) : (
+              <span className="report-signature-line report-signature-line-manual" />
+            )}
+            {report.officialStampUrl && (
+              <img
+                src={report.officialStampUrl}
+                alt="Official school stamp"
+                className="report-stamp-image"
+              />
+            )}
+            <span>Headteacher’s signature</span>
+          </div>
+        </footer>
         {design === "gazette" && <p className="report-seal"><Award className="size-4" /> {report.fictional ? "Demonstration school seal" : "School report"}</p>}
       </div>
     </article>

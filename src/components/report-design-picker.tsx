@@ -13,6 +13,10 @@ import { reportDesigns, useReportDesign, type ReportTemplate } from "@/lib/repor
 import { sampleReport } from "@/lib/report-sample";
 import { fetchWithNeonAuth } from "@/auth/client";
 import { TerminalReportView } from "./terminal-report-view";
+import {
+  defaultReportCustomizationSettings,
+  type ReportCustomizationSettings,
+} from "@/lib/report-customization";
 
 export function ReportDesignThumbnail({ template }: { template: ReportTemplate }) {
   return (
@@ -59,11 +63,64 @@ export function ReportDesignPicker() {
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [customization, setCustomization] = useState(defaultReportCustomizationSettings);
   const report = sampleReport(branding);
+  const previewReport = {
+    ...report,
+    headteacherSignatureUrl: customization.headteacher_signature_url,
+    officialStampUrl: customization.official_stamp_url,
+    generalAnnouncement: customization.general_announcement,
+    resumptionDate: customization.next_term_resumption_date,
+    vacationDate: customization.vacation_date,
+  };
 
   useEffect(() => {
     setSelected(template);
   }, [template]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCustomization = async () => {
+      const response = await fetchWithNeonAuth(
+        `/api/school/report-settings?tenant=${encodeURIComponent(branding.subdomain)}`,
+      );
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            report_customization_settings?: Partial<ReportCustomizationSettings>;
+            error?: string;
+          }
+        | null;
+      if (!response.ok)
+        throw new Error(payload?.error ?? "Could not load report customization settings.");
+      if (!cancelled) {
+        setCustomization({
+          ...defaultReportCustomizationSettings,
+          ...payload?.report_customization_settings,
+        });
+      }
+    };
+    void loadCustomization().catch((cause: unknown) => {
+      if (!cancelled)
+        setError(
+          cause instanceof Error ? cause.message : "Could not load report customization settings.",
+        );
+    });
+    const refresh = () => {
+      void loadCustomization().catch((cause: unknown) => {
+        if (!cancelled)
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Could not refresh report customization settings.",
+          );
+      });
+    };
+    window.addEventListener("report-customization-settings-updated", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("report-customization-settings-updated", refresh);
+    };
+  }, [branding.subdomain]);
 
   async function saveAsSchoolDefault() {
     setIsSaving(true);
@@ -107,7 +164,7 @@ export function ReportDesignPicker() {
     setError("");
     try {
       const { downloadTerminalReports } = await import("@/lib/terminal-report-pdf");
-      await downloadTerminalReports([{ ...report, template: selected }]);
+      await downloadTerminalReports([{ ...previewReport, template: selected }]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not download sample.");
     } finally {
@@ -199,7 +256,7 @@ export function ReportDesignPicker() {
               {error}
             </p>
           )}
-          <TerminalReportView report={report} template={selected} />
+          <TerminalReportView report={previewReport} template={selected} />
         </DialogContent>
       </Dialog>
     </section>

@@ -31,6 +31,7 @@ import { SchoolFeeRules } from "@/components/school-fee-rules";
 import { SchoolPromotionReview } from "@/components/school-promotion-review";
 import { PortalAccountSetup } from "@/components/portal-account-setup";
 import { ReportDesignPicker } from "@/components/report-design-picker";
+import { ReportCustomizationSettingsPanel } from "@/components/report-customization-settings";
 
 export const Route = createFileRoute("/school-admin")({
   head: () => ({
@@ -169,7 +170,16 @@ function SchoolAdminPage() {
           />
         </section>
         <SchoolWorkflowSettings />
-        <ReportDesignPicker />
+        <section id="report-card-terminal-records" className="mt-8">
+          <div className="mb-5">
+            <h2 className="font-display text-2xl font-bold">Report Card &amp; Terminal Records</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Set the school-wide report design, policies, and official signatures.
+            </p>
+          </div>
+          <ReportDesignPicker />
+          <ReportCustomizationSettingsPanel />
+        </section>
         <DirectoryManager />
         <PortalAccountSetup />
         <SchoolHolidays />

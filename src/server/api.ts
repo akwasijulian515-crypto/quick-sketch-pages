@@ -915,6 +915,30 @@ function validIsoDate(value: string) {
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
 }
 
+function defaultReportCustomizationSettingsFromColumns(
+  settings: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    grading_scale:
+      settings["report_grading_system"] === "ges_traditional"
+        ? "traditional_30_70"
+        : "nacca_standard",
+    show_class_position: settings["report_show_position"] !== false,
+    show_subject_statistics: settings["report_show_class_benchmarks"] === true,
+    append_bill_slip: settings["report_bill_mode"] !== "none",
+    next_term_resumption_date: settings["report_reopening_date"]
+      ? String(settings["report_reopening_date"]).slice(0, 10)
+      : null,
+    vacation_date: settings["report_vacation_date"]
+      ? String(settings["report_vacation_date"]).slice(0, 10)
+      : null,
+    general_announcement: String(settings["report_institutional_notice"] ?? ""),
+    enable_qr_verification: settings["report_enable_qr"] !== false,
+    include_serial_number: settings["report_enable_serial"] !== false,
+    withhold_unpaid_reports: settings["report_conditional_delivery"] === true,
+  };
+}
+
 function toOrdinal(n: number) {
   const remainder = n % 10;
   const tens = n % 100;
@@ -1165,7 +1189,16 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
   }
 
   if (url.pathname === "/api/school/report-settings") {
-    const school = await requireSchoolAdminContext(request, env);
+    const school =
+      request.method === "GET"
+        ? await requireSchoolContext(request, env, [
+            "school_admin",
+            "teacher",
+            "finance",
+            "parent",
+            "student",
+          ])
+        : await requireSchoolAdminContext(request, env);
     if (school instanceof Response) return school;
     const sql = database(env);
 
@@ -1186,13 +1219,31 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             report_enable_serial,
             report_headteacher_signature_url,
             report_rubber_stamp_url,
-            report_conditional_delivery
+            report_conditional_delivery,
+            report_customization_settings
           from schools
           where id = ${school.schoolId}::uuid
           limit 1
         `,
       );
       const schoolSettings = rows[0] ?? {};
+      const savedCustomization = schoolSettings["report_customization_settings"];
+      const savedObject =
+        savedCustomization &&
+        typeof savedCustomization === "object" &&
+        !Array.isArray(savedCustomization)
+          ? (savedCustomization as Record<string, unknown>)
+          : {};
+      const customizationSettings = {
+        ...defaultReportCustomizationSettingsFromColumns(schoolSettings),
+        ...savedObject,
+        headteacher_signature_url:
+          savedObject["headteacher_signature_url"] ??
+          schoolSettings["report_headteacher_signature_url"] ??
+          null,
+        official_stamp_url:
+          savedObject["official_stamp_url"] ?? schoolSettings["report_rubber_stamp_url"] ?? null,
+      };
       return json({
         report_grading_system: String(schoolSettings["report_grading_system"] ?? "nacca_50_50"),
         report_show_position: schoolSettings["report_show_position"] === true,
@@ -1211,14 +1262,15 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         report_enable_qr: schoolSettings["report_enable_qr"] !== false,
         report_enable_serial: schoolSettings["report_enable_serial"] !== false,
         report_headteacher_signature_url:
-          schoolSettings["report_headteacher_signature_url"] == null
+          customizationSettings["headteacher_signature_url"] == null
             ? null
-            : String(schoolSettings["report_headteacher_signature_url"]),
+            : String(customizationSettings["headteacher_signature_url"]),
         report_rubber_stamp_url:
-          schoolSettings["report_rubber_stamp_url"] == null
+          customizationSettings["official_stamp_url"] == null
             ? null
-            : String(schoolSettings["report_rubber_stamp_url"]),
+            : String(customizationSettings["official_stamp_url"]),
         report_conditional_delivery: schoolSettings["report_conditional_delivery"] === true,
+        report_customization_settings: customizationSettings,
       });
     }
 
@@ -1228,6 +1280,134 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     if (!payload || typeof payload !== "object" || Array.isArray(payload))
       return badRequest("A JSON request body is required");
     const body = payload as Record<string, unknown>;
+    if (
+      "grading_scale" in body ||
+      "show_class_position" in body ||
+      "headteacher_signature_url" in body ||
+      "report_customization_settings" in body
+    ) {
+      const rawSettings =
+        body["report_customization_settings"] &&
+        typeof body["report_customization_settings"] === "object" &&
+        !Array.isArray(body["report_customization_settings"])
+          ? (body["report_customization_settings"] as Record<string, unknown>)
+          : body;
+      const gradingScale = rawSettings["grading_scale"];
+      if (
+        gradingScale !== "nacca_standard" &&
+        gradingScale !== "traditional_30_70" &&
+        gradingScale !== "traditional_40_60"
+      )
+        return badRequest("Choose a supported report grading scale");
+
+      const booleanFields = [
+        "show_class_position",
+        "show_subject_statistics",
+        "append_bill_slip",
+        "enable_qr_verification",
+        "include_serial_number",
+        "withhold_unpaid_reports",
+      ] as const;
+      for (const field of booleanFields) {
+        if (typeof rawSettings[field] !== "boolean")
+          return badRequest(`Choose whether ${field.replaceAll("_", " ")} is enabled`);
+      }
+
+      const dateFields = [
+        "next_term_resumption_date",
+        "vacation_date",
+      ] as const;
+      for (const field of dateFields) {
+        const value = rawSettings[field];
+        if (
+          value !== null &&
+          value !== undefined &&
+          (typeof value !== "string" || !validIsoDate(value))
+        )
+          return badRequest(`Enter a valid ${field.replaceAll("_", " ")}`);
+      }
+
+      const announcement = rawSettings["general_announcement"];
+      if (
+        typeof announcement !== "string" ||
+        announcement.length > 3000
+      )
+        return badRequest("General announcement must be text no longer than 3000 characters");
+
+      const imageFields = [
+        "headteacher_signature_url",
+        "official_stamp_url",
+      ] as const;
+      for (const field of imageFields) {
+        const value = rawSettings[field];
+        if (value === null || value === undefined) continue;
+        if (
+          typeof value !== "string" ||
+          value.length > 410_000 ||
+          !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ||
+          Math.floor(((value.split(",")[1]?.length ?? 0) * 3) / 4) > 300 * 1024
+        )
+          return badRequest(`${field.replaceAll("_", " ")} must be a supported image under 300KB`);
+        if (
+          field === "official_stamp_url" &&
+          !value.startsWith("data:image/png;") &&
+          !value.startsWith("data:image/webp;")
+        )
+          return badRequest("Official stamp must be a PNG or WebP image");
+      }
+
+      const settings = {
+        grading_scale: gradingScale,
+        show_class_position: rawSettings["show_class_position"] as boolean,
+        show_subject_statistics: rawSettings["show_subject_statistics"] as boolean,
+        append_bill_slip: rawSettings["append_bill_slip"] as boolean,
+        next_term_resumption_date:
+          rawSettings["next_term_resumption_date"] == null
+            ? null
+            : String(rawSettings["next_term_resumption_date"]),
+        vacation_date:
+          rawSettings["vacation_date"] == null ? null : String(rawSettings["vacation_date"]),
+        general_announcement: announcement,
+        enable_qr_verification: rawSettings["enable_qr_verification"] as boolean,
+        include_serial_number: rawSettings["include_serial_number"] as boolean,
+        withhold_unpaid_reports: rawSettings["withhold_unpaid_reports"] as boolean,
+        headteacher_signature_url:
+          typeof rawSettings["headteacher_signature_url"] === "string"
+            ? rawSettings["headteacher_signature_url"]
+            : null,
+        official_stamp_url:
+          typeof rawSettings["official_stamp_url"] === "string"
+            ? rawSettings["official_stamp_url"]
+            : null,
+      };
+
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) => tx`
+          update schools
+          set report_customization_settings = ${JSON.stringify(settings)}::jsonb,
+              report_grading_system = case
+                when ${settings.grading_scale} = 'nacca_standard' then 'nacca_50_50'
+                else 'ges_traditional'
+              end,
+              report_show_position = ${settings.show_class_position},
+              report_show_class_benchmarks = ${settings.show_subject_statistics},
+              report_bill_mode = case when ${settings.append_bill_slip} then 'embedded_footer' else 'none' end,
+              report_vacation_date = ${settings.vacation_date}::date,
+              report_reopening_date = ${settings.next_term_resumption_date}::date,
+              report_institutional_notice = ${settings.general_announcement},
+              report_enable_qr = ${settings.enable_qr_verification},
+              report_enable_serial = ${settings.include_serial_number},
+              report_conditional_delivery = ${settings.withhold_unpaid_reports}
+          where id = ${school.schoolId}::uuid
+          returning report_customization_settings
+        `,
+      );
+      if (!rows[0]) return json({ error: "School report settings were not saved" }, 500);
+      return json({ report_customization_settings: settings });
+    }
+
     const reportGradingSystem = body["report_grading_system"];
     const reportShowPosition = body["report_show_position"];
     const reportShowClassBenchmarks = body["report_show_class_benchmarks"];
@@ -2403,6 +2583,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                     'attendance_total', r.attendance_total,
                     'teacher_remark', r.teacher_remark,
                     'headteacher_remark', r.headteacher_remark,
+                    'term_balance_due', coalesce((
+                      select greatest(sum(i.amount_due - coalesce(paid.paid_amount, 0)), 0)::numeric(12,2)
+                      from invoices i
+                      join class_fees cf on cf.id = i.class_fee_id and cf.school_id = i.school_id
+                      left join lateral (
+                        select sum(p.amount) filter (where p.status = 'verified') as paid_amount
+                        from payments p
+                        where p.school_id = i.school_id and p.invoice_id = i.id
+                      ) paid on true
+                      where i.school_id = r.school_id and i.student_id = r.student_id
+                        and i.status <> 'void' and cf.term_id = r.term_id
+                    ), 0),
                     'items', coalesce((
                       select jsonb_agg(jsonb_build_object(
                         'subject_name', s.name, 'total_score', i.total_score,

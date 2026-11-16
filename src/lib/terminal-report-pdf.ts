@@ -1,4 +1,4 @@
-import { jsPDF } from "jspdf";
+import { GState, jsPDF } from "jspdf";
 import { resolveReportTemplate, type ReportTemplate } from "./report-design";
 
 export type TerminalReportSubject = {
@@ -27,6 +27,13 @@ export type TerminalReportPdfData = {
   interest: string;
   teacherRemark: string;
   headteacherRemark?: string;
+  headteacherSignatureUrl?: string | null;
+  officialStampUrl?: string | null;
+  generalAnnouncement?: string;
+  resumptionDate?: string | null;
+  vacationDate?: string | null;
+  showClassPosition?: boolean;
+  showSubjectStatistics?: boolean;
   template?: ReportTemplate;
   fictional?: boolean;
   promotionStatus?: string;
@@ -71,23 +78,27 @@ function singleLine(doc: jsPDF, value: string, width: number) {
   return lines.length > 1 ? `${line.slice(0, -1)}…` : line;
 }
 
-async function loadCrestImage(crestUrl: string | null | undefined) {
-  if (!crestUrl) return null;
+async function loadReportImage(
+  imageUrl: string | null | undefined,
+  description: string,
+  maximumDimension = 512,
+) {
+  if (!imageUrl) return null;
   const image = new Image();
   image.crossOrigin = "anonymous";
-  image.src = crestUrl;
+  image.src = imageUrl;
   try {
     await image.decode();
   } catch {
-    throw new Error("The school badge could not be loaded for the terminal report.");
+    throw new Error(`The ${description} could not be loaded for the terminal report.`);
   }
 
-  const scale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
+  const scale = Math.min(1, maximumDimension / Math.max(image.naturalWidth, image.naturalHeight));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("Could not prepare the school badge for the terminal report.");
+  if (!context) throw new Error(`Could not prepare the ${description} for the terminal report.`);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL("image/png");
 }
@@ -97,9 +108,15 @@ export async function downloadTerminalReports(reports: TerminalReportPdfData[]) 
   if (!first) return;
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
   for (const [index, report] of reports.entries()) {
-    const crestImage = await loadCrestImage(report.crestUrl);
+    const crestImage = await loadReportImage(report.crestUrl, "school badge");
+    const signatureImage = await loadReportImage(
+      report.headteacherSignatureUrl,
+      "headteacher signature",
+      600,
+    );
+    const stampImage = await loadReportImage(report.officialStampUrl, "official school stamp", 400);
     if (index > 0) doc.addPage();
-    drawSinglePageReport(doc, report, crestImage);
+    drawSinglePageReport(doc, report, crestImage, signatureImage, stampImage);
   }
   const filename =
     reports.length === 1
@@ -112,6 +129,8 @@ function drawSinglePageReport(
   doc: jsPDF,
   report: TerminalReportPdfData,
   crestImage: string | null,
+  signatureImage: string | null,
+  stampImage: string | null,
 ) {
   const template = resolveReportTemplate(report.template);
   const { deep, pale } = reportPalette(report.primaryColor);
@@ -387,6 +406,19 @@ function drawSinglePageReport(
   doc.setLineWidth(0.3);
   doc.line(18, signatureY, 82, signatureY);
   doc.line(128, signatureY, 192, signatureY);
+  if (signatureImage) {
+    const dimensions = doc.getImageProperties(signatureImage);
+    const scale = Math.min(42 / dimensions.width, 12 / dimensions.height);
+    const width = dimensions.width * scale;
+    const height = dimensions.height * scale;
+    doc.addImage(signatureImage, "PNG", 145 - width / 2, signatureY - height - 1, width, height);
+  }
+  if (stampImage) {
+    doc.saveGraphicsState();
+    doc.setGState(new GState({ opacity: 0.62 }));
+    doc.addImage(stampImage, "PNG", 173, signatureY - 17, 18, 18);
+    doc.restoreGraphicsState();
+  }
   doc.setFont(font, "normal");
   doc.setFontSize(7);
   doc.setTextColor(...ink);

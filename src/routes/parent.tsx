@@ -18,6 +18,10 @@ import { useReportDesign } from "@/lib/report-design";
 import type { TerminalReportPdfData } from "@/lib/terminal-report-pdf";
 import { TerminalReportView } from "@/components/terminal-report-view";
 import {
+  defaultReportCustomizationSettings,
+  type ReportCustomizationSettings,
+} from "@/lib/report-customization";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -63,6 +67,7 @@ type PublishedReport = {
   term_name: string;
   academic_year_name: string;
   published_at: string;
+  term_balance_due?: number | string;
   conduct: string | null;
   attitude: string | null;
   interest: string | null;
@@ -125,6 +130,9 @@ function ParentPortal() {
   const [error, setError] = useState("");
   const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState("");
+  const [reportCustomization, setReportCustomization] = useState(
+    defaultReportCustomizationSettings,
+  );
   const isMounted = useRef(false);
 
   useEffect(() => {
@@ -137,12 +145,19 @@ function ParentPortal() {
   const refreshPortalData = useCallback(async () => {
     setError("");
     try {
-      const result = await portalApi<{ children: Child[]; recent_payments: Payment[] }>(
-        "/api/school/portal-data",
-      );
+      const [result, customization] = await Promise.all([
+        portalApi<{ children: Child[]; recent_payments: Payment[] }>("/api/school/portal-data"),
+        portalApi<{ report_customization_settings?: Partial<ReportCustomizationSettings> }>(
+          "/api/school/report-settings",
+        ),
+      ]);
       if (!isMounted.current) return;
       setChildren(result.children);
       setPayments(result.recent_payments);
+      setReportCustomization({
+        ...defaultReportCustomizationSettings,
+        ...customization.report_customization_settings,
+      });
     } catch (loadError) {
       if (!isMounted.current) return;
       setError(loadError instanceof Error ? loadError.message : "Could not load family records");
@@ -172,6 +187,13 @@ function ParentPortal() {
     return () => window.removeEventListener("focus", refreshWhenFocused);
   }, [refreshPortalData]);
 
+  useEffect(() => {
+    const refreshCustomization = () => void refreshPortalData();
+    window.addEventListener("report-customization-settings-updated", refreshCustomization);
+    return () =>
+      window.removeEventListener("report-customization-settings-updated", refreshCustomization);
+  }, [refreshPortalData]);
+
   const outstandingBalance = useMemo(
     () => children.reduce((sum, child) => sum + Number(child.balance_due), 0),
     [children],
@@ -199,6 +221,13 @@ function ParentPortal() {
       interest: report.interest ?? "",
       teacherRemark: report.teacher_remark ?? "",
       headteacherRemark: report.headteacher_remark ?? "",
+      headteacherSignatureUrl: reportCustomization.headteacher_signature_url,
+      officialStampUrl: reportCustomization.official_stamp_url,
+      generalAnnouncement: reportCustomization.general_announcement,
+      resumptionDate: reportCustomization.next_term_resumption_date,
+      vacationDate: reportCustomization.vacation_date,
+      showClassPosition: reportCustomization.show_class_position,
+      showSubjectStatistics: reportCustomization.show_subject_statistics,
       results: report.items.map((item) => ({
         subject: item.subject_name,
         score: Number(item.total_score ?? 0),
@@ -214,6 +243,13 @@ function ParentPortal() {
   }
 
   async function downloadReport(child: Child, report: PublishedReport) {
+    const balanceDue = Number(report.term_balance_due ?? child.balance_due);
+    if (reportCustomization.withhold_unpaid_reports && balanceDue > 0) {
+      setDownloadError(
+        `This report is withheld because ${balanceDue.toFixed(2)} ${currency} remains due for the term.`,
+      );
+      return;
+    }
     setDownloadingReportId(report.id);
     setDownloadError("");
     try {
