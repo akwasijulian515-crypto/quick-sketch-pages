@@ -814,7 +814,7 @@ function SchoolHolidays() {
   );
 }
 
-export function DirectoryManager() {
+function DirectoryManager() {
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [teachers, setTeachers] = useState<ClassTeacher[]>([]);
