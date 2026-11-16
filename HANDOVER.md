@@ -118,6 +118,9 @@ print, or share its values.
    Vercel only. The app sends school-admin, staff, parent, and student
    activation invitations through SMTP. When SMTP settings are absent, the app
    can use Resend if `RESEND_API_KEY` and `RESEND_FROM_EMAIL` are configured.
+   New school signup notifications go to active Super Admin accounts; optionally
+   add extra recipients with the server-side
+   `PLATFORM_SIGNUP_NOTIFICATION_EMAILS` variable (comma- or semicolon-separated).
    Verify delivery with a test invitation after setting the environment
    variables.
 6. **Vercel env audit:** Confirm production and preview scopes for
@@ -145,6 +148,8 @@ Expected production settings for the selected approach:
 - `PLATFORM_ADMIN_TOKEN` — long randomly generated secret, distinct from local
   or previously shared values.
 - `ROOT_DOMAIN` — leave unset for Vercel links using `?tenant=`.
+- `PLATFORM_SIGNUP_NOTIFICATION_EMAILS` — optional extra recipients for new
+  school signup notifications.
 - Optional invitations: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`.
 
 Use only server-side variables for database/admin secrets. Never prefix secrets

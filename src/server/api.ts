@@ -1430,23 +1430,36 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         sql,
         { schoolId: school.schoolId },
         (tx) => tx`
-          update schools
-          set report_customization_settings = ${JSON.stringify(settings)}::jsonb,
-              report_grading_system = case
-                when ${settings.grading_scale} = 'nacca_standard' then 'nacca_50_50'
-                else 'ges_traditional'
-              end,
-              report_show_position = ${settings.show_class_position},
-              report_show_class_benchmarks = ${settings.show_subject_statistics},
-              report_bill_mode = case when ${settings.append_bill_slip} then 'embedded_footer' else 'none' end,
-              report_vacation_date = ${settings.vacation_date}::date,
-              report_reopening_date = ${settings.next_term_resumption_date}::date,
-              report_institutional_notice = ${settings.general_announcement},
-              report_enable_qr = ${settings.enable_qr_verification},
-              report_enable_serial = ${settings.include_serial_number},
-              report_conditional_delivery = ${settings.withhold_unpaid_reports}
-          where id = ${school.schoolId}::uuid
-          returning report_customization_settings
+          with updated_school as (
+            update schools
+            set report_customization_settings = ${JSON.stringify(settings)}::jsonb,
+                report_grading_system = case
+                  when ${settings.grading_scale} = 'nacca_standard' then 'nacca_50_50'
+                  else 'ges_traditional'
+                end,
+                report_show_position = ${settings.show_class_position},
+                report_show_class_benchmarks = ${settings.show_subject_statistics},
+                report_bill_mode = case when ${settings.append_bill_slip} then 'embedded_footer' else 'none' end,
+                report_vacation_date = ${settings.vacation_date}::date,
+                report_reopening_date = ${settings.next_term_resumption_date}::date,
+                report_institutional_notice = ${settings.general_announcement},
+                report_enable_qr = ${settings.enable_qr_verification},
+                report_enable_serial = ${settings.include_serial_number},
+                report_conditional_delivery = ${settings.withhold_unpaid_reports}
+            where id = ${school.schoolId}::uuid
+            returning report_customization_settings
+          ),
+          synced_workflow as (
+            insert into school_workflow_settings (school_id, append_bill_to_report, updated_by_user_id)
+            select ${school.schoolId}::uuid, ${settings.append_bill_slip}, ${school.userId}::uuid
+            from updated_school
+            on conflict (school_id) do update
+              set append_bill_to_report = excluded.append_bill_to_report,
+                  updated_by_user_id = excluded.updated_by_user_id,
+                  updated_at = now()
+            returning school_id
+          )
+          select report_customization_settings from updated_school
         `,
       );
       if (!rows[0]) return json({ error: "School report settings were not saved" }, 500);
@@ -1812,6 +1825,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     "/api/school/students": { GET: ["school_admin", "teacher", "finance"] },
     "/api/school/attendance": { GET: ["school_admin", "teacher"], POST: ["teacher"] },
     "/api/school/fees": { GET: ["school_admin", "finance"], POST: ["school_admin"] },
+    "/api/school/term-billing/preview": { POST: ["school_admin", "finance"] },
+    "/api/school/term-billing/generate": { POST: ["school_admin", "finance"] },
+    "/api/school/admission-fees/preview": { POST: ["school_admin", "finance"] },
+    "/api/school/admission-fees/generate": { POST: ["school_admin", "finance"] },
     "/api/school/payments": { GET: ["school_admin", "finance"], POST: ["school_admin", "finance"] },
     "/api/school/other-payments": {
       GET: ["school_admin", "finance"],
@@ -1963,6 +1980,578 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       return json({ holiday: rows[0] });
     }
 
+    if (
+      url.pathname === "/api/school/term-billing/preview" ||
+      url.pathname === "/api/school/term-billing/generate" ||
+      url.pathname === "/api/school/admission-fees/preview" ||
+      url.pathname === "/api/school/admission-fees/generate"
+    ) {
+      const payload: unknown = await request.json().catch(() => null);
+      if (!payload || typeof payload !== "object")
+        return badRequest("A JSON request body is required");
+      const body = payload as Record<string, unknown>;
+      const classId = body["class_id"];
+      const targetTermId = body["target_term_id"];
+      const billType =
+        url.pathname.startsWith("/api/school/admission-fees/")
+          ? "admission"
+          : body["bill_type"] ?? "standard";
+      if (!uuidOrNull(classId) || !classId || !uuidOrNull(targetTermId) || !targetTermId)
+        return badRequest("Choose a valid target class and term");
+      if (billType !== "standard" && billType !== "admission")
+        return badRequest("Choose a supported bill type");
+
+      const rawAdjustments = body["adjustments"] ?? [];
+      if (!Array.isArray(rawAdjustments) || rawAdjustments.length > 2000)
+        return badRequest("Adjustments must be a list of at most 2,000 learners");
+      const adjustments = new Map<string, number>();
+      for (const value of rawAdjustments) {
+        if (!value || typeof value !== "object") return badRequest("Invalid billing adjustment");
+        const adjustment = value as Record<string, unknown>;
+        const studentId = adjustment["student_id"];
+        const amount =
+          typeof adjustment["amount"] === "number" ? adjustment["amount"] : Number(adjustment["amount"]);
+        if (
+          !uuidOrNull(studentId) ||
+          !studentId ||
+          !Number.isFinite(amount) ||
+          Math.abs(amount) > 1_000_000 ||
+          Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-8
+        )
+          return badRequest("Each adjustment requires a valid learner and amount");
+        if (adjustments.has(studentId)) return badRequest("A learner may only have one adjustment");
+        adjustments.set(studentId, amount);
+      }
+
+      const savedSnapshots = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) => tx`
+          select snapshot.student_id, student.first_name, student.last_name,
+                 student.admission_number, class.name as class_name,
+                 snapshot.target_term_id, snapshot.source_term_id,
+                 snapshot.base_bill_amount, snapshot.arrears_amount,
+                 snapshot.daily_arrears_amount, snapshot.adjustment_amount,
+                 snapshot.total_amount_due, snapshot.line_items,
+                 coalesce(snapshot.line_items->>'is_new_admission', 'false')::boolean as is_new_admission,
+                 coalesce(snapshot.line_items->>'existing_base', '0')::numeric as existing_base,
+                 coalesce(snapshot.line_items->>'new_base', '0')::numeric as new_base,
+                 coalesce(snapshot.line_items->>'prior_arrears', '0')::numeric as prior_arrears,
+                 coalesce(snapshot.line_items->>'pending_payment_count', '0')::int as pending_payment_count,
+                 coalesce(snapshot.line_items->>'currency', 'GHS') as currency
+          from term_bill_snapshots snapshot
+          join students student on student.id = snapshot.student_id
+            and student.school_id = snapshot.school_id
+          join classes class on class.id = snapshot.target_class_id
+            and class.school_id = snapshot.school_id
+          where snapshot.school_id = ${school.schoolId}::uuid
+            and snapshot.target_class_id = ${classId}::uuid
+            and snapshot.target_term_id = ${targetTermId}::uuid
+            and snapshot.bill_type = ${billType}
+          order by student.last_name, student.first_name, student.admission_number
+        `,
+      );
+      if (savedSnapshots.length > 0) {
+        if (!url.pathname.endsWith("/preview"))
+          return json({ error: "Bills for this learner group and term are already locked" }, 409);
+        const savedBills = savedSnapshots.map((row) => ({
+          student_id: String(row["student_id"]),
+          name: `${String(row["first_name"])} ${String(row["last_name"])}`,
+          admission_number: row["admission_number"] ?? null,
+          class_name: row["class_name"],
+          target_term_id: String(row["target_term_id"]),
+          source_term_id: row["source_term_id"] ? String(row["source_term_id"]) : null,
+          is_new_admission: row["is_new_admission"] === true,
+          currency: String(row["currency"] ?? "GHS"),
+          existing_base: Number(row["existing_base"] ?? 0),
+          new_base: Number(row["new_base"] ?? 0),
+          existing_arrears: Number(row["arrears_amount"] ?? 0) - Number(row["prior_arrears"] ?? 0) -
+            Number(row["daily_arrears_amount"] ?? 0),
+          prior_arrears: Number(row["prior_arrears"] ?? 0),
+          daily_arrears: Number(row["daily_arrears_amount"] ?? 0),
+          pending_payment_count: Number(row["pending_payment_count"] ?? 0),
+          adjustment: Number(row["adjustment_amount"] ?? 0),
+          total_amount_due: Number(row["total_amount_due"] ?? 0),
+          line_items: row["line_items"],
+        }));
+        return json({
+          bills: savedBills,
+          blocked_by_pending_payments: false,
+          locked: true,
+        });
+      }
+
+      const previewRows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) => tx`
+          with target as materialized (
+            select t.id as term_id, t.academic_year_id, t.starts_on, t.ends_on,
+                   c.id as class_id, c.name as class_name,
+                   previous.id as source_term_id, previous.starts_on as source_starts_on,
+                   previous.ends_on as source_ends_on,
+                   previous.academic_year_id as source_academic_year_id
+            from terms t
+            join classes c on c.id = ${classId}::uuid and c.school_id = t.school_id
+              and c.academic_year_id = t.academic_year_id
+            left join lateral (
+              select prior.id, prior.starts_on, prior.ends_on, prior.academic_year_id
+              from terms prior
+              where prior.school_id = t.school_id and prior.ends_on < t.starts_on
+              order by prior.ends_on desc, prior.starts_on desc
+              limit 1
+            ) previous on true
+            where t.school_id = ${school.schoolId}::uuid
+              and t.id = ${targetTermId}::uuid
+          ),
+          roster as materialized (
+            select distinct on (st.id)
+                   st.id as student_id, st.first_name, st.last_name, st.admission_number,
+                   not exists (
+                     select 1 from class_enrollments earlier
+                     where earlier.school_id = st.school_id
+                       and earlier.student_id = st.id
+                       and earlier.starts_on < target.starts_on
+                   ) as is_new_admission,
+                   target.*
+            from target
+            join class_enrollments enrollment
+              on enrollment.school_id = ${school.schoolId}::uuid
+              and enrollment.class_id = target.class_id
+              and enrollment.starts_on <= target.ends_on
+              and coalesce(enrollment.ends_on, 'infinity'::date) >= target.starts_on
+            join students st on st.id = enrollment.student_id
+              and st.school_id = enrollment.school_id and st.active
+            order by st.id, enrollment.starts_on desc
+          ),
+          fee_lines as materialized (
+            select roster.student_id, f.id as fee_id, f.fee_type, f.description,
+                   f.amount, f.currency, i.id as invoice_id,
+                   greatest(coalesce(i.amount_due, f.amount)
+                     - coalesce(paid.amount, 0), 0) as assessed_base,
+                   coalesce(paid.pending_count, 0) as pending_count
+            from roster
+            join class_fees f on f.school_id = ${school.schoolId}::uuid
+              and f.class_id = roster.class_id
+              and f.academic_year_id = roster.academic_year_id
+              and (f.term_id is null or f.term_id = roster.term_id)
+              and f.is_active and f.include_in_bill
+              and f.fee_type not in ('daily', 'daily_feeding')
+              and (
+                (${billType} = 'standard' and f.billing_target <> 'new_admissions_only'
+                  and (f.billing_target = 'all'
+                    or (f.billing_target = 'returning_only' and not roster.is_new_admission)))
+                or (${billType} = 'admission' and f.billing_target = 'new_admissions_only'
+                  and roster.is_new_admission)
+              )
+            left join invoices i on i.school_id = f.school_id and i.class_fee_id = f.id
+              and i.student_id = roster.student_id and i.status <> 'void'
+            left join lateral (
+              select sum(payment.amount) filter (where payment.status = 'verified') as amount,
+                     count(*) filter (
+                       where payment.status = 'pending'
+                         and payment.category in ('school_fee', 'examination_fee', 'other')
+                     )::int as pending_count
+              from payments payment
+              where payment.school_id = i.school_id and payment.invoice_id = i.id
+                and payment.status in ('verified', 'pending')
+            ) paid on true
+          ),
+          fee_totals as (
+            select roster.student_id,
+                   coalesce(sum(fee_lines.assessed_base) filter (where fee_lines.invoice_id is not null), 0) as existing_base,
+                   coalesce(sum(fee_lines.amount) filter (where fee_lines.invoice_id is null), 0) as new_base,
+                   coalesce(sum(fee_lines.pending_count), 0)::int as pending_count,
+                   coalesce(jsonb_agg(jsonb_build_object(
+                     'fee_id', fee_lines.fee_id, 'fee_type', fee_lines.fee_type,
+                     'description', fee_lines.description, 'amount', fee_lines.amount,
+                     'billable_amount', case when fee_lines.invoice_id is not null
+                       then fee_lines.assessed_base else fee_lines.amount end,
+                     'currency', fee_lines.currency, 'invoice_id', fee_lines.invoice_id
+                   )) filter (where fee_lines.fee_id is not null), '[]'::jsonb) as fee_items,
+                   coalesce(jsonb_agg(to_jsonb(fee_lines.invoice_id))
+                     filter (where fee_lines.invoice_id is not null), '[]'::jsonb) as existing_invoice_ids
+            from roster
+            left join fee_lines on fee_lines.student_id = roster.student_id
+            group by roster.student_id
+          ),
+          prior_invoices as materialized (
+            select roster.student_id, invoice.id as invoice_id, source_term.id as source_term_id,
+                   invoice.currency, coalesce(paid.pending_count, 0)::int as pending_count,
+                   greatest(invoice.amount_due - coalesce(paid.amount, 0), 0) as balance
+            from roster
+            join invoices invoice on invoice.school_id = ${school.schoolId}::uuid
+              and invoice.student_id = roster.student_id and invoice.status <> 'void'
+              and ${billType} = 'standard'
+              and invoice.rolled_forward_at is null
+            join class_fees source_fee on source_fee.id = invoice.class_fee_id
+              and source_fee.school_id = invoice.school_id
+            join terms source_term on source_term.id = source_fee.term_id
+              and source_term.school_id = source_fee.school_id
+              and source_term.ends_on < roster.starts_on
+            left join lateral (
+              select sum(payment.amount) filter (where payment.status = 'verified') as amount,
+                     count(*) filter (
+                       where payment.status = 'pending'
+                         and payment.category in ('school_fee', 'examination_fee', 'other')
+                     )::int as pending_count
+              from payments payment
+              where payment.school_id = invoice.school_id
+                and payment.invoice_id = invoice.id
+                and payment.status in ('verified', 'pending')
+            ) paid on true
+          ),
+          prior_totals as (
+            select roster.student_id,
+                   coalesce(sum(prior_invoices.balance), 0) as amount,
+                   coalesce(sum(prior_invoices.pending_count), 0)::int as pending_count,
+                   coalesce(jsonb_agg(to_jsonb(prior_invoices.invoice_id))
+                     filter (where prior_invoices.balance > 0), '[]'::jsonb) as source_invoice_ids,
+                   coalesce(jsonb_agg(jsonb_build_object(
+                     'invoice_id', prior_invoices.invoice_id,
+                     'source_term_id', prior_invoices.source_term_id,
+                     'amount', prior_invoices.balance
+                   )) filter (where prior_invoices.balance > 0), '[]'::jsonb) as source_invoice_items
+            from roster
+            left join prior_invoices on prior_invoices.student_id = roster.student_id
+            group by roster.student_id
+          ),
+          daily_totals as (
+            select roster.student_id,
+                   coalesce(sum(daily_fee.amount), 0) as amount,
+                   count(*) filter (
+                     where attendance_session.id is not null
+                       and exists (
+                         select 1 from payments pending_payment
+                         where pending_payment.school_id = ${school.schoolId}::uuid
+                           and pending_payment.student_id = roster.student_id
+                           and pending_payment.daily_fee_date = attendance_session.attendance_date
+                           and pending_payment.category = 'daily_fee'
+                           and pending_payment.status = 'pending'
+                       )
+                   )::int as pending_count,
+                   coalesce(jsonb_agg(distinct daily_fee.currency)
+                     filter (where daily_fee.id is not null), '[]'::jsonb) as currencies,
+                   coalesce(jsonb_agg(jsonb_build_object(
+                     'date', attendance_session.attendance_date,
+                     'amount', daily_fee.amount,
+                     'class_id', attendance_session.class_id
+                   )) filter (where daily_fee.id is not null), '[]'::jsonb) as items
+            from roster
+            left join attendance_records attendance_record
+              on attendance_record.school_id = ${school.schoolId}::uuid
+              and attendance_record.student_id = roster.student_id
+              and attendance_record.status in ('present', 'late')
+            left join attendance_sessions attendance_session
+              on attendance_session.id = attendance_record.attendance_session_id
+              and attendance_session.school_id = attendance_record.school_id
+              and roster.source_starts_on is not null
+              and attendance_session.attendance_date between roster.source_starts_on and roster.source_ends_on
+            left join class_fees daily_fee on daily_fee.school_id = ${school.schoolId}::uuid
+              and daily_fee.class_id = attendance_session.class_id
+              and daily_fee.academic_year_id = roster.source_academic_year_id
+              and daily_fee.term_id is null and daily_fee.fee_type = 'daily'
+              and daily_fee.is_active and daily_fee.include_in_bill
+              and (
+                daily_fee.billing_target = 'all'
+                or (daily_fee.billing_target = 'new_admissions_only' and roster.is_new_admission)
+                or (daily_fee.billing_target = 'returning_only' and not roster.is_new_admission)
+              )
+              and ${billType} = 'standard'
+            where attendance_session.id is null
+              or (
+                not exists (
+                  select 1 from school_holidays holiday
+                  where holiday.school_id = ${school.schoolId}::uuid
+                    and holiday.holiday_date = attendance_session.attendance_date
+                )
+                and not exists (
+                  select 1 from payments payment
+                  where payment.school_id = ${school.schoolId}::uuid
+                    and payment.student_id = roster.student_id
+                    and payment.daily_fee_date = attendance_session.attendance_date
+                    and payment.category = 'daily_fee' and payment.status = 'verified'
+                )
+              )
+            group by roster.student_id
+          ),
+          currency_rows as (
+            select student_id, currency::text as currency from fee_lines
+            union
+            select student_id, currency::text as currency from prior_invoices where balance > 0
+            union
+            select daily_totals.student_id, daily_currency.value
+            from daily_totals
+            cross join lateral jsonb_array_elements_text(daily_totals.currencies) daily_currency(value)
+          ),
+          currency_totals as (
+            select student_id, count(distinct currency)::int as currency_count,
+                   min(currency) as currency
+            from currency_rows
+            group by student_id
+          )
+          select roster.student_id, roster.first_name, roster.last_name,
+                 roster.admission_number, roster.class_name, roster.term_id,
+                 roster.term_id as target_term_id, roster.source_term_id,
+                 roster.is_new_admission,
+                 coalesce(fee_totals.existing_base, 0) as existing_base,
+                 coalesce(fee_totals.new_base, 0) as new_base,
+                 coalesce(fee_totals.existing_arrears, 0) as existing_arrears,
+                 coalesce(prior_totals.amount, 0) as prior_arrears,
+                 coalesce(daily_totals.amount, 0) as daily_arrears,
+                 coalesce(fee_totals.pending_count, 0)
+                   + coalesce(prior_totals.pending_count, 0)
+                   + coalesce(daily_totals.pending_count, 0) as pending_payment_count,
+                 coalesce(fee_totals.fee_items, '[]'::jsonb) as fee_items,
+                 coalesce(daily_totals.items, '[]'::jsonb) as daily_items,
+                 coalesce(fee_totals.existing_invoice_ids, '[]'::jsonb) as existing_invoice_ids,
+                 coalesce(prior_totals.source_invoice_ids, '[]'::jsonb) as source_invoice_ids,
+                 coalesce(prior_totals.source_invoice_items, '[]'::jsonb) as source_invoice_items,
+                 coalesce(currency_totals.currency_count, 0) as currency_count,
+                 currency_totals.currency,
+                 roster.source_starts_on, roster.source_ends_on
+          from roster
+          left join fee_totals on fee_totals.student_id = roster.student_id
+          left join prior_totals on prior_totals.student_id = roster.student_id
+          left join daily_totals on daily_totals.student_id = roster.student_id
+          left join currency_totals on currency_totals.student_id = roster.student_id
+          order by roster.last_name, roster.first_name, roster.admission_number
+        `,
+      );
+      if (previewRows.length === 0)
+        return json({ error: "No active learners are enrolled in this class for the selected term" }, 404);
+
+      const rosterIds = new Set(previewRows.map((row) => String(row["student_id"])));
+      if ([...adjustments.keys()].some((studentId) => !rosterIds.has(studentId)))
+        return badRequest("An adjustment references a learner outside the selected class and term");
+
+      const records = [];
+      for (const row of previewRows) {
+        const studentId = String(row["student_id"]);
+        const existingBase = Number(row["existing_base"] ?? 0);
+        const newBase = Number(row["new_base"] ?? 0);
+        const existingArrears = 0;
+        const priorArrears = Number(row["prior_arrears"] ?? 0);
+        const dailyArrears = Number(row["daily_arrears"] ?? 0);
+        const pendingPaymentCount = Number(row["pending_payment_count"] ?? 0);
+        const adjustment = adjustments.get(studentId) ?? 0;
+        if (Number(row["currency_count"] ?? 0) > 1)
+          return json({ error: `Billing currencies do not match for learner ${studentId}` }, 409);
+        if (adjustment < -newBase)
+          return badRequest("An adjustment cannot reduce charges already invoiced or exceed new fees");
+        const total =
+          Math.round(
+            (existingBase + newBase + existingArrears + priorArrears + dailyArrears + adjustment) * 100,
+          ) / 100;
+        if (total < 0) return badRequest("A billing adjustment cannot make the learner's bill negative");
+        records.push({
+          student_id: studentId,
+          name: `${String(row["first_name"])} ${String(row["last_name"])}`,
+          admission_number: row["admission_number"] ?? null,
+          class_name: row["class_name"],
+          target_term_id: String(row["target_term_id"]),
+          source_term_id: row["source_term_id"] ? String(row["source_term_id"]) : null,
+          is_new_admission: row["is_new_admission"] === true,
+          currency: String(row["currency"] ?? "GHS").trim(),
+          existing_base: existingBase,
+          new_base: newBase,
+          existing_arrears: existingArrears,
+          prior_arrears: priorArrears,
+          daily_arrears: dailyArrears,
+          pending_payment_count: pendingPaymentCount,
+          adjustment,
+          total_amount_due: total,
+          line_items: {
+            currency: String(row["currency"] ?? "GHS").trim(),
+            fees: row["fee_items"] ?? [],
+            daily: row["daily_items"] ?? [],
+            existing_invoice_ids: row["existing_invoice_ids"] ?? [],
+            source_invoice_ids: row["source_invoice_ids"] ?? [],
+            source_invoice_items: row["source_invoice_items"] ?? [],
+            existing_base: existingBase,
+            new_base: newBase,
+            existing_arrears: existingArrears,
+            prior_arrears: priorArrears,
+            pending_payment_count: pendingPaymentCount,
+            is_new_admission: row["is_new_admission"] === true,
+          },
+        });
+      }
+
+      if (url.pathname.endsWith("/preview"))
+        return json({
+          bills: records,
+          blocked_by_pending_payments: records.some((record) => record.pending_payment_count > 0),
+        });
+      if (records.some((record) => record.pending_payment_count > 0))
+        return json(
+          { error: "Review pending payments before generating term bills" },
+          409,
+        );
+
+      const settingsRows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) => tx`
+          select daily_fee_arrears_mode
+          from school_workflow_settings
+          where school_id = ${school.schoolId}::uuid
+        `,
+      );
+      const dailyMode =
+        settingsRows[0]?.["daily_fee_arrears_mode"] === "consolidated" ? "consolidated" : "isolated";
+      const snapshotRows = records.map((record) => {
+        const snapshotId = crypto.randomUUID();
+        return {
+          snapshot_id: snapshotId,
+          student_id: record.student_id,
+          source_term_id: record.source_term_id,
+          target_term_id: record.target_term_id,
+          class_id: classId,
+          base_bill_amount: record.existing_base + record.new_base,
+          arrears_amount: record.existing_arrears + record.prior_arrears + record.daily_arrears,
+          daily_arrears_amount: record.daily_arrears,
+          adjustment_amount: record.adjustment,
+          total_amount_due: record.total_amount_due,
+          line_items: record.line_items,
+          existing_invoice_ids: record.line_items.existing_invoice_ids,
+          source_invoice_ids: record.line_items.source_invoice_ids,
+          source_invoice_items: record.line_items.source_invoice_items,
+          new_base_amount: record.new_base,
+          prior_arrears_amount: record.prior_arrears,
+          currency: record.currency,
+        };
+      });
+      const rows = await withDatabaseContext(
+        sql,
+        { schoolId: school.schoolId },
+        (tx) => [
+          tx`
+            select pg_advisory_xact_lock(
+              hashtext(${school.schoolId}),
+              hashtext(${`${String(targetTermId)}:${String(billType)}`})
+            )
+          `,
+          tx`
+          with input as materialized (
+            select *
+            from jsonb_to_recordset(${JSON.stringify(snapshotRows)}::jsonb) as item(
+              snapshot_id uuid, student_id uuid, source_term_id uuid, target_term_id uuid,
+              class_id uuid, base_bill_amount numeric, arrears_amount numeric,
+              daily_arrears_amount numeric, adjustment_amount numeric,
+              total_amount_due numeric, line_items jsonb, existing_invoice_ids jsonb,
+              source_invoice_ids jsonb, new_base_amount numeric,
+              prior_arrears_amount numeric, currency text, source_invoice_items jsonb
+            )
+          ),
+          duplicate_guard as materialized (
+            select exists (
+              select 1 from input
+              join term_bill_snapshots existing
+                on existing.school_id = ${school.schoolId}::uuid
+                and existing.student_id = input.student_id
+                and existing.target_term_id = input.target_term_id
+                and existing.bill_type = ${billType}
+            ) as has_existing
+          ),
+          snapshots as (
+            insert into term_bill_snapshots
+              (id, school_id, student_id, source_term_id, target_term_id, target_class_id,
+               bill_type, arrears_amount, daily_arrears_amount, base_bill_amount,
+               adjustment_amount, total_amount_due, line_items, generated_by_user_id)
+            select input.snapshot_id, ${school.schoolId}::uuid, input.student_id,
+                   input.source_term_id, input.target_term_id, input.class_id,
+                   ${billType}, input.arrears_amount, input.daily_arrears_amount,
+                   input.base_bill_amount, input.adjustment_amount, input.total_amount_due,
+                   input.line_items, ${school.userId}::uuid
+            from input cross join duplicate_guard
+            where not duplicate_guard.has_existing
+            returning id, student_id
+          ),
+          attach_existing as (
+            update invoices invoice
+            set term_bill_snapshot_id = snapshots.id, updated_at = now()
+            from snapshots
+            join input on input.student_id = snapshots.student_id
+            cross join lateral jsonb_array_elements_text(input.existing_invoice_ids) invoice_id(value)
+            where invoice.id = invoice_id.value::uuid
+              and invoice.school_id = ${school.schoolId}::uuid
+              and invoice.term_bill_snapshot_id is null
+            returning invoice.id
+          ),
+          main_invoices as (
+            insert into invoices
+              (school_id, student_id, invoice_number, description, amount_due, base_amount_due,
+               arrears_amount, currency, status, term_bill_snapshot_id)
+            select ${school.schoolId}::uuid, input.student_id,
+                   'TB-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+                   ${billType === "admission" ? "Admission bill" : "Term bill"},
+                   input.new_base_amount + input.prior_arrears_amount
+                     + input.adjustment_amount
+                     + case when ${dailyMode} = 'consolidated' then input.daily_arrears_amount else 0 end,
+                   input.new_base_amount + input.adjustment_amount,
+                   input.prior_arrears_amount
+                     + case when ${dailyMode} = 'consolidated' then input.daily_arrears_amount else 0 end,
+                   input.currency, 'issued'::invoice_status, snapshots.id
+            from input
+            join snapshots on snapshots.student_id = input.student_id
+            where input.new_base_amount + input.prior_arrears_amount
+                  + input.adjustment_amount
+                  + case when ${dailyMode} = 'consolidated' then input.daily_arrears_amount else 0 end > 0
+            returning id, student_id, term_bill_snapshot_id
+          ),
+          arrears_ledger as (
+            insert into invoice_arrears
+              (school_id, source_invoice_id, destination_invoice_id,
+               source_term_id, destination_term_id, amount)
+            select ${school.schoolId}::uuid, (source_item.value->>'invoice_id')::uuid,
+                   main_invoices.id, (source_item.value->>'source_term_id')::uuid,
+                   input.target_term_id, (source_item.value->>'amount')::numeric
+            from main_invoices
+            join input on input.student_id = main_invoices.student_id
+            cross join lateral jsonb_array_elements(input.source_invoice_items) source_item(value)
+            where (source_item.value->>'amount')::numeric > 0
+            on conflict (source_invoice_id, destination_invoice_id) do nothing
+            returning id
+          ),
+          daily_invoices as (
+            insert into invoices
+              (school_id, student_id, invoice_number, description, amount_due, base_amount_due,
+               arrears_amount, currency, status, term_bill_snapshot_id)
+            select ${school.schoolId}::uuid, input.student_id,
+                   'TB-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)),
+                   'Daily fee arrears', input.daily_arrears_amount, 0,
+                   input.daily_arrears_amount, input.currency, 'issued'::invoice_status, snapshots.id
+            from input
+            join snapshots on snapshots.student_id = input.student_id
+            where ${dailyMode} = 'isolated' and input.daily_arrears_amount > 0
+            returning id
+          ),
+          mark_sources as (
+            update invoices source_invoice
+            set rolled_forward_at = coalesce(source_invoice.rolled_forward_at, now()),
+                updated_at = now()
+            from input
+            join snapshots on snapshots.student_id = input.student_id
+            cross join lateral jsonb_array_elements_text(input.source_invoice_ids) source_id(value)
+            where source_invoice.id = source_id.value::uuid
+              and source_invoice.school_id = ${school.schoolId}::uuid
+              and source_invoice.rolled_forward_at is null
+            returning source_invoice.id
+          )
+          select duplicate_guard.has_existing,
+                 (select count(*)::int from snapshots) as generated_count
+          from duplicate_guard
+          `,
+        ],
+      );
+      if (rows[0]?.["has_existing"] === true)
+        return json({ error: "A bill is already generated for one or more learners in this term" }, 409);
+      if (Number(rows[0]?.["generated_count"] ?? 0) !== records.length)
+        throw new Error("Term bills were not generated for every learner");
+      return json({ generated_count: records.length }, 201);
+    }
+
     if (url.pathname === "/api/school/workflow-settings") {
       if (request.method === "GET") {
         const rows = await withDatabaseContext(
@@ -1971,7 +2560,7 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           (tx) =>
             tx`
             select class_teachers_can_record_daily_fees, attendance_print_format,
-                   daily_fee_split_enabled
+                   daily_fee_split_enabled, daily_fee_arrears_mode, append_bill_to_report
             from school_workflow_settings
             where school_id = ${school.schoolId}::uuid
           `,
@@ -1983,6 +2572,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             rows[0]?.["attendance_print_format"] ?? "ges_term_to_date",
           ),
           daily_fee_split_enabled: rows[0]?.["daily_fee_split_enabled"] === true,
+          daily_fee_arrears_mode: String(rows[0]?.["daily_fee_arrears_mode"] ?? "isolated"),
+          append_bill_to_report: rows[0]?.["append_bill_to_report"] === true,
         });
       }
 
@@ -1993,6 +2584,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const allowClassTeacherFees = body["class_teachers_can_record_daily_fees"];
       const printFormat = body["attendance_print_format"];
       const dailyFeeSplitEnabled = body["daily_fee_split_enabled"];
+      const dailyFeeArrearsMode = body["daily_fee_arrears_mode"] ?? "isolated";
+      const appendBillToReport = body["append_bill_to_report"] ?? false;
       if (typeof allowClassTeacherFees !== "boolean") {
         return badRequest("Choose whether class teachers may record daily fees");
       }
@@ -2002,26 +2595,54 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (typeof dailyFeeSplitEnabled !== "boolean") {
         return badRequest("Choose whether daily fees should be split");
       }
+      if (dailyFeeArrearsMode !== "isolated" && dailyFeeArrearsMode !== "consolidated") {
+        return badRequest("Choose a supported daily fee arrears mode");
+      }
+      if (typeof appendBillToReport !== "boolean") {
+        return badRequest("Choose whether to append the term bill to reports");
+      }
       const rows = await withDatabaseContext(
         sql,
         { schoolId: school.schoolId },
-        (tx) =>
-          tx`
-          insert into school_workflow_settings
-            (school_id, class_teachers_can_record_daily_fees, attendance_print_format,
-             daily_fee_split_enabled, updated_by_user_id, updated_at)
-          values (
-            ${school.schoolId}::uuid, ${allowClassTeacherFees}, ${printFormat},
-            ${dailyFeeSplitEnabled}, ${school.userId}::uuid, now()
+        (tx) => tx`
+          with saved_settings as (
+            insert into school_workflow_settings
+              (school_id, class_teachers_can_record_daily_fees, attendance_print_format,
+               daily_fee_split_enabled, daily_fee_arrears_mode, append_bill_to_report,
+               updated_by_user_id, updated_at)
+            values (
+              ${school.schoolId}::uuid, ${allowClassTeacherFees}, ${printFormat},
+              ${dailyFeeSplitEnabled}, ${dailyFeeArrearsMode}, ${appendBillToReport},
+              ${school.userId}::uuid, now()
+            )
+            on conflict (school_id) do update set
+              class_teachers_can_record_daily_fees = excluded.class_teachers_can_record_daily_fees,
+              attendance_print_format = excluded.attendance_print_format,
+              daily_fee_split_enabled = excluded.daily_fee_split_enabled,
+              daily_fee_arrears_mode = excluded.daily_fee_arrears_mode,
+              append_bill_to_report = excluded.append_bill_to_report,
+              updated_by_user_id = excluded.updated_by_user_id,
+              updated_at = now()
+            returning school_id, class_teachers_can_record_daily_fees,
+                      attendance_print_format, daily_fee_split_enabled,
+                      daily_fee_arrears_mode, append_bill_to_report
+          ),
+          synced_school as (
+            update schools
+            set report_customization_settings = jsonb_set(
+                  coalesce(report_customization_settings, '{}'::jsonb),
+                  '{append_bill_slip}', to_jsonb(saved_settings.append_bill_to_report), true
+                ),
+                report_bill_mode = case
+                  when saved_settings.append_bill_to_report then 'embedded_footer' else 'none'
+                end
+            from saved_settings
+            where schools.id = saved_settings.school_id
+            returning schools.id
           )
-          on conflict (school_id) do update set
-            class_teachers_can_record_daily_fees = excluded.class_teachers_can_record_daily_fees,
-            attendance_print_format = excluded.attendance_print_format,
-            daily_fee_split_enabled = excluded.daily_fee_split_enabled,
-            updated_by_user_id = excluded.updated_by_user_id,
-            updated_at = now()
-          returning class_teachers_can_record_daily_fees, attendance_print_format,
-                    daily_fee_split_enabled
+          select class_teachers_can_record_daily_fees, attendance_print_format,
+                 daily_fee_split_enabled, daily_fee_arrears_mode, append_bill_to_report
+          from saved_settings
         `,
       );
       if (!rows[0]) throw new Error("School workflow settings were not saved");
@@ -2030,6 +2651,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
           rows[0]["class_teachers_can_record_daily_fees"] === true,
         attendance_print_format: String(rows[0]["attendance_print_format"]),
         daily_fee_split_enabled: rows[0]["daily_fee_split_enabled"] === true,
+        daily_fee_arrears_mode: String(rows[0]["daily_fee_arrears_mode"]),
+        append_bill_to_report: rows[0]["append_bill_to_report"] === true,
       });
     }
 
@@ -4284,6 +4907,16 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
       const currency =
         typeof body["currency"] === "string" ? body["currency"].trim().toUpperCase() : "";
+      const includeInBill =
+        typeof body["include_in_bill"] === "boolean" ? body["include_in_bill"] : null;
+      const billingTarget = body["billing_target"] ?? null;
+      if (body["include_in_bill"] !== undefined && includeInBill === null)
+        return badRequest("Choose whether this fee rule is included in term bills");
+      if (
+        billingTarget !== null &&
+        !["all", "returning_only", "new_admissions_only"].includes(String(billingTarget))
+      )
+        return badRequest("Choose a supported billing target");
       if (!uuidOrNull(classId) || !classId || !uuidOrNull(yearId) || !yearId || !uuidOrNull(termId))
         return badRequest("Choose a valid class, academic year, and term");
       if (!["daily", "daily_feeding", "tuition", "pta", "exam", "other"].includes(String(feeType)))
@@ -4321,6 +4954,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
               description = ${description},
               amount = ${amount},
               currency = ${currency},
+              include_in_bill = coalesce(${includeInBill}::boolean, f.include_in_bill),
+              billing_target = coalesce(${billingTarget}::text, f.billing_target),
               is_active = true
           from valid_period period
           where f.id = ${feeId}::uuid and f.school_id = ${school.schoolId}::uuid
@@ -4333,7 +4968,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
                 and duplicate.fee_type = ${feeType}
             )
           returning f.id, f.class_id, f.academic_year_id, f.term_id, f.fee_type,
-                    f.description, f.amount, f.currency, f.is_active
+                    f.description, f.amount, f.currency, f.include_in_bill,
+                    f.billing_target, f.is_active
         `,
       );
       if (!rows[0])
@@ -4349,7 +4985,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
 
     if (url.pathname === "/api/school/fees") {
       if (request.method === "GET") {
-        await ensureTermFeeArrears(sql, school.schoolId);
         const classId = url.searchParams.get("class_id")?.trim() || null;
         const yearId = url.searchParams.get("academic_year_id")?.trim() || null;
         if ((classId && !uuidOrNull(classId)) || (yearId && !uuidOrNull(yearId)))
@@ -4361,7 +4996,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             tx`
             select f.id, f.class_id, c.name as class_name, f.academic_year_id,
                    ay.name as academic_year_name, f.term_id, t.name as term_name,
-                   f.fee_type, f.description, f.amount, f.currency, f.is_active
+                   f.fee_type, f.description, f.amount, f.currency,
+                   f.include_in_bill, f.billing_target, f.is_active
             from class_fees f
             join classes c on c.id = f.class_id and c.school_id = f.school_id
             join academic_years ay on ay.id = f.academic_year_id and ay.school_id = f.school_id
@@ -4387,6 +5023,8 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       const amount = typeof body["amount"] === "number" ? body["amount"] : Number(body["amount"]);
       const currency =
         typeof body["currency"] === "string" ? body["currency"].trim().toUpperCase() : "GHS";
+      const includeInBill = body["include_in_bill"] ?? true;
+      const billingTarget = body["billing_target"] ?? "all";
       if (!uuidOrNull(classId) || !classId || !uuidOrNull(yearId) || !yearId || !uuidOrNull(termId))
         return badRequest("Choose a valid class, academic year, and term");
       if (!["daily", "daily_feeding", "tuition", "pta", "exam", "other"].includes(String(feeType)))
@@ -4400,6 +5038,10 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
       if (!Number.isFinite(amount) || amount < 0 || amount > 99_999_999.99)
         return badRequest("Enter a valid non-negative fee amount");
       if (!/^[A-Z]{3}$/.test(currency)) return badRequest("Currency must be a three-letter code");
+      if (typeof includeInBill !== "boolean")
+        return badRequest("Choose whether this fee rule is included in term bills");
+      if (!["all", "returning_only", "new_admissions_only"].includes(String(billingTarget)))
+        return badRequest("Choose a supported billing target");
 
       const rows = await withDatabaseContext(
         sql,
@@ -4407,14 +5049,17 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         (tx) =>
           tx`
           insert into class_fees
-            (school_id, class_id, academic_year_id, term_id, fee_type, description, amount, currency)
+            (school_id, class_id, academic_year_id, term_id, fee_type, description, amount,
+             currency, include_in_bill, billing_target)
           values
             (${school.schoolId}::uuid, ${classId}::uuid, ${yearId}::uuid, ${termId}::uuid,
-             ${feeType}, ${description}, ${amount}, ${currency})
+             ${feeType}, ${description}, ${amount}, ${currency}, ${includeInBill}, ${billingTarget})
           on conflict (school_id, class_id, academic_year_id, term_id, fee_type)
           do update set description = excluded.description, amount = excluded.amount,
-                        currency = excluded.currency, is_active = true
-          returning id, class_id, academic_year_id, term_id, fee_type, description, amount, currency, is_active
+                        currency = excluded.currency, include_in_bill = excluded.include_in_bill,
+                        billing_target = excluded.billing_target, is_active = true
+          returning id, class_id, academic_year_id, term_id, fee_type, description, amount,
+                    currency, include_in_bill, billing_target, is_active
         `,
       );
       return json({ fee: rows[0] }, 201);
@@ -4648,7 +5293,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     }
 
     if (url.pathname === "/api/school/payments" && request.method === "GET") {
-      await ensureTermFeeArrears(sql, school.schoolId);
       const feeId = url.searchParams.get("fee_id")?.trim() || null;
       if (feeId && !uuidOrNull(feeId)) return badRequest("Invalid class fee ID");
       if (feeId) {
@@ -4732,7 +5376,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     }
 
     if (url.pathname === "/api/school/payments" && request.method === "POST") {
-      await ensureTermFeeArrears(sql, school.schoolId);
       const payload: unknown = await request.json().catch(() => null);
       if (!payload || typeof payload !== "object")
         return badRequest("A JSON request body is required");
@@ -6271,7 +6914,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
         return json({ academic_year: rows[0] }, 201);
       }
 
-      await ensureTermFeeArrears(sql, school.schoolId);
       const rows = await withDatabaseContext(
         sql,
         { schoolId: school.schoolId },
@@ -7144,7 +7786,6 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
     }
 
     if (url.pathname === "/api/school/student-financial-records" && request.method === "GET") {
-      await ensureTermFeeArrears(sql, school.schoolId);
       const studentId = url.searchParams.get("student_id")?.trim() ?? "";
       const termId = url.searchParams.get("term_id")?.trim() || null;
       const selectedTypes = new Set(
@@ -7802,13 +8443,18 @@ export async function handleApiRequest(request: Request, env: RuntimeEnv): Promi
             where m.role = 'super_admin' and m.school_id is null and m.active
           `,
         );
-        const recipients = adminRows
+        const adminRecipients = adminRows
           .map((row) =>
             String(row["email"] ?? "")
               .trim()
               .toLowerCase(),
           )
           .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+        const configuredRecipients = (env.PLATFORM_SIGNUP_NOTIFICATION_EMAILS ?? "")
+          .split(/[;,]/)
+          .map((email) => email.trim().toLowerCase())
+          .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+        const recipients = [...new Set([...adminRecipients, ...configuredRecipients])];
         notification = await sendPlatformSignupNotification(env, recipients, {
           schoolName,
           subdomain: requestedSubdomain,

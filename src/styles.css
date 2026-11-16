@@ -487,6 +487,41 @@
   .attendance-print-page .print-subheading { margin: 16px 0 6px; font-size: 13pt; }
   .attendance-print-page:nth-child(n + 2) th,
   .attendance-print-page:nth-child(n + 2) td { padding: 3px 4px; font-size: 8pt; }
+
+  @page term-bill-page { size: A4 portrait; margin: 14mm; }
+  body:has(.term-billing-print-area) * { visibility: hidden !important; }
+  body:has(.term-billing-print-area) .attendance-print-root,
+  body:has(.term-billing-print-area) .attendance-print-root * { visibility: hidden !important; }
+  body:has(.term-billing-print-area) .term-billing-print-area,
+  body:has(.term-billing-print-area) .term-billing-print-area * { visibility: visible !important; }
+  body:has(.term-billing-print-area) .term-billing-print-area {
+    display: block !important;
+    position: absolute;
+    inset: 0;
+    z-index: 99999;
+    width: 100%;
+    color: #111;
+    background: #fff;
+    font: 10pt Arial, sans-serif;
+    page: term-bill-page;
+  }
+  .term-billing-sheet {
+    page: term-bill-page;
+    break-after: page;
+    page-break-after: always;
+  }
+  .term-billing-sheet:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+  .term-billing-print-heading {
+    margin-bottom: 18px;
+    border-bottom: 3px solid;
+    padding-bottom: 12px;
+  }
+  .term-billing-print-heading h1 { margin: 5px 0; font-size: 22pt; }
+  .term-billing-print-heading p { margin: 3px 0; }
+  .term-billing-sheet table { border-collapse: collapse; }
 }
 
 /* Public homepage photography keeps a consistent, readable overlay in either theme. */

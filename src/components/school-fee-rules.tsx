@@ -23,6 +23,8 @@ type FeeRule = {
   description: string;
   amount: number | string;
   currency: string;
+  include_in_bill: boolean;
+  billing_target: "all" | "returning_only" | "new_admissions_only";
   is_active: boolean;
 };
 
@@ -130,6 +132,8 @@ export function SchoolFeeRules() {
             description: form.get("description"),
             amount: Number(form.get("amount")),
             currency: form.get("currency"),
+            include_in_bill: form.get("include_in_bill") === "on",
+            billing_target: form.get("billing_target") || "all",
           }),
         },
       );
@@ -167,6 +171,8 @@ export function SchoolFeeRules() {
                 description: fee.description,
                 amount: Number(fee.amount),
                 currency: fee.currency,
+                include_in_bill: fee.include_in_bill,
+                billing_target: fee.billing_target,
               }),
             }
           : {}),
@@ -314,6 +320,27 @@ export function SchoolFeeRules() {
                 defaultValue={editingRule?.currency ?? "GHS"}
               />
             </label>
+            <label className="space-y-1 text-xs font-medium text-muted-foreground">
+              Applies to
+              <select
+                name="billing_target"
+                defaultValue={editingRule?.billing_target ?? "all"}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+              >
+                <option value="all">All enrolled learners</option>
+                <option value="returning_only">Returning learners</option>
+                <option value="new_admissions_only">New admissions</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 self-end rounded-md border border-border px-3 py-2 text-sm text-foreground">
+              <input
+                name="include_in_bill"
+                type="checkbox"
+                defaultChecked={editingRule?.include_in_bill ?? true}
+                className="size-4 accent-primary"
+              />
+              Include in generated term bills
+            </label>
             <div className="flex items-end gap-2">
               <Button type="submit" disabled={saving || !classId || !selectedYear}>
                 {saving ? "Saving..." : editingRule ? "Update fee rule" : "Save fee rule"}
@@ -336,10 +363,10 @@ export function SchoolFeeRules() {
             </p>
           ) : (
             <div className="mt-5 overflow-x-auto">
-              <table className="w-full min-w-[620px] text-left text-sm">
+              <table className="w-full min-w-[780px] text-left text-sm">
                 <thead className="border-b text-xs text-muted-foreground">
                   <tr>
-                    {["Class", "Fee", "Period", "Amount", "Actions"].map((label) => (
+                    {["Class", "Fee", "Billing target", "Period", "Amount", "Actions"].map((label) => (
                       <th key={label} className="px-3 py-2 font-medium">
                         {label}
                       </th>
@@ -361,6 +388,16 @@ export function SchoolFeeRules() {
                               ? "Optional feeding"
                               : fee.fee_type.replaceAll("_", " ")}
                         </p>
+                      </td>
+                      <td className="px-3 py-3 text-xs">
+                        {fee.billing_target === "new_admissions_only"
+                          ? "New admissions"
+                          : fee.billing_target === "returning_only"
+                            ? "Returning learners"
+                            : "All learners"}
+                        {!fee.include_in_bill && (
+                          <p className="text-muted-foreground">Excluded from bills</p>
+                        )}
                       </td>
                       <td className="px-3 py-3">{fee.term_name ?? fee.academic_year_name}</td>
                       <td className="px-3 py-3">

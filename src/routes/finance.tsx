@@ -5,8 +5,9 @@ import { useCallback, useEffect, useState } from "react";
 import { getNeonAccessToken } from "../auth/client";
 import { Button } from "@/components/ui/button";
 import { SchoolShell } from "@/components/school-shell";
+import { TermBillingWorkspace } from "@/components/term-billing-workspace";
 import { useTenantBranding } from "@/components/tenant-branding-provider";
-import { downloadPaymentReceipt } from "@/lib/payment-receipt-pdf";
+import type { PaymentReceiptData } from "@/lib/payment-receipt-pdf";
 
 export const Route = createFileRoute("/finance")({
   head: () => ({ meta: [{ title: "Finance — Klasora" }, { name: "description", content: "Record school and other fees, print receipts, and track learner balances." }] }),
@@ -185,6 +186,16 @@ function FinancePage() {
   const collectionStudent = collectionBalances.find((item) => item.student_id === collectionStudentId);
   const collectionIsOtherFee = collectionFee ? otherFeeTypes.has(collectionFee.fee_type) : false;
   const pendingValidationPayments = otherPayments.filter((payment) => payment.status === "pending");
+  function downloadPaymentReceipt(receipt: PaymentReceiptData) {
+    void import("@/lib/payment-receipt-pdf")
+      .then(({ downloadPaymentReceipt: download }) => download(receipt))
+      .catch((cause: unknown) => {
+        setError(
+          cause instanceof Error ? cause.message : "Could not generate the payment receipt",
+        );
+      });
+  }
+
   async function recordPayment() {
     const amount = Number(collectionAmount);
     if (!collectionFee || !collectionStudent || !Number.isFinite(amount) || amount <= 0 || amount > Number(collectionStudent.balance_due)) {
@@ -264,6 +275,8 @@ function FinancePage() {
       <h1 className="font-display text-3xl font-bold">Finance desk</h1>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Record configured fee collections, print numbered receipts, and track remaining balances. School, exam, and other-fee receipts remain pending until a different school admin validates them.</p>
     </div>
+
+    <TermBillingWorkspace />
 
     {error && <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p>}
     {notice && <p role="status" className="mt-4 rounded-md border border-emerald-600/20 bg-emerald-600/5 px-4 py-3 text-sm text-emerald-800">{notice}</p>}

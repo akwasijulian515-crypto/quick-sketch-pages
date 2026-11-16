@@ -216,6 +216,8 @@ type WorkflowSettings = {
   class_teachers_can_record_daily_fees: boolean;
   attendance_print_format: "daily_register" | "ges_term_to_date";
   daily_fee_split_enabled: boolean;
+  daily_fee_arrears_mode: "isolated" | "consolidated";
+  append_bill_to_report: boolean;
 };
 
 type SplitFeeClass = { id: string; name: string };
@@ -239,6 +241,8 @@ function SchoolWorkflowSettings() {
     class_teachers_can_record_daily_fees: false,
     attendance_print_format: "ges_term_to_date",
     daily_fee_split_enabled: false,
+    daily_fee_arrears_mode: "isolated",
+    append_bill_to_report: false,
   });
   const [loading, setLoading] = useState(true);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -444,6 +448,41 @@ function SchoolWorkflowSettings() {
       <p className="mt-1 text-sm text-muted-foreground">
         These settings apply only to this school.
       </p>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <label className="space-y-1 text-xs font-medium text-muted-foreground">
+          Daily-fee arrears on term bills
+          <select
+            value={settings.daily_fee_arrears_mode}
+            onChange={(event) =>
+              setSettings((current) => ({
+                ...current,
+                daily_fee_arrears_mode: event.target.value as WorkflowSettings["daily_fee_arrears_mode"],
+              }))
+            }
+            disabled={!settingsLoaded || loading || saving}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+          >
+            <option value="isolated">Separate daily-arrears invoice</option>
+            <option value="consolidated">Combine with the term bill</option>
+          </select>
+        </label>
+        <div className="flex items-center justify-between gap-4 rounded-md border border-border px-3 py-2">
+          <div>
+            <p className="text-sm font-medium">Attach term bill to terminal reports</p>
+            <p className="text-xs text-muted-foreground">
+              Keep the report billing slip option in sync with report settings.
+            </p>
+          </div>
+          <Switch
+            aria-label="Attach term bill to terminal reports"
+            checked={settings.append_bill_to_report}
+            disabled={!settingsLoaded || loading || saving}
+            onCheckedChange={(checked) =>
+              setSettings((current) => ({ ...current, append_bill_to_report: checked }))
+            }
+          />
+        </div>
+      </div>
       <div className="mt-4 flex flex-col gap-4 rounded-lg border border-primary/25 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="max-w-3xl">
           <h3 className="font-semibold">Split daily fees into studies and feeding</h3>

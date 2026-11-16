@@ -14,6 +14,7 @@ export type RuntimeEnv = {
   NEON_AUTH_JWKS_URL?: string | undefined;
   RESEND_API_KEY?: string | undefined;
   RESEND_FROM_EMAIL?: string | undefined;
+  PLATFORM_SIGNUP_NOTIFICATION_EMAILS?: string | undefined;
   SMTP_HOST?: string | undefined;
   SMTP_PORT?: string | undefined;
   SMTP_USERNAME?: string | undefined;
@@ -40,6 +41,8 @@ export function resolveRuntimeEnv(env: RuntimeEnv): RuntimeEnv {
     NEON_AUTH_JWKS_URL: env.NEON_AUTH_JWKS_URL ?? nodeEnv?.["NEON_AUTH_JWKS_URL"],
     RESEND_API_KEY: env.RESEND_API_KEY ?? nodeEnv?.["RESEND_API_KEY"],
     RESEND_FROM_EMAIL: env.RESEND_FROM_EMAIL ?? nodeEnv?.["RESEND_FROM_EMAIL"],
+    PLATFORM_SIGNUP_NOTIFICATION_EMAILS:
+      env.PLATFORM_SIGNUP_NOTIFICATION_EMAILS ?? nodeEnv?.["PLATFORM_SIGNUP_NOTIFICATION_EMAILS"],
     SMTP_HOST: env.SMTP_HOST ?? nodeEnv?.["SMTP_HOST"],
     SMTP_PORT: env.SMTP_PORT ?? nodeEnv?.["SMTP_PORT"],
     SMTP_USERNAME: env.SMTP_USERNAME ?? nodeEnv?.["SMTP_USERNAME"],
